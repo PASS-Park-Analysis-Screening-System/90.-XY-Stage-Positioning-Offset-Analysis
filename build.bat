@@ -15,6 +15,11 @@ echo   XY Stage Offset Analysis - PyInstaller Build
 echo ============================================
 echo.
 
+REM  add-data의 대상 경로는 런타임 조회 경로와 일치해야 한다.
+REM    assets  : ui_builder_mixin이 __file__ 기준 ..\..\assets 로 찾음 → _MEIPASS\assets
+REM              (이전 값 src\assets는 어긋나서 EXE에서 가이드 이미지가 뜨지 않았다)
+REM    settings: settings.py가 _MEIPASS\core\settings.json 으로 찾음
+REM  hidden-import는 main.py가 sys.path에 src를 넣고 쓰는 실제 패키지명(core/ui/charts)이다.
 python -m PyInstaller ^
     --noconfirm ^
     --onefile ^
@@ -23,12 +28,12 @@ python -m PyInstaller ^
     --distpath dist ^
     --workpath build ^
     --specpath build ^
-    --add-data "%PROJECT_DIR%src\assets;src\assets" ^
+    --add-data "%PROJECT_DIR%src\assets;assets" ^
     --add-data "%PROJECT_DIR%src\core\settings.json;core" ^
     --collect-all pspylib ^
-    --hidden-import=src.core ^
-    --hidden-import=src.ui ^
-    --hidden-import=src.charts ^
+    --hidden-import=core ^
+    --hidden-import=ui ^
+    --hidden-import=charts ^
     src\main.py
 
 if %ERRORLEVEL% neq 0 (
