@@ -10,7 +10,11 @@ venv/
 build/
 dist/
 .pytest_cache/
-/XYStageOffset.spec
+
+# XYStageOffset.spec은 정본 빌드 정의이므로 추적한다(제외하지 않음).
+# 빌드 도구가 자동 생성하는 그 밖의 spec은 값이 갈라져 혼선만 주므로 제외한다.
+*.spec
+!/XYStageOffset.spec
 
 # OMC(에이전트) 도구 상태
 .omc/

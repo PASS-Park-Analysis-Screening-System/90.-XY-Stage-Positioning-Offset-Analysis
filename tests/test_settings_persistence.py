@@ -1,6 +1,7 @@
 """onefile 내장 스펙 및 Windows 레지스트리 사용자 설정 회귀 테스트."""
 
 import json
+import os
 from pathlib import Path
 
 from core import settings
@@ -47,13 +48,69 @@ def _write_json(path, payload):
     path.write_text(json.dumps(payload), encoding='utf-8')
 
 
-def test_build_script_creates_onefile_with_embedded_settings_and_cleanup():
+def _load_build_config():
+    """tools/build_config.py — 빌드 설정의 단일 출처."""
+    import importlib.util
+
+    project_dir = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        'build_config', project_dir / 'tools' / 'build_config.py')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_build_config_embeds_settings_in_core_directory():
+    """settings.json은 _MEIPASS/core/settings.json 으로 들어가야 한다.
+
+    (아래 test_frozen_resource_path_matches_packaged_core_directory가 검증하는
+    런타임 조회 경로와 짝을 이룬다)
+    """
+    cfg = _load_build_config()
+    datas = {src.replace(os.sep, '/'): dest for src, dest in cfg.DATAS}
+
+    assert datas['src/core/settings.json'] == 'core'
+
+
+def test_build_config_bundles_assets_at_runtime_lookup_path():
+    """assets 대상은 'assets' 여야 한다.
+
+    ui_builder_mixin이 __file__ 기준 ../../assets 로 찾으므로 런타임 경로는
+    _MEIPASS/assets 다. 이전에는 대상이 src/assets 여서 배포된 EXE에서
+    가이드 이미지가 뜨지 않았다. 같은 실수를 다시 하지 않도록 고정한다.
+    """
+    cfg = _load_build_config()
+    datas = {src.replace(os.sep, '/'): dest for src, dest in cfg.DATAS}
+
+    assert datas['src/assets'] == 'assets'
+    assert 'assets/checklist_guide.png' in [
+        p.replace(os.sep, '/') for p in cfg.REQUIRED_IN_BUNDLE]
+
+
+def test_build_config_sources_exist_in_repo():
+    """번들 원본이 실제로 저장소에 있어야 빌드가 성공한다."""
+    cfg = _load_build_config()
+    assert cfg.missing_sources() == []
+
+
+def test_spec_is_onefile_and_windowed():
+    project_dir = Path(__file__).resolve().parents[1]
+    spec_text = (project_dir / 'XYStageOffset.spec').read_text(encoding='utf-8')
+
+    # onefile = 모든 binaries/datas를 EXE에 넣고 COLLECT 단계를 두지 않는다
+    assert 'COLLECT(' not in spec_text
+    assert 'a.binaries' in spec_text and 'a.datas' in spec_text
+    assert 'console=False' in spec_text
+
+
+def test_build_script_runs_spec_and_cleans_stray_settings():
     project_dir = Path(__file__).resolve().parents[1]
     build_script = (project_dir / 'build.bat').read_text(encoding='utf-8')
 
-    assert '--onefile' in build_script
-    assert 'src\\core\\settings.json;core' in build_script
+    assert 'XYStageOffset.spec' in build_script
     assert 'del /q "%PROJECT_DIR%dist\\settings.json"' in build_script
+    # 번들 리소스 검증을 건너뛰면 조용히 깨진 EXE가 배포된다
+    assert 'verify_build.py' in build_script
 
 
 def test_frozen_resource_path_matches_packaged_core_directory(tmp_path, monkeypatch):
