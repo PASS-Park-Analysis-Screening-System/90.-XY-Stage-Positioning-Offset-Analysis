@@ -87,7 +87,7 @@ class ScanMixin:
 
         self.settings = add_recent_folder(self.settings, folder)
         self._save_settings()
-        self._build_nav()
+        self._reset_results_for_scan()
 
         self.logger.info("전체 Recipe 데이터 로드 시작 (1st round)...")
         self._set_scan_controls_enabled(False)
@@ -95,6 +95,13 @@ class ScanMixin:
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
         self._loader_thread.start()
+
+    def _reset_results_for_scan(self):
+        """이전 폴더의 결과를 지운다. 안 그러면 로드 중에 새 Step 이름으로 이전 판정이 보인다."""
+        self.recipe_results = []
+        self._build_nav()
+        if self.recipes:
+            self._select_step(0)
 
     def _set_scan_controls_enabled(self, enabled: bool):
         """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open 버튼 활성/비활성."""

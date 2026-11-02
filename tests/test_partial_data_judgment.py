@@ -333,3 +333,79 @@ def test_tooltip_is_capped(window):
 def test_matrix_without_labels_is_not_judged():
     assert evaluate_deviation_pass({'count': 5}, {'overall_range': 0.0, 'overall_stddev': 0.0},
                                    2.0, 1.0) is None
+
+
+# ── 재리뷰 반영: 차트 잔상, 재스캔 중 이전 판정, 툴팁 ─────────────────────────
+
+_STALE_CHARTS = ('Contour X', 'Contour Y', 'X*Y Offset', 'Vector Map',
+                 'Correlation', '3D X', '3D Y', '3D X+Y')
+
+
+def _chart_is_empty(widget):
+    return getattr(widget, '_canvas', None) is None and getattr(widget, '_widget', None) is None
+
+
+def _two_steps(window, second=None):
+    window.recipes = [{'name': 'A', 'short_name': 'R', 'index': 1, 'rounds': []},
+                      {'name': 'B', 'short_name': 'R', 'index': 2, 'rounds': []}]
+    window.recipe_results = [dict(recipe='A', short_name='R', round='1st', raw_data=_table(),
+                                  statistics={}, data_warnings=[])]
+    if second is not None:
+        window.recipe_results.append(second)
+
+
+def test_step_without_data_leaves_no_chart_from_previous_step(window):
+    _two_steps(window, dict(recipe='B', short_name='R', round='1st', raw_data=[],
+                            error='No data loaded'))
+    window._select_step(0)
+    assert not any(_chart_is_empty(window.chart_widgets[n]) for n in _STALE_CHARTS)
+
+    window._select_step(1)
+    assert all(_chart_is_empty(window.chart_widgets[n]) for n in _STALE_CHARTS)
+
+    window._select_step(0)
+    assert not any(_chart_is_empty(window.chart_widgets[n]) for n in _STALE_CHARTS)
+
+
+def test_axis_without_data_clears_only_charts_that_need_it(window):
+    _show(window, _table())
+    _show(window, _table(axes=('X',)))
+    assert not _chart_is_empty(window.chart_widgets['Contour X'])
+    assert not _chart_is_empty(window.chart_widgets['3D X'])
+    for name in ('Contour Y', '3D Y', 'X*Y Offset', 'Vector Map', 'Correlation', '3D X+Y'):
+        assert _chart_is_empty(window.chart_widgets[name])
+
+
+def test_rescan_hides_verdict_of_previous_folder_while_loading(window):
+    _two_steps(window)
+    window._select_step(0)
+    assert window.card_x.badge.text() == '✅ PASS'
+
+    window._reset_results_for_scan()
+
+    assert window.recipe_results == []
+    assert window.step_pass_states == {}
+    assert window.card_x.badge.text() == '—'
+    assert window.filter_info_label.text() == '⚠ 데이터 로드 중'
+    assert window.filter_info_label.toolTip() == ''
+    assert '로드 중' in window.statusBar().currentMessage()
+
+
+def test_tooltip_keeps_hint_and_warnings_when_all_dies_are_unchecked(window):
+    rows = _table(repeats=range(1, 6))
+    _show(window, rows)
+    for box in window._die_checkboxes.values():
+        box.blockSignals(True)
+        box.setChecked(False)
+        box.blockSignals(False)
+    label = _show(window, rows)
+    assert label.text().startswith('⚠ 분석할 수 있는 행이 없습니다')
+    assert '모든 Die를 해제했습니다' in label.toolTip()
+    assert '21 Die × 5 Repeat' in label.toolTip()
+
+
+def test_numpy_values_still_give_plain_fail():
+    import numpy as np
+    dev = {'die_labels': ['a', 'b'], 'repeat_labels': ['c', 'd'],
+           'overall_range': np.float64(9.0), 'overall_stddev': np.float64(0.1)}
+    assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 1.0) is False

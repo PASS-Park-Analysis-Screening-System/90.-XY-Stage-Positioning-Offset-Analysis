@@ -15,7 +15,7 @@ def _warning_tooltip(warnings: list) -> str:
     """경고 문장을 툴팁 길이로 줄인다 (CSV 경고는 수백 건일 수 있다)."""
     lines = warnings[:_MAX_TOOLTIP_WARNINGS]
     if len(warnings) > _MAX_TOOLTIP_WARNINGS:
-        lines.append(f"… 외 {len(warnings) - _MAX_TOOLTIP_WARNINGS}건 (System Log 참조)")
+        lines.append(f"… 외 {len(warnings) - _MAX_TOOLTIP_WARNINGS}건 (품질 리포트 참조)")
     return "\n".join(lines)
 
 
@@ -122,6 +122,9 @@ class StepMixin:
             self.raw_data = []
             self._dynamic_die_positions = extract_die_positions(self.raw_data)
             self._display_result(result, recipe)
+            if not has_result:
+                self.filter_info_label.setText("⚠ 데이터 로드 중")
+                self.filter_info_label.setToolTip("")
             self.statusBar().showMessage(
                 f"{recipe['short_name']}: 분석할 데이터가 없습니다" if has_result
                 else f"데이터 로드 중: {recipe['short_name']}...")
@@ -210,9 +213,9 @@ class StepMixin:
         if not data:
             self.filter_info_label.setText(
                 f"⚠ 분석할 수 있는 행이 없습니다  |  Analyzing 0 of {len(raw)}")
+            hint = "Site ID를 읽지 못했거나 모든 Die를 해제했습니다." if raw else ""
             self.filter_info_label.setToolTip(
-                _warning_tooltip(analysis_warnings(result))
-                or "Site ID를 읽지 못했거나 모든 Die를 해제했습니다.")
+                "\n".join(filter(None, [hint, _warning_tooltip(analysis_warnings(result))])))
         elif self._die_filter_is_custom:
             self.filter_info_label.setText(
                 f"⚠ Custom: Analyzing {len(data)} of {len(raw)}  |  Summary와 기준 다름")
@@ -225,7 +228,7 @@ class StepMixin:
             text = (f"Analysis basis: {excluded_names or 'No die'} excluded  |  "
                     f"Analyzing {len(data)} of {len(raw)}")
             self.filter_info_label.setText(
-                f"⚠ {text}  |  경고 있음 (마우스를 올리면 이유 표시)" if warnings else f"✅ {text}")
+                f"⚠ {text}  |  경고 있음" if warnings else f"✅ {text}")
             self.filter_info_label.setToolTip(_warning_tooltip(warnings))
 
         self._update_cards(data, recipe)

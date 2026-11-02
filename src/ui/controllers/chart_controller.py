@@ -69,6 +69,16 @@ class ChartMixin:
         except Exception as e:
             self.logger.error(f"Pareto 차트 오류: {e}")
 
+        # 아래 차트들은 값이 없으면 갱신을 건너뛰므로 여기서 비운다 (이전 Step이 남지 않게)
+        has_x = bool(self._dev_x.get('die_stats'))
+        has_y = bool(self._dev_y.get('die_stats'))
+        for name, has_data in (('Contour X', has_x), ('Contour Y', has_y),
+                               ('3D X', has_x), ('3D Y', has_y),
+                               ('X*Y Offset', has_x and has_y), ('Vector Map', has_x and has_y),
+                               ('Correlation', has_x and has_y), ('3D X+Y', has_x and has_y)):
+            if not has_data:
+                self.chart_widgets[name].clear()
+
         # ─── Correlation Chart (X/Y 상관관계) ───
         try:
             if self._dev_x.get('die_stats') and self._dev_y.get('die_stats'):

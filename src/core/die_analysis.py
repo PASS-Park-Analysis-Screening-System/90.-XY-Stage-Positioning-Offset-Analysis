@@ -292,8 +292,8 @@ def evaluate_deviation_pass(stats: dict, deviation: dict,
     if (stats.get('count', 0) == 0 or below_minimum_size(deviation)
             or spec_range is None or spec_stddev is None):
         return None
-    return (deviation['overall_range'] <= spec_range
-            and deviation['overall_stddev'] <= spec_stddev)
+    return bool(deviation['overall_range'] <= spec_range
+                and deviation['overall_stddev'] <= spec_stddev)
 
 
 def compute_xy_product(x_die_stats: list, y_die_stats: list) -> dict:
