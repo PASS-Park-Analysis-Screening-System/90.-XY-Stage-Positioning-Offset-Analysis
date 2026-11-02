@@ -15,7 +15,9 @@ PyInstaller spec, 빌드 검증 스크립트, 빌드 매니저 입력값 출력�
 값을 바꿀 때는 여기만 고치고, `python tools/verify_build.py` 로 결과를 확인한다.
 """
 
+import json
 import os
+import re
 
 # 프로젝트 루트 (이 파일의 상위 폴더)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +56,60 @@ HIDDEN_IMPORTS = ['core', 'ui', 'charts']
 
 # --collect-all 대상. pspylib은 사내 wheel이며 없으면 TIFF 보기만 비활성된다.
 COLLECT_ALL = ['pspylib']
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 번들 설정 검사: 빌드한 PC의 개인·고객 경로가 EXE에 들어가면 빌드를 실패시킨다.
+# ──────────────────────────────────────────────────────────────────────────
+SETTINGS_SOURCE = os.path.join('src', 'core', 'settings.json')
+VERSION_SOURCE = os.path.join('src', 'core', 'version.py')
+_MUST_BE_EMPTY = ('last_folder', 'recent_folders')
+_PATH_LIKE = re.compile(r'^[A-Za-z]:[\\/]|^[\\/]{2}|[\\/]Users[\\/]', re.IGNORECASE)
+
+
+def _strings_in(value, where):
+    if isinstance(value, str):
+        yield where, value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings_in(item, f'{where}.{key}' if where else str(key))
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            yield from _strings_in(item, f'{where}[{i}]')
+
+
+def settings_privacy_errors(settings: dict) -> list:
+    """번들에 넣으면 안 되는 값의 위치 목록. 값 자체는 로그에 남기지 않는다."""
+    errors = [f'{key}: 비어 있어야 합니다' for key in _MUST_BE_EMPTY if settings.get(key)]
+    errors += [f'{where}: 경로처럼 보이는 값이 있습니다'
+               for where, text in _strings_in(settings, '')
+               if _PATH_LIKE.search(text)]
+    return errors
+
+
+def settings_source_errors(path: str = None) -> list:
+    """번들 원본 settings.json을 검사한다."""
+    with open(path or os.path.join(ROOT, SETTINGS_SOURCE), encoding='utf-8') as f:
+        return settings_privacy_errors(json.load(f))
+
+
+def app_version(path: str = None) -> str:
+    """src/core/version.py의 APP_VERSION. 앱을 import하지 않고 읽는다."""
+    with open(path or os.path.join(ROOT, VERSION_SOURCE), encoding='utf-8') as f:
+        match = re.search(r"^APP_VERSION\s*=\s*['\"]([^'\"]+)['\"]", f.read(), re.MULTILINE)
+    if not match:
+        raise ValueError('APP_VERSION을 찾을 수 없습니다')
+    return match.group(1)
+
+
+def module_version_error(module_json_path: str, version: str = None) -> str:
+    """Core module.json의 version과 앱 버전이 다르면 오류 문장, 같으면 빈 문자열."""
+    with open(module_json_path, encoding='utf-8') as f:
+        declared = json.load(f).get('version')
+    version = version or app_version()
+    if declared == version:
+        return ''
+    return f'module.json 버전 {declared}이 앱 버전 {version}과 다릅니다'
 
 
 def abs_datas():

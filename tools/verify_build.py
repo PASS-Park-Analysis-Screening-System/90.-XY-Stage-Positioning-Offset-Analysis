@@ -12,10 +12,13 @@ verify_build.py — 빌드된 onefile EXE에 필수 리소스가 **기대 경로
 사용:
     python tools/verify_build.py                  # dist/<EXE_NAME>.exe 검사
     python tools/verify_build.py <exe 경로>       # 특정 파일 검사
+    python tools/verify_build.py <exe 경로> --module-json <module.json 경로>
+                                                  # Core module.json 버전도 대조
 
-종료 코드: 0 = 정상, 1 = 리소스 누락/경로 불일치, 2 = 검사 불가
+종료 코드: 0 = 정상, 1 = 리소스 누락/경로 불일치/번들 설정에 개인 값/버전 불일치, 2 = 검사 불가
 """
 
+import json
 import os
 import sys
 
@@ -31,6 +34,15 @@ def read_bundle(exe_path):
     """onefile EXE 아카이브의 항목 이름 목록."""
     from PyInstaller.archive.readers import CArchiveReader
     return list(CArchiveReader(exe_path).toc)
+
+
+def read_bundled_settings(exe_path):
+    """EXE 안의 core/settings.json 내용."""
+    from PyInstaller.archive.readers import CArchiveReader
+    reader = CArchiveReader(exe_path)
+    wanted = _norm(os.path.join('core', 'settings.json'))
+    name = next(n for n in reader.toc if _norm(n) == wanted)
+    return json.loads(reader.extract(name))
 
 
 def verify(exe_path):
@@ -72,15 +84,38 @@ def verify(exe_path):
         print(f'실패 {len(failed)}건 — 이 EXE는 실행 중 리소스를 찾지 못합니다.')
         return 1
     print(f'필수 리소스 {len(cfg.REQUIRED_IN_BUNDLE)}건 모두 정상입니다.')
+
+    try:
+        private = cfg.settings_privacy_errors(read_bundled_settings(exe_path))
+    except Exception as e:
+        print(f'[FAIL] 번들 설정을 읽을 수 없습니다 ({type(e).__name__}: {e})')
+        return 2
+    if private:
+        print('[FAIL] 번들 설정에 개인 값이 있습니다. 이 EXE를 배포하지 마세요.')
+        for line in private:
+            print(f'         → {line}')
+        return 1
+    print('번들 설정에 개인 값이 없습니다.')
     return 0
 
 
 def main():
-    if len(sys.argv) > 1:
-        exe_path = sys.argv[1]
-    else:
-        exe_path = os.path.join(cfg.ROOT, 'dist', cfg.EXE_NAME + '.exe')
-    return verify(exe_path)
+    args = sys.argv[1:]
+    module_json = None
+    if '--module-json' in args:
+        at = args.index('--module-json')
+        module_json = args[at + 1]
+        del args[at:at + 2]
+    exe_path = args[0] if args else os.path.join(cfg.ROOT, 'dist', cfg.EXE_NAME + '.exe')
+
+    code = verify(exe_path)
+    if module_json:
+        mismatch = cfg.module_version_error(module_json)
+        if mismatch:
+            print(f'[FAIL] {mismatch}')
+            return code or 1
+        print(f'module.json 버전이 앱 버전 {cfg.app_version()}과 같습니다.')
+    return code
 
 
 if __name__ == '__main__':

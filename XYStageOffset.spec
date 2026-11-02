@@ -38,6 +38,12 @@ missing = cfg.missing_sources()
 if missing:
     raise SystemExit(f'[build_config] 번들 원본을 찾을 수 없습니다: {missing}')
 
+# 소스 실행은 이 파일을 바꾸지 않지만, 손으로 고치거나 이전 버전이 남긴 값이 있을 수 있다
+private = cfg.settings_source_errors()
+if private:
+    raise SystemExit('[build_config] settings.json에 개인 값이 있어 빌드를 중단합니다: '
+                     f'{private}\n먼저 python tools/migrate_local_settings.py 를 실행하세요.')
+
 
 a = Analysis(
     [os.path.join(SPECPATH, cfg.ENTRY_SCRIPT)],

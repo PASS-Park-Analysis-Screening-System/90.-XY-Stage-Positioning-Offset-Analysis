@@ -210,15 +210,17 @@ def test_registry_roundtrip_serializes_list_and_integer(monkeypatch):
     assert fake_registry.values['wafer_size'][1] == fake_registry.REG_DWORD
 
 
-def test_source_save_writes_json_file(tmp_path, monkeypatch):
-    target = tmp_path / 'settings.json'
-    expected = {
+def test_source_save_writes_only_user_settings_to_local_file(tmp_path, monkeypatch):
+    bundled = tmp_path / 'settings.json'
+    local = tmp_path / 'settings.local.json'
+    monkeypatch.setattr(settings, 'IS_FROZEN', False)
+    monkeypatch.setattr(settings, 'BUNDLED_SETTINGS_FILE', str(bundled))
+    monkeypatch.setattr(settings, 'LOCAL_SETTINGS_FILE', str(local))
+
+    settings.save_settings({
         'spec_deviation': {'Vision Pattern': {'spec_range': 1.0}},
         'wafer_size': 200,
-    }
-    monkeypatch.setattr(settings, 'IS_FROZEN', False)
-    monkeypatch.setattr(settings, 'BUNDLED_SETTINGS_FILE', str(target))
+    })
 
-    settings.save_settings(expected)
-
-    assert json.loads(target.read_text(encoding='utf-8')) == expected
+    assert json.loads(local.read_text(encoding='utf-8')) == {'wafer_size': 200}
+    assert not bundled.exists()

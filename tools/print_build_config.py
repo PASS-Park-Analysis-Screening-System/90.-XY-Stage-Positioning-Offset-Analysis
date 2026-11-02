@@ -24,6 +24,7 @@ def main():
     print('=' * 60)
     print(f'  빌드 진입점    : {cfg.ENTRY_SCRIPT.replace(os.sep, "/")}')
     print(f'  빌드 이름      : {cfg.EXE_NAME}')
+    print(f'  앱 버전        : {cfg.app_version()} (src/core/version.py, module.json과 같아야 함)')
     print(f'  옵션           : --onefile, --windowed')
     print(f'  Hidden Imports : {", ".join(cfg.HIDDEN_IMPORTS)}')
     print(f'  Add Data       : {add_data}')
@@ -41,6 +42,14 @@ def main():
     if missing:
         print()
         print(f'[경고] 번들 원본이 저장소에 없습니다: {missing}')
+        return 1
+
+    private = cfg.settings_source_errors()
+    if private:
+        print()
+        print(f'[경고] settings.json에 개인 값이 있습니다: {private}')
+        print('       빌드 매니저는 XYStageOffset.spec을 쓰지 않아 이 값을 막지 못합니다.')
+        print('       python tools/migrate_local_settings.py 로 옮긴 뒤 빌드하세요.')
         return 1
     return 0
 

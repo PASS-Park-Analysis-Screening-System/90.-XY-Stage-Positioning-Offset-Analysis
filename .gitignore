@@ -6,6 +6,9 @@ venv/
 .env
 .vscode/
 
+# 소스 실행의 사용자 환경설정 (개인·고객 경로가 들어간다. 번들에도 넣지 않는다)
+src/core/settings.local.json
+
 # PyInstaller / 빌드 산출물
 build/
 dist/

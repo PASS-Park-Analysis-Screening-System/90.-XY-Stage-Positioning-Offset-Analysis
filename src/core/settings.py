@@ -4,6 +4,9 @@ settings.py — settings.json 기반 설정 저장/로드
 빌드 시 src/core/settings.json을 onefile EXE에 포함하고, 해당 파일의 스펙을
 항상 기준으로 사용한다. 빌드본의 사용자 환경설정은 Windows 레지스트리에
 저장하므로 외부 settings.json 파일은 생성하지 않는다.
+
+소스 실행의 사용자 환경설정은 settings.local.json(git 제외, 번들 제외)에 저장한다.
+settings.json에 저장하면 개인·고객 경로가 그대로 빌드에 들어간다.
 """
 
 import json
@@ -26,6 +29,8 @@ def _resolve_bundled_settings_file() -> str:
 
 
 BUNDLED_SETTINGS_FILE = _resolve_bundled_settings_file()
+LOCAL_SETTINGS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'settings.local.json')
 
 _REGISTRY_PATH = r'Software\XYStageOffset'
 _USER_SETTING_KEYS = {
@@ -34,6 +39,8 @@ _USER_SETTING_KEYS = {
     'recent_folders',
     'wafer_size',
 }
+# 빌드본은 번들에 값이 섞여 들어와도 이 항목을 쓰지 않는다. 빌드한 PC의 경로다.
+_MACHINE_SPECIFIC_DEFAULTS = {'last_folder': '', 'recent_folders': []}
 
 
 def _read_settings_file(file_path: str) -> dict:
@@ -44,6 +51,17 @@ def _read_settings_file(file_path: str) -> dict:
 def _write_settings_file(file_path: str, settings: dict):
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
+
+
+def _read_local_settings() -> dict:
+    """소스 실행의 사용자 환경설정을 읽는다. 없거나 손상되면 빈 dict."""
+    try:
+        local = _read_settings_file(LOCAL_SETTINGS_FILE)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(local, dict):
+        return {}
+    return {key: value for key, value in local.items() if key in _USER_SETTING_KEYS}
 
 
 def _read_registry_settings() -> dict:
@@ -109,8 +127,9 @@ def _write_registry_settings(settings: dict):
 def load_settings() -> dict:
     """내장 settings.json을 기준으로 사용자 환경설정을 병합한다.
 
-    소스 실행은 JSON을 그대로 사용한다. onefile 빌드본은 EXE에 포함된 JSON의
-    스펙을 사용하고, Windows 레지스트리의 사용자 설정만 제한적으로 병합한다.
+    소스 실행은 settings.local.json의 사용자 설정을 병합한다. onefile 빌드본은
+    EXE에 포함된 JSON의 스펙을 사용하고, Windows 레지스트리의 사용자 설정만
+    제한적으로 병합한다.
     """
     try:
         bundled = _read_settings_file(BUNDLED_SETTINGS_FILE)
@@ -118,9 +137,9 @@ def load_settings() -> dict:
         return {}
 
     if not IS_FROZEN:
-        return bundled
+        return {**bundled, **_read_local_settings()}
 
-    settings = bundled.copy()
+    settings = {**bundled, **_MACHINE_SPECIFIC_DEFAULTS}
     for key, value in _read_registry_settings().items():
         if key in _USER_SETTING_KEYS:
             settings[key] = value
@@ -128,17 +147,17 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict):
-    """설정 파일 저장"""
+    """사용자 환경설정만 저장한다. 번들 대상 settings.json은 바꾸지 않는다."""
+    user_settings = {
+        key: value for key, value in settings.items()
+        if key in _USER_SETTING_KEYS
+    }
     if IS_FROZEN:
-        user_settings = {
-            key: value for key, value in settings.items()
-            if key in _USER_SETTING_KEYS
-        }
         _write_registry_settings(user_settings)
         return
 
     try:
-        _write_settings_file(BUNDLED_SETTINGS_FILE, settings)
+        _write_settings_file(LOCAL_SETTINGS_FILE, user_settings)
     except OSError:
         pass
 
