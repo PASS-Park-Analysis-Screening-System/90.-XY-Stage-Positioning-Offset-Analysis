@@ -163,7 +163,8 @@ def test_die_without_coordinates_is_not_placed_from_the_table():
 def test_evaluate_pass_requires_a_deviation_matrix():
     stats = {'count': 10}
     empty = {'die_labels': [], 'overall_range': 0.0, 'overall_stddev': 0.0}
-    full = {'die_labels': ['Die2'], 'overall_range': 0.0, 'overall_stddev': 0.0}
+    full = {'die_labels': ['Die2', 'Die3'], 'repeat_labels': ['Lot1', 'Lot2'],
+            'overall_range': 0.0, 'overall_stddev': 0.0}
 
     assert evaluate_deviation_pass(stats, empty, 2.0, 0.4) is None
     assert evaluate_deviation_pass(stats, full, 2.0, 0.4) is True

@@ -179,7 +179,7 @@ DataAnalyzerApp (QMainWindow)
     "site_id":    str,   # Die 위치 ID (예: "Die_1")
     "method":     str,   # "X" 또는 "Y" — 축 구분 (필드명 주의!)
     "value":      float, # HZ1_O 측정값 (nm)
-    "is_outlier": bool,  # IQR 기반 이상치 여부
+    "is_outlier": bool,  # X, Y 축별 IQR 기반 이상치 여부
     "valid":      bool,  # 유효 데이터 여부
 }
 ```

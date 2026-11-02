@@ -4,7 +4,8 @@ core/checklist.py — 체크리스트 지표의 단일 출처
 분석 시트와 같은 기준(안정화 Die 제외, 첫 리핏 제외)으로 Avg, Dev Range, Dev StdDev,
 Cpk, 판정을 계산한다. Step 카드, Excel, PDF가 모두 이 함수를 써서 값이 어긋나지 않게 한다.
 """
-from core.die_analysis import (STABILIZATION_DIE_IDX, compute_deviation_matrix,
+from core.die_analysis import (MIN_JUDGE_DIES, MIN_JUDGE_REPEATS, STABILIZATION_DIE_IDX,
+                               below_minimum_size, compute_deviation_matrix,
                                evaluate_deviation_pass, extract_die_number,
                                filter_stabilization_die)
 from core.statistics import compute_cpk, compute_statistics, filter_by_method, is_usable
@@ -87,6 +88,10 @@ def basis_warnings(result: dict) -> list:
         dies, repeats = len(dev['die_labels']), len(dev['repeat_labels'])
         if not dies:
             messages.append(f'{axis}축 측정값이 없습니다 (행 없음, 값 또는 Site ID를 읽지 못함)')
+        elif below_minimum_size(dev):
+            messages.append(f'{axis}축 {dies} Die × {repeats} Repeat는 최소 '
+                            f'{MIN_JUDGE_DIES} × {MIN_JUDGE_REPEATS}에 못 미쳐 판정하지 않습니다 '
+                            f'(기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
         elif (dies, repeats) != (EXPECTED_DIES, EXPECTED_REPEATS):
             messages.append(f'{axis}축 {dies} Die × {repeats} Repeat로 분석합니다 '
                             f'(기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
@@ -98,6 +103,12 @@ def basis_warnings(result: dict) -> list:
     if skipped:
         messages.append(f"X/Y 측정 CSV가 없어 건너뛴 폴더: {', '.join(skipped)}")
     return messages
+
+
+def analysis_warnings(result: dict) -> list:
+    """분석 기준 라벨에 ✅를 붙이지 못하게 하는 경고 전부 (기준 차이, 건너뛴 Lot, CSV 비정상 값)."""
+    return (basis_warnings(result) + list(result.get('load_errors') or [])
+            + list(result.get('data_warnings') or []))
 
 
 def result_text(result) -> str:

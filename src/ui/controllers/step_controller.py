@@ -3,6 +3,7 @@ from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
                   filter_stabilization_die, stabilization_die)
 from core.die_analysis import select_display_rows
+from core.checklist import analysis_warnings
 from core import compute_statistics, filter_by_method
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
@@ -198,10 +199,12 @@ class StepMixin:
                 "카드·표·그래프만 적용됩니다. "
                 "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다.")
         else:
+            warnings = analysis_warnings(result)
+            text = (f"Analysis basis: {excluded_names or 'No die'} excluded  |  "
+                    f"Analyzing {len(data)} of {len(raw)}")
             self.filter_info_label.setText(
-                f"✅ Analysis basis: {excluded_names or 'No die'} excluded  |  "
-                f"Analyzing {len(data)} of {len(raw)}")
-            self.filter_info_label.setToolTip("")
+                f"⚠ {text}  |  경고 {len(warnings)}건" if warnings else f"✅ {text}")
+            self.filter_info_label.setToolTip("\n".join(warnings))
 
         self._update_cards(data, recipe)
         self._update_die_avg_tables()    # self._dev_x/y 기반 → Die 필터 적용됨

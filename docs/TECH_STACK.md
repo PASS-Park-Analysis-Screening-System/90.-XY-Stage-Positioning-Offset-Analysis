@@ -62,7 +62,7 @@ QMainWindow          — 앱 루트
 | 공정 능력 | `core/statistics.py 및 core/die_analysis.py` | `compute_cpk()` | Cpk = min[(USL-μ)/3σ, (μ-LSL)/3σ] |
 | 편차 행렬 | `core/statistics.py 및 core/die_analysis.py` | `compute_deviation_matrix()` | Die×Repeat 행렬, overall_range/stddev |
 | Affine 변환 | `core/statistics.py 및 core/die_analysis.py` | `compute_affine_transform()` | 최소자승법: Tx/Ty/Sx/Sy/θ 추출 |
-| 이상치 탐지 | `core/statistics.py 및 core/die_analysis.py` | `detect_outliers()` | IQR (Q1-1.5×IQR ~ Q3+1.5×IQR) |
+| 이상치 탐지 | `core/statistics.py 및 core/die_analysis.py` | `detect_outliers_by_axis()` | X, Y 축별 IQR (Q1-1.5×IQR ~ Q3+1.5×IQR) |
 | 트렌드 계산 | `core/recipe_scanner.py` | `compute_trend()` | Lot별 Mean/StdDev 시계열 |
 | Contour 보간 | `charts/ 모듈 (basic.py, wafer.py 등)` | `plot_contour_map()` | scipy griddata, cubic interpolation |
 

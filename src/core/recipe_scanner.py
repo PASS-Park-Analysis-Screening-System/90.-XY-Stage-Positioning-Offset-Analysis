@@ -20,7 +20,7 @@ import traceback
 import collections
 from core.csv_loader import scan_lot_folders, batch_load, get_scan_summary
 from core import (compute_statistics, compute_trend,
-                      detect_outliers, compute_repeatability,
+                      detect_outliers_by_axis, compute_repeatability,
                       compute_group_statistics, filter_by_method,
                       filter_stabilization_die)
 
@@ -177,7 +177,7 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
     analysis = filter_stabilization_die(data)
     for r in data:
         r['is_outlier'] = False
-    detect_outliers(analysis, method='iqr')
+    detect_outliers_by_axis(analysis, method='iqr')
 
     return {
         'recipe': recipe['name'],

@@ -232,7 +232,8 @@ def test_screen_label_counts_same_rows_as_analysis(tmp_path, window):
     label = _show(window, result)
 
     assert 'Analyzing 419 of 440' in label
-    assert label.startswith('✅')
+    assert label.startswith('⚠')    # 제외한 행이 있으면 경고가 있으므로 ✅가 아니다
+    assert '1행을 제외' in window.filter_info_label.toolTip()
 
 
 def test_screen_does_not_claim_analysis_basis_when_nothing_is_readable(tmp_path, window):

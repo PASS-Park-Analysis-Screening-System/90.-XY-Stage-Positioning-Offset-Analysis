@@ -191,6 +191,20 @@ def detect_outliers(data: list, metric_key: str = 'value',
     return data
 
 
+def detect_outliers_by_axis(data: list, metric_key: str = 'value',
+                            method: str = 'iqr', threshold: float = 1.5) -> list:
+    """X, Y 축마다 따로 경계를 구해 이상치를 표시한다.
+
+    축마다 기준점이 달라 두 축을 합치면 평균 차이만큼 경계가 넓어져 거의 잡지 못한다.
+    판정에는 쓰이지 않고 건수와 표시에만 쓰인다.
+    """
+    for r in data:
+        r['is_outlier'] = False
+    for axis in ('X', 'Y'):
+        detect_outliers(filter_by_method(data, axis), metric_key, method, threshold)
+    return data
+
+
 def filter_by_method(data: list, method: str) -> list:
     """Method(X/Y) 필터링"""
     return [r for r in data if r.get('method', '').upper() == method.upper()]

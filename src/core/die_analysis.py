@@ -256,6 +256,18 @@ def compute_deviation_matrix(data: list, method: str = 'X',
     }
 
 
+# 판정에 필요한 최소 크기. 이보다 작으면 Range, StdDev가 Stage 성능을 나타내지 못한다.
+MIN_JUDGE_DIES = 2
+MIN_JUDGE_REPEATS = 2
+
+
+def below_minimum_size(deviation: dict) -> bool:
+    """행렬이 판정 최소 크기보다 작은가 (Die나 Repeat 라벨이 있는 행렬만 검사)."""
+    return (('die_labels' in deviation and len(deviation['die_labels']) < MIN_JUDGE_DIES)
+            or ('repeat_labels' in deviation
+                and len(deviation['repeat_labels']) < MIN_JUDGE_REPEATS))
+
+
 def evaluate_deviation_pass(stats: dict, deviation: dict,
                             spec_range: Optional[float],
                             spec_stddev: Optional[float]) -> Optional[bool]:
@@ -272,12 +284,13 @@ def evaluate_deviation_pass(stats: dict, deviation: dict,
         spec_stddev: spec_deviation의 spec_stddev (None이면 미정의)
 
     Returns:
-        True(PASS) / False(FAIL) / None(데이터 없음 또는 spec 미정의 → '미분석')
+        True(PASS) / False(FAIL) / None(데이터 없음, 최소 크기 미달 또는 spec 미정의 → '미분석')
         spec_range/spec_stddev 중 하나라도 None이면 None을 반환해, 부분 spec에서
         float<=None 비교로 TypeError가 나는 것을 원천 차단한다.
     """
     # 값은 있어도 Site ID를 해석하지 못하면 행렬이 비어 Range가 0이다. 그것은 PASS가 아니다.
-    if (stats.get('count', 0) == 0 or not deviation.get('die_labels', True)
+    # 값이 하나뿐인 행렬도 Range가 0이므로 최소 크기에 못 미치면 판정하지 않는다.
+    if (stats.get('count', 0) == 0 or below_minimum_size(deviation)
             or spec_range is None or spec_stddev is None):
         return None
     return (deviation['overall_range'] <= spec_range
