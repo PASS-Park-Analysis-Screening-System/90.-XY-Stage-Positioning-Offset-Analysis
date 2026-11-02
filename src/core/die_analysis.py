@@ -125,12 +125,23 @@ def stabilization_die(data: list) -> Optional[int]:
     return None
 
 
+def is_analysis_row(row: dict, excluded_die: Optional[int]) -> bool:
+    """Die 행렬에 들어갈 수 있는 행인가.
+
+    Site ID를 읽지 못한 행은 Die에 배정할 수 없어 행렬에서 빠진다. 안정화 Die도 뺀다.
+    """
+    die = extract_die_number(row.get('site_id', ''))
+    return die is not None and die != excluded_die
+
+
 def filter_stabilization_die(data: list) -> list:
-    """안정화 Die(Site 0001)의 모든 데이터를 제외한다."""
-    first_die = stabilization_die(data)
-    if first_die is None:
-        return data
-    return [r for r in data if extract_die_number(r.get('site_id', '')) != first_die]
+    """분석 대상 행만 남긴다: 안정화 Die(Site 0001)와 Site ID를 읽지 못한 행을 뺀다.
+
+    통계, 편차 0점, 이상치, 분석 대상 표시가 모두 이 정의를 쓴다. 그래야
+    compute_deviation_matrix의 행렬과 같은 행을 본다.
+    """
+    excluded_die = stabilization_die(data)
+    return [r for r in data if is_analysis_row(r, excluded_die)]
 
 
 def compute_deviation_matrix(data: list, method: str = 'X',

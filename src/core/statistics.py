@@ -244,9 +244,9 @@ def spec_bounds(spec_limits: dict, recipe_name: str, axis: str) -> tuple:
 def axis_reference_means(data: list, metric_key: str = 'value') -> dict:
     """축별 기준 평균 = 편차의 0점. {'X': mean, 'Y': mean}
 
-    compute_deviation_matrix(die_analysis.py)가 쓰는 정의와 동일하게
-    '해당 축의 유효·유한 측정값 전체 평균'을 쓴다. PASS/FAIL(Dev Range/StdDev)과
-    Spec 초과·Cpk가 같은 0점을 보게 하기 위한 단일 출처다.
+    '해당 축의 유효·유한 측정값 전체 평균'이다. data로 filter_stabilization_die의
+    결과를 넘겨야 compute_deviation_matrix(die_analysis.py)의 average_nm과 같아진다.
+    PASS/FAIL(Dev Range/StdDev)과 Spec 초과·Cpk가 같은 0점을 보게 하기 위한 것이다.
     """
     buckets = {}
     for r in data or []:

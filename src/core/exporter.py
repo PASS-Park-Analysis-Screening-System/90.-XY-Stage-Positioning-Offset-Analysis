@@ -9,16 +9,15 @@ from typing import Optional
 
 from core.checklist import basis_warnings, build_checklist, result_text
 from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
-                               extract_die_number, stabilization_die)
+                               extract_die_number, is_analysis_row, stabilization_die)
 from core.statistics import (classify_row, spec_bounds, axis_reference_means,
                              active_anomaly_kinds, ANOMALY_FAILED,
                              ANOMALY_OUTLIER, ANOMALY_SPEC)
 
 
 def _analysis_flag(row: dict, excluded_die) -> str:
-    """행이 분석 대상이면 'Y', 안정화 Die라 분석에서 빠지면 'N'."""
-    return 'N' if (excluded_die is not None and
-                   extract_die_number(row.get('site_id', '')) == excluded_die) else 'Y'
+    """행이 분석 대상이면 'Y', 안정화 Die이거나 Site ID를 읽지 못해 빠지면 'N'."""
+    return 'Y' if is_analysis_row(row, excluded_die) else 'N'
 
 
 def export_combined_csv(data: list, output_path: str,

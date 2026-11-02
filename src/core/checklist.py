@@ -78,8 +78,8 @@ def basis_warnings(result: dict) -> list:
     if STABILIZATION_DIE_IDX not in dies_in_raw:
         messages.append('Site 0001이 없어 제외한 Die가 없습니다')
     data = filter_stabilization_die(raw)
-    excluded_rows = sum(1 for r in data if not is_usable(r)
-                        or extract_die_number(r.get('site_id', '')) is None)
+    unreadable_site = sum(1 for r in raw if extract_die_number(r.get('site_id', '')) is None)
+    excluded_rows = unreadable_site + sum(1 for r in data if not is_usable(r))
     if excluded_rows:
         messages.append(f'측정 실패 또는 읽지 못한 값 {excluded_rows}행을 제외했습니다')
     for axis in ('X', 'Y'):
