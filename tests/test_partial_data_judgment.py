@@ -282,7 +282,7 @@ def test_selecting_step_without_data_clears_previous_verdict(window):
     assert window.filter_info_label.text().startswith('✅')
 
 
-def test_step_not_loaded_yet_also_clears_previous_verdict(window):
+def test_step_without_result_clears_previous_verdict(window):
     window.recipes = [{'name': 'A', 'short_name': 'R', 'index': 1, 'rounds': []},
                       {'name': 'B', 'short_name': 'R', 'index': 2, 'rounds': []}]
     window.recipe_results = [dict(recipe='A', short_name='R', round='1st', raw_data=_table(),
@@ -487,3 +487,13 @@ def test_numpy_values_still_give_plain_fail():
     dev = {'die_labels': ['a', 'b'], 'repeat_labels': ['c', 'd'],
            'overall_range': np.float64(9.0), 'overall_stddev': np.float64(0.1)}
     assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 1.0) is False
+
+
+def test_buttons_stay_enabled_when_reset_raises(window, scan, monkeypatch):
+    def boom():
+        raise RuntimeError('화면 오류')
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+    with pytest.raises(RuntimeError):
+        scan(['R'])
+    assert window.btn_scan.isEnabled()
+    assert window.btn_browse.isEnabled()

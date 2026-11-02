@@ -91,11 +91,11 @@ class ScanMixin:
         self._save_settings()
 
         self.logger.info("전체 Recipe 데이터 로드 시작 (1st round)...")
-        self._set_scan_controls_enabled(False)
         self._loader_thread = DataLoaderThread(folder)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
         self._reset_results_for_scan()
+        self._set_scan_controls_enabled(False)  # 위에서 예외가 나도 버튼이 잠기지 않게 이 순서로 둔다
         self._loader_thread.start()
 
     def _reset_results_for_scan(self):
