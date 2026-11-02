@@ -218,7 +218,7 @@ class GuideDialog(QDialog):
                 "<tr><td>1. 스캔 데이터 수집</td><td>CSV 폴더에서 원시 수치 로드</td></tr>"
                 "<tr><td>2. Deviation Matrix 계산</td><td>overall_range, overall_stddev 산출</td></tr>"
                 "<tr><td>3. Spec값과 비교</td><td>overall_range ≤ spec_range <b>and</b> overall_stddev ≤ spec_stddev</td></tr>"
-                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 또는 Repeat 2개 미만</b> → — (판정 안 함)</td></tr>"
+                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 또는 Repeat 2개 미만</b> → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시</td></tr>"
                 "</table>"
                 "<h3>5.2 Spec 설정 값 의미</h3>"
                 "<table>"

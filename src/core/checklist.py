@@ -31,11 +31,13 @@ def compute_axis_metrics(data: list, axis: str, recipe_name: str,
     # Cpk는 편차 기준(0점 = 축 기준평균)으로 계산한다.
     #   raw 평균에는 레시피별 기준점 차이(bias)가 섞여 있어, 그대로 쓰면 Stage 성능이
     #   아니라 기준점 정의를 재게 된다. 평균이 0이므로 Cpk = min(|LSL|, USL) / 3σ다.
-    # Spec이 없으면 compute_cpk가 NaN을 돌려주어 N/A로 표시된다.
+    # 판정하지 않는 축(None)은 Cpk도 없다('—'). 값이 합격처럼 읽히면 안 된다.
+    # 판정은 있는데 계산할 수 없으면(σ=0, Limit 없음) compute_cpk가 NaN을 돌려주어 N/A다.
     # 측정이 없는 축은 0이 아니라 '값 없음'이다. 0.000으로 나가면 정상처럼 보인다.
     has_data = bool(deviation['die_labels'])
-    cpk = (compute_cpk(0.0, stats['stdev'], limits.get('lsl'), limits.get('usl'))
-           if has_data else float('nan'))
+    result = evaluate_deviation_pass(stats, deviation, spec_range, spec_stddev)
+    cpk = (None if result is None
+           else compute_cpk(0.0, stats['stdev'], limits.get('lsl'), limits.get('usl')))
     return {
         'axis': axis,
         'stats': stats,
@@ -44,7 +46,7 @@ def compute_axis_metrics(data: list, axis: str, recipe_name: str,
         'range': deviation['overall_range'] if has_data else None,
         'stddev': deviation['overall_stddev'] if has_data else None,
         'cpk': cpk,
-        'result': evaluate_deviation_pass(stats, deviation, spec_range, spec_stddev),
+        'result': result,
         'spec_range': spec_range,
         'spec_stddev': spec_stddev,
         'die_count': len(deviation['die_labels']),

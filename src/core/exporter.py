@@ -439,7 +439,8 @@ def write_checklist_sheets(wb, recipe_results: list, spec_limits: dict = None,
          'Dev StdDev (µm)', 'Cpk', 'Result', 'Spec Range (µm)', 'Spec StdDev (µm)'],
         [[r['recipe'], r['round'], r['axis'], r['die_count'], r['repeat_count'],
           shown(r['avg']), shown(r['range']), shown(r['stddev']),
-          r['cpk'] if r['cpk'] == r['cpk'] else 'N/A', result_text(r['result']),
+          '—' if r['cpk'] is None else r['cpk'] if r['cpk'] == r['cpk'] else 'N/A',
+          result_text(r['result']),
           r['spec_range'], r['spec_stddev']] for r in rows],
         st, highlight=lambda v: v[9] == 'FAIL')
 

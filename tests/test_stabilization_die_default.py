@@ -72,7 +72,7 @@ class _Host(StepMixin):
     def _on_die_filter_changed(self, *_):
         pass
 
-    def _update_cards(self, data, recipe):
+    def _update_cards(self, data, recipe, warned=False):
         self.analyzed = data
 
     def _update_die_avg_tables(self):

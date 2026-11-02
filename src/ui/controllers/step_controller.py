@@ -215,12 +215,13 @@ class StepMixin:
         default_off = stabilization_die(raw)
         self._die_filter_is_custom = excluded != ({default_off} if default_off is not None else set())
         excluded_names = ', '.join(f'Die {d + 1}' for d in sorted(excluded))
+        warnings = analysis_warnings(result)
         if not data:
             self.filter_info_label.setText(
                 f"⚠ 분석할 수 있는 행이 없습니다  |  Analyzing 0 of {len(raw)}")
             hint = "Site ID를 읽지 못했거나 모든 Die를 해제했습니다." if raw else ""
             self.filter_info_label.setToolTip(
-                "\n".join(filter(None, [hint, _warning_tooltip(analysis_warnings(result))])))
+                "\n".join(filter(None, [hint, _warning_tooltip(warnings)])))
         elif self._die_filter_is_custom:
             self.filter_info_label.setText(
                 f"⚠ Custom: Analyzing {len(data)} of {len(raw)}  |  Summary와 기준 다름")
@@ -229,14 +230,13 @@ class StepMixin:
                 "카드·표·그래프만 적용됩니다. "
                 "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다.")
         else:
-            warnings = analysis_warnings(result)
             text = (f"Analysis basis: {excluded_names or 'No die'} excluded  |  "
                     f"Analyzing {len(data)} of {len(raw)}")
             self.filter_info_label.setText(
                 f"⚠ {text}  |  경고 있음" if warnings else f"✅ {text}")
             self.filter_info_label.setToolTip(_warning_tooltip(warnings))
 
-        self._update_cards(data, recipe)
+        self._update_cards(data, recipe, warned=bool(warnings))
         self._update_die_avg_tables()    # self._dev_x/y 기반 → Die 필터 적용됨
         self._update_deviation_tables()  # self._dev_x/y 기반 → Die 필터 적용됨
         self._update_raw_table()         # self.raw_data 기반 → Die 필터 미적용 (전체 표시)

@@ -114,8 +114,7 @@ def test_unparseable_site_id_is_not_a_pass(tmp_path):
 
 def test_no_die_means_no_cpk(tmp_path):
     _write(tmp_path, site=lambda d: f'P{d:03d}_X000_Y000')
-    cpk = _rows(_load(tmp_path))['X']['cpk']
-    assert cpk != cpk
+    assert _rows(_load(tmp_path))['X']['cpk'] is None
 
 
 def test_row_with_broken_site_id_is_out_of_avg_as_well():

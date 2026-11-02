@@ -100,15 +100,16 @@ class StatCard(QFrame):
             + (" font-weight: bold;" if custom else ""))
 
     def update_stats(self, avg, rng, std, cpk, is_pass: bool = None,
-                     spec_r=None, spec_s=None):
+                     spec_r=None, spec_s=None, warned: bool = False):
         # 측정이 없는 축은 값이 None이다
         self.lbl_avg.setText("—" if avg is None else f"{avg:.3f}")
         self.lbl_rng.setText("—" if rng is None else f"{rng:.3f}")
         self.lbl_std.setText("—" if std is None else f"{std:.3f}")
         # Cpk: 계산 불가(σ=0 등)는 compute_cpk가 NaN을 반환 → 'N/A'로 표시하여
         # 실제 Cpk 0.00(평균이 규격 한계에 위치)과 혼동되지 않게 한다.
-        cpk_unavailable = cpk is None or (isinstance(cpk, float) and math.isnan(cpk))
-        self.lbl_cpk.setText("N/A" if cpk_unavailable else f"{cpk:.2f}")
+        # None은 판정하지 않은 축이다 → 판정과 같은 '—'.
+        cpk_unavailable = isinstance(cpk, float) and math.isnan(cpk)
+        self.lbl_cpk.setText("—" if cpk is None else "N/A" if cpk_unavailable else f"{cpk:.2f}")
 
         # Spec 대비 표기. 판정하지 않은 값에는 ✓나 ▲를 붙이지 않는다
         if is_pass is None and spec_r is not None and spec_s is not None:
@@ -130,9 +131,9 @@ class StatCard(QFrame):
                 f"padding: 4px; border-radius: 4px; font-size: 10pt;"
             )
         elif is_pass:
-            self.badge.setText("✅ PASS")
+            self.badge.setText("⚠ PASS" if warned else "✅ PASS")
             self.badge.setStyleSheet(
-                f"background: {GREEN}; color: {BG}; font-weight: bold; "
+                f"background: {ORANGE if warned else GREEN}; color: {BG}; font-weight: bold; "
                 f"padding: 4px; border-radius: 4px; font-size: 10pt;"
             )
         else:

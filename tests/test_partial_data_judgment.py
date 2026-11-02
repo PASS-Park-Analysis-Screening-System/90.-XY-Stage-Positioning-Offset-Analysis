@@ -497,3 +497,124 @@ def test_buttons_stay_enabled_when_reset_raises(window, scan, monkeypatch):
         scan(['R'])
     assert window.btn_scan.isEnabled()
     assert window.btn_browse.isEnabled()
+
+
+# ── 사용자 결정: 경고가 있는 PASS 배지, 판정이 없을 때의 Cpk ─────────────────
+
+def _excel_rows(result):
+    from openpyxl import Workbook
+    from core.exporter import write_checklist_sheets
+    wb = Workbook()
+    write_checklist_sheets(wb, [result], SPEC_LIM, SPEC_DEV)
+    rows = list(wb['Checklist'].iter_rows(values_only=True))
+    return [dict(zip(rows[0], r)) for r in rows[1:]]
+
+
+def _pdf_rows(result, tmp_path, monkeypatch):
+    import matplotlib.axes
+    from core.pdf_generator import generate_pdf_report
+    from core.recipe_scanner import compare_recipes
+    tables = []
+    original = matplotlib.axes.Axes.table
+
+    def spy(self, *args, **kwargs):
+        tables.append(kwargs)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(matplotlib.axes.Axes, 'table', spy)
+    generate_pdf_report(str(tmp_path / 'r.pdf'), 'root', [result], compare_recipes([result]),
+                        SPEC_LIM, SPEC_DEV)
+    table = next(t for t in tables if 'Cpk' in (t.get('colLabels') or []))
+    return [dict(zip(table['colLabels'], row)) for row in table['cellText']]
+
+
+def test_cpk_is_dash_everywhere_when_not_judged(window, tmp_path, monkeypatch):
+    result = _partial_result()
+
+    assert {r['axis']: r['cpk'] for r in build_checklist([result], SPEC_LIM, SPEC_DEV)} == {
+        'X': None, 'Y': None}
+    assert [r['Cpk'] for r in _excel_rows(result)] == ['—', '—']
+    assert [r['Cpk'] for r in _pdf_rows(result, tmp_path, monkeypatch)] == ['—', '—']
+    _show(window, result['raw_data'])
+    assert window.card_x.lbl_cpk.text() == '—'
+    assert window.card_y.lbl_cpk.text() == '—'
+
+
+def test_cpk_stays_a_number_for_normal_data(window, tmp_path, monkeypatch):
+    result = {**_partial_result(), 'raw_data': _table()}
+    metric = {r['axis']: r['cpk'] for r in build_checklist([result], SPEC_LIM, SPEC_DEV)}
+    assert metric['X'] == pytest.approx(5 / (3 * compute_statistics(
+        filter_by_method(filter_stabilization_die(result['raw_data']), 'X'))['stdev']), abs=1e-3)
+
+    assert [r['Cpk'] for r in _excel_rows(result)] == [metric['X'], metric['Y']]
+    pdf = _pdf_rows(result, tmp_path, monkeypatch)
+    assert [r['Cpk'] for r in pdf] == [f"{metric['X']:.2f}", f"{metric['Y']:.2f}"]
+    _show(window, result['raw_data'])
+    assert window.card_x.lbl_cpk.text() == f"{metric['X']:.2f}"
+
+
+def test_cpk_is_not_applicable_when_judged_but_not_computable(window):
+    rows = [dict(r, value=4000.0) for r in _table()]    # σ = 0, 판정은 PASS
+    assert _checks(rows)['X']['result'] is True
+    cpk = _checks(rows)['X']['cpk']
+    assert cpk != cpk
+    assert _excel_rows({**_partial_result(), 'raw_data': rows})[0]['Cpk'] == 'N/A'
+    _show(window, rows)
+    assert window.card_x.lbl_cpk.text() == 'N/A'
+
+
+def test_cpk_is_dash_when_verdict_is_dash_because_spec_is_missing():
+    rows = _table()
+    result = {'short_name': 'R', 'round': '1st', 'raw_data': rows}
+    row = build_checklist([result], SPEC_LIM, {})[0]
+    assert row['result'] is None
+    assert row['cpk'] is None
+
+
+def test_badge_warns_on_pass_with_warning_and_keeps_verdict(window, tmp_path, monkeypatch):
+    rows = [r for r in _table() if not (r['site_id'].startswith('0005')
+                                        and r['lot_name'] == 'Lot003')]
+    result = {**_partial_result(), 'raw_data': rows}
+
+    _show(window, rows)
+
+    assert window.card_x.badge.text() == '⚠ PASS'
+    assert window.card_y.badge.text() == '⚠ PASS'
+    window._compute_all_step_pass_states()
+    assert window.step_pass_states[0] is True
+    assert [r['Result'] for r in _excel_rows(result)] == ['PASS', 'PASS']
+    assert [r['Result'] for r in _pdf_rows(result, tmp_path, monkeypatch)] == ['PASS', 'PASS']
+
+
+@pytest.mark.parametrize('extra', [
+    {'load_errors': ['Lot9 건너뜀']},
+    {'failed_measurements': {'count': 1, 'text': '측정 실패 1건'}},
+])
+def test_badge_warns_for_every_kind_of_warning(window, extra):
+    _show(window, _table(), **extra)
+    assert window.card_x.badge.text() == '⚠ PASS'
+
+
+def test_badge_warns_for_csv_warning(window):
+    rows = _table()
+    result = dict(recipe='R', short_name='R', round='1st', raw_data=rows, statistics={},
+                  data_warnings=['U+FFFD'])
+    window.recipe_results = [result]
+    window._display_result(result, {'name': 'R', 'short_name': 'R', 'index': 1})
+    assert window.card_x.badge.text() == '⚠ PASS'
+
+
+def test_badge_is_plain_pass_without_warning_and_returns_after_warning(window):
+    _show(window, _table(), load_errors=['Lot9 건너뜀'])
+    assert window.card_x.badge.text() == '⚠ PASS'
+    _show(window, _table())
+    assert window.card_x.badge.text() == '✅ PASS'
+
+
+def test_badge_fail_and_dash_do_not_change_with_warning(window):
+    rows = _table()
+    next(r for r in rows if r['method'] == 'X' and r['site_id'].startswith('0005'))['value'] += 9000
+    _show(window, rows, load_errors=['Lot9 건너뜀'])
+    assert window.card_x.badge.text() == '❌ FAIL'
+    assert window.card_y.badge.text() == '⚠ PASS'
+    _show(window, _table(range(1, 3), range(1, 11)))
+    assert window.card_x.badge.text() == '—'

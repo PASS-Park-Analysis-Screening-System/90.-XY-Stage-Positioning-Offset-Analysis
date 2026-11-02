@@ -3,7 +3,7 @@ from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
 class CardMixin:
-    def _update_cards(self, data, recipe):
+    def _update_cards(self, data, recipe, warned=False):
         short = recipe.get('short_name', '')
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
@@ -20,7 +20,7 @@ class CardMixin:
         custom = getattr(self, '_die_filter_is_custom', False)
         for card, m in ((self.card_x, mx), (self.card_y, my)):
             card.update_stats(m['avg'], m['range'], m['stddev'], m['cpk'], m['result'],
-                              spec_r=m['spec_range'], spec_s=m['spec_stddev'])
+                              spec_r=m['spec_range'], spec_s=m['spec_stddev'], warned=warned)
             card.set_basis(m['die_count'], m['repeat_count'], custom)
 
         # Step 버튼은 Summary와 같은 분석 기준으로 _compute_all_step_pass_states에서만
