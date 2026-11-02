@@ -1,6 +1,10 @@
 """Site ID를 읽지 못한 행이 행렬 0점과 다른 값을 만들지 않는지 확인한다."""
 
+import os
+
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core.checklist import basis_warnings, build_checklist
 from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
