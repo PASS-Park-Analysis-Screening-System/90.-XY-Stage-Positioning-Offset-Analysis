@@ -15,6 +15,7 @@ from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
+from core.version import APP_VERSION
 from ui.controllers.table_controller import (
     SUMMARY_ROW_LABELS, SUMMARY_GROUP_HEADER_ROWS, SUMMARY_CHK_ROWS)
 
@@ -960,7 +961,7 @@ class UIBuilderMixin:
         QTimer.singleShot(200, self._render_die_position)
 
         # Boot log
-        QTimer.singleShot(50, lambda: self.logger.head("XY Stage Offset Analyzer v1.0.0 시작"))
+        QTimer.singleShot(50, lambda: self.logger.head(f"XY Stage Offset Analyzer v{APP_VERSION} 시작"))
         QTimer.singleShot(100, lambda: self.logger.info(
             "폴더를 선택하고 '스캔 & 분석'을 눌러주세요."))
 
