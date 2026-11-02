@@ -226,9 +226,11 @@ class StepMixin:
             self.filter_info_label.setText(
                 f"⚠ Custom: Analyzing {len(data)} of {len(raw)}  |  Summary와 기준 다름")
             self.filter_info_label.setToolTip(
-                f"제외: {excluded_names or '없음'}\n"
-                "카드·표·그래프만 적용됩니다. "
-                "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다.")
+                "\n".join(filter(None, [
+                    f"제외: {excluded_names or '없음'}",
+                    "카드·표·그래프만 적용됩니다. "
+                    "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다.",
+                    _warning_tooltip(warnings)])))
         else:
             text = (f"Analysis basis: {excluded_names or 'No die'} excluded  |  "
                     f"Analyzing {len(data)} of {len(raw)}")

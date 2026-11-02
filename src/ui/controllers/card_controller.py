@@ -10,7 +10,7 @@ class CardMixin:
         if not spec_limits.get(short):
             self.logger.warn(f"spec_limits에 '{short}' 키 없음 → Cpk 계산 불가")
         if not spec_deviation.get(short):
-            self.logger.warn(f"spec_deviation에 '{short}' 키 없음 → PASS/FAIL 판정 불가")
+            self.logger.warn(f"spec_deviation에 '{short}' 키 없음 → PASS/FAIL 판정 불가 (Cpk도 표시하지 않음)")
 
         # 카드는 Die 필터를 따른다. Cpk는 편차 기준이다 (core.checklist 참조).
         mx = compute_axis_metrics(data, 'X', short, spec_limits, spec_deviation)

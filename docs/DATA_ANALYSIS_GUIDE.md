@@ -119,7 +119,7 @@ Wafer 전면의 **오차 분포를 연속적인 컬러 맵**으로 시각화. �
 | 1. 스캔 데이터 수집 | CSV 폴더에서 원시 수치 로드 |
 | 2. Deviation Matrix 계산 | overall_range, overall_stddev 산출 |
 | 3. Spec값과 비교 | overall_range ≤ spec_range **and** overall_stddev ≤ spec_stddev |
-| 4. 최종 판정 | **두 조건 모두 충족** → ✅ PASS / **하나라도 초과** → ❌ FAIL / **Die 또는 Repeat 2개 미만** → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시 |
+| 4. 최종 판정 | **두 조건 모두 충족** → ✅ PASS / **하나라도 초과** → ❌ FAIL / **Die 또는 Repeat 2개 미만, Spec 미정의** → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시 |
 
 ### 5.2 Spec 설정 값 의미
 
@@ -143,7 +143,7 @@ Wafer 전면의 **오차 분포를 연속적인 컬러 맵**으로 시각화. �
 
 ### 5.4 Cpk와 Spec Range 연계 해석
 
-Cpk는 `spec_limits`의 LSL/USL 기준이며, PASS/FAIL 판정은 `spec_deviation`의 `spec_range`/`spec_stddev` 기준입니다. 두 기준이 **독립적**으로 동작하므로, **Cpk가 높아도 Range가 Spec을 초과하면 FAIL**이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요.
+Cpk는 `spec_limits`의 LSL/USL 기준이며, PASS/FAIL 판정은 `spec_deviation`의 `spec_range`/`spec_stddev` 기준입니다. 두 기준이 **독립적**으로 동작하므로, **Cpk가 높아도 Range가 Spec을 초과하면 FAIL**이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 **—**이면(Spec 미정의 또는 Die·Repeat 2개 미만) Cpk도 —로 표시합니다.
 
 ---
 

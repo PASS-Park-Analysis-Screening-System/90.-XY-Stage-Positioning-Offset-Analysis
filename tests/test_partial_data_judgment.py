@@ -489,14 +489,18 @@ def test_numpy_values_still_give_plain_fail():
     assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 1.0) is False
 
 
-def test_buttons_stay_enabled_when_reset_raises(window, scan, monkeypatch):
+def test_scan_start_failure_recovers_like_a_scan_error(window, scan, monkeypatch):
     def boom():
         raise RuntimeError('화면 오류')
     monkeypatch.setattr(window, '_reset_results_for_scan', boom)
-    with pytest.raises(RuntimeError):
-        scan(['R'])
+
+    scan(['R'])
+
     assert window.btn_scan.isEnabled()
     assert window.btn_browse.isEnabled()
+    assert window._loader_thread is None    # 시작하지 않은 스레드를 남기지 않는다
+    assert window.filter_info_label.text() == '⚠ 스캔 실패'
+    assert window.statusBar().currentMessage() == '스캔 실패'
 
 
 # ── 사용자 결정: 경고가 있는 PASS 배지, 판정이 없을 때의 Cpk ─────────────────
@@ -552,12 +556,14 @@ def test_cpk_stays_a_number_for_normal_data(window, tmp_path, monkeypatch):
     assert window.card_x.lbl_cpk.text() == f"{metric['X']:.2f}"
 
 
-def test_cpk_is_not_applicable_when_judged_but_not_computable(window):
+def test_cpk_is_not_applicable_when_judged_but_not_computable(window, tmp_path, monkeypatch):
     rows = [dict(r, value=4000.0) for r in _table()]    # σ = 0, 판정은 PASS
     assert _checks(rows)['X']['result'] is True
     cpk = _checks(rows)['X']['cpk']
     assert cpk != cpk
-    assert _excel_rows({**_partial_result(), 'raw_data': rows})[0]['Cpk'] == 'N/A'
+    result = {**_partial_result(), 'raw_data': rows}
+    assert _excel_rows(result)[0]['Cpk'] == 'N/A'
+    assert _pdf_rows(result, tmp_path, monkeypatch)[0]['Cpk'] == 'N/A'
     _show(window, rows)
     assert window.card_x.lbl_cpk.text() == 'N/A'
 
@@ -604,10 +610,29 @@ def test_badge_warns_for_csv_warning(window):
 
 
 def test_badge_is_plain_pass_without_warning_and_returns_after_warning(window):
+    from ui.theme import GREEN, ORANGE
     _show(window, _table(), load_errors=['Lot9 건너뜀'])
     assert window.card_x.badge.text() == '⚠ PASS'
+    assert f'background: {ORANGE}' in window.card_x.badge.styleSheet()
     _show(window, _table())
     assert window.card_x.badge.text() == '✅ PASS'
+    assert f'background: {GREEN}' in window.card_x.badge.styleSheet()
+
+
+def test_custom_filter_keeps_warned_badge_and_shows_the_reason(window):
+    rows = _table()
+    _show(window, rows, load_errors=['Lot9 건너뜀'])
+    box = window._die_checkboxes[5]
+    box.blockSignals(True)
+    box.setChecked(False)
+    box.blockSignals(False)
+
+    label = _show(window, rows, load_errors=['Lot9 건너뜀'])
+
+    assert label.text().startswith('⚠ Custom')
+    assert window.card_x.badge.text() == '⚠ PASS'
+    assert 'Lot9 건너뜀' in label.toolTip()
+    assert '제외: ' in label.toolTip()
 
 
 def test_badge_fail_and_dash_do_not_change_with_warning(window):

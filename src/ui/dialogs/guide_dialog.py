@@ -218,7 +218,7 @@ class GuideDialog(QDialog):
                 "<tr><td>1. 스캔 데이터 수집</td><td>CSV 폴더에서 원시 수치 로드</td></tr>"
                 "<tr><td>2. Deviation Matrix 계산</td><td>overall_range, overall_stddev 산출</td></tr>"
                 "<tr><td>3. Spec값과 비교</td><td>overall_range ≤ spec_range <b>and</b> overall_stddev ≤ spec_stddev</td></tr>"
-                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 또는 Repeat 2개 미만</b> → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시</td></tr>"
+                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 또는 Repeat 2개 미만, Spec 미정의</b> → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시</td></tr>"
                 "</table>"
                 "<h3>5.2 Spec 설정 값 의미</h3>"
                 "<table>"
@@ -237,7 +237,7 @@ class GuideDialog(QDialog):
                 "</table>"
                 "<p>불일치 시 분석이 <b>원천 차단</b>됩니다. 탐색기에서 폴더 이름을 변경 후 재스캔하세요.</p>"
                 "<h3>5.4 Cpk와 Spec Range 연계 해석</h3>"
-                "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요.</p>"
+                "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die·Repeat 2개 미만) Cpk도 —로 표시합니다.</p>"
             )
         }
 

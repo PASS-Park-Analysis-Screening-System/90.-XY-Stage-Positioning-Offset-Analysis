@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 import os
+import traceback
 from core.recipe_scanner import scan_recipes
 from ui.workers.data_loader_thread import DataLoaderThread
 from core.checklist import basis_warnings
@@ -94,8 +95,13 @@ class ScanMixin:
         self._loader_thread = DataLoaderThread(folder)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
-        self._reset_results_for_scan()
-        self._set_scan_controls_enabled(False)  # 위에서 예외가 나도 버튼이 잠기지 않게 이 순서로 둔다
+        try:
+            self._reset_results_for_scan()
+        except Exception as e:
+            # 시작하지 않은 스레드를 남기면 스캔이 돌지 않는데도 로드 중으로 보인다
+            self._on_scan_error(e, traceback.format_exc())
+            return
+        self._set_scan_controls_enabled(False)
         self._loader_thread.start()
 
     def _reset_results_for_scan(self):
