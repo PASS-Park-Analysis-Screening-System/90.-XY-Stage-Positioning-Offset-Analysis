@@ -157,7 +157,7 @@ class ScanMixin:
             # 시트 기준(21 Die × 10 Repeat)과 다르면 값은 나오지만 시트와 비교할 수 없다
             for msg in basis_warnings(r):
                 basis_differs = True
-                self.logger.warn(f"  ⚠ {label}: {msg} — 폴더 구성 확인 필요")
+                self.logger.warn(f"  ⚠ {label}: {msg}")
 
             # 측정 실패 행 요약 — '어느 Lot/Die가 실제로 문제인지' 구별용
             failed = r.get('failed_measurements') or {}

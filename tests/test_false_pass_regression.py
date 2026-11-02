@@ -128,6 +128,20 @@ def test_row_with_broken_site_id_is_out_of_avg_as_well():
     assert rows['X']['avg'] == 100.0
 
 
+def test_row_with_broken_site_id_does_not_shift_deviation_zero_point():
+    from core.die_analysis import compute_deviation_matrix
+
+    good = [{'lot_name': f'L{rep}', 'site_id': f'{die:04d}_X000_Y000', 'method': 'X',
+             'value': 100.0, 'valid': True} for rep in range(10) for die in range(1, 23)]
+    broken = {'lot_name': 'L0', 'site_id': 'BAD', 'method': 'X', 'value': 99999.0, 'valid': True}
+
+    dev = compute_deviation_matrix(good + [broken], 'X')
+
+    assert dev['average_nm'] == 100.0
+    assert all(d['avg'] == 0.0 for d in dev['die_stats'])
+    assert any('1행을 제외' in m for m in basis_warnings({'raw_data': good + [broken]}))
+
+
 def test_excluded_rows_are_stated_in_basis_even_when_shape_is_standard(tmp_path):
     def edit(cells, die, rep, axis):
         if (die, rep, axis) == (5, 3, 'X'):

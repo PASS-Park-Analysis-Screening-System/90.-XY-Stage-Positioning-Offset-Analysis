@@ -156,15 +156,15 @@ def compute_deviation_matrix(data: list, method: str = 'X',
         return {'die_labels': [], 'repeat_labels': [], 'matrix': {},
                 'average_nm': 0, 'die_stats': [], 'overall_range': 0, 'overall_stddev': 0}
 
-    # 2) Overall average (nm)
-    values = [r[metric_key] for r in filtered]
-    average = sum(values) / len(values)
-
-    # 3) Extract die numbers
+    # 2) Extract die numbers
     for r in filtered:
         r['_die_num'] = extract_die_number(r.get('site_id', ''))
 
     valid = [r for r in filtered if r['_die_num'] is not None]
+
+    # 3) Overall average (nm): 행렬에 들어가는 행으로 구해야 편차의 0점이 밀리지 않는다
+    values = [r[metric_key] for r in (valid or filtered)]
+    average = sum(values) / len(values)
     die_numbers = sorted(set(r['_die_num'] for r in valid))
 
     # 4) Repeat = Lot name ordering
