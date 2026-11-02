@@ -95,6 +95,9 @@ def basis_warnings(result: dict) -> list:
         elif (dies, repeats) != (EXPECTED_DIES, EXPECTED_REPEATS):
             messages.append(f'{axis}축 {dies} Die × {repeats} Repeat로 분석합니다 '
                             f'(기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
+        filled = sum(v is not None for row in dev['matrix'].values() for v in row.values())
+        if dies and filled != dies * repeats:
+            messages.append(f'{axis}축 행렬 {dies * repeats}칸 중 {filled}칸만 값이 있습니다')
     lot_total = result.get('first_repeat_unverified', 0)
     if lot_total:
         messages.append(f'폴더 {lot_total}개 중 측정 순서상 첫 폴더가 Repeat No 1로 확인되지 않아 '
@@ -106,13 +109,15 @@ def basis_warnings(result: dict) -> list:
 
 
 def analysis_warnings(result: dict) -> list:
-    """분석 기준 라벨에 ✅를 붙이지 못하게 하는 경고 전부 (기준 차이, 건너뛴 Lot, CSV 비정상 값)."""
-    return (basis_warnings(result) + list(result.get('load_errors') or [])
-            + list(result.get('data_warnings') or []))
+    """분석 기준 라벨에 ✅를 붙이지 못하게 하는 경고 전부 (System Log의 경고와 같은 범위)."""
+    failed = result.get('failed_measurements') or {}
+    return ([result['error']] if result.get('error') else []) + basis_warnings(result) + (
+        [failed['text']] if failed.get('count') else []) + list(
+        result.get('load_errors') or []) + list(result.get('data_warnings') or [])
 
 
 def result_text(result) -> str:
-    """판정 값을 표시 문자열로 바꾼다 (Spec 미정의나 데이터 없음은 '—')."""
+    """판정 값을 표시 문자열로 바꾼다 (Spec 미정의, 데이터 없음, 최소 크기 미달은 '—')."""
     if result is None:
         return '—'
     return 'PASS' if result else 'FAIL'

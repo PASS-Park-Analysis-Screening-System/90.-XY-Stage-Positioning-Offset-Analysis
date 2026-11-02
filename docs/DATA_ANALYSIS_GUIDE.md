@@ -119,7 +119,7 @@ Wafer 전면의 **오차 분포를 연속적인 컬러 맵**으로 시각화. �
 | 1. 스캔 데이터 수집 | CSV 폴더에서 원시 수치 로드 |
 | 2. Deviation Matrix 계산 | overall_range, overall_stddev 산출 |
 | 3. Spec값과 비교 | overall_range ≤ spec_range **and** overall_stddev ≤ spec_stddev |
-| 4. 최종 판정 | **두 조건 모두 충족** → ✅ PASS / **하나라도 초과** → ❌ FAIL |
+| 4. 최종 판정 | **두 조건 모두 충족** → ✅ PASS / **하나라도 초과** → ❌ FAIL / **Die 또는 Repeat 2개 미만** → — (판정 안 함) |
 
 ### 5.2 Spec 설정 값 의미
 

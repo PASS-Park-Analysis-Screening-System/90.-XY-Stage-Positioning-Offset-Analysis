@@ -128,11 +128,14 @@ class TableMixin:
                 it.setBackground(QColor(BG2)); it.setForeground(QColor(FG))
                 return it
 
-            # Checklist (그룹 헤더 다음)
-            t.setItem(ROW_X_RANGE, col, _chk_item(x_range, spec_r))
-            t.setItem(ROW_Y_RANGE, col, _chk_item(y_range, spec_r))
-            t.setItem(ROW_X_STD,   col, _chk_item(x_std,   spec_s))
-            t.setItem(ROW_Y_STD,   col, _chk_item(y_std,   spec_s))
+            # Checklist (그룹 헤더 다음). 판정하지 않은 축의 값은 Spec 색을 입히지 않는다
+            spec_defined = spec_r is not None and spec_s is not None
+            not_judged_x = spec_defined and px is None
+            not_judged_y = spec_defined and py is None
+            t.setItem(ROW_X_RANGE, col, _chk_item(x_range, None if not_judged_x else spec_r))
+            t.setItem(ROW_Y_RANGE, col, _chk_item(y_range, None if not_judged_y else spec_r))
+            t.setItem(ROW_X_STD,   col, _chk_item(x_std,   None if not_judged_x else spec_s))
+            t.setItem(ROW_Y_STD,   col, _chk_item(y_std,   None if not_judged_y else spec_s))
             # Result
             t.setItem(ROW_X_RESULT, col, _flag_item(px))
             t.setItem(ROW_Y_RESULT, col, _flag_item(py))

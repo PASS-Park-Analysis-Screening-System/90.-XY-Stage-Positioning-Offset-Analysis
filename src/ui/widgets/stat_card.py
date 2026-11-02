@@ -110,7 +110,9 @@ class StatCard(QFrame):
         cpk_unavailable = cpk is None or (isinstance(cpk, float) and math.isnan(cpk))
         self.lbl_cpk.setText("N/A" if cpk_unavailable else f"{cpk:.2f}")
 
-        # Spec 대비 표기
+        # Spec 대비 표기. 판정하지 않은 값에는 ✓나 ▲를 붙이지 않는다
+        if is_pass is None and spec_r is not None and spec_s is not None:
+            spec_r = spec_s = None
         rng_text, rng_color = self._format_spec_delta(rng, spec_r)
         self.lbl_rng_spec.setText(rng_text)
         self.lbl_rng_spec.setStyleSheet(

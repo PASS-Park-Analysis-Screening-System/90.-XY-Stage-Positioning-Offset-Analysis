@@ -109,21 +109,22 @@ class TestAffineDegeneracy:
 # (#2의 근본 원인이던 step/card 가드 중복을 한 함수로 통합)
 # ──────────────────────────────────────────────────────────────────────────
 class TestEvaluateDeviationPass:
-    _DEV = {'overall_range': 1.0, 'overall_stddev': 0.1}
+    _LABELS = {'die_labels': ['Die2', 'Die3'], 'repeat_labels': ['Lot1', 'Lot2']}
+    _DEV = {**_LABELS, 'overall_range': 1.0, 'overall_stddev': 0.1}
 
     def test_within_spec_is_pass(self):
         assert evaluate_deviation_pass({'count': 5}, self._DEV, 2.0, 0.2) is True
 
     def test_range_exceeds_is_fail(self):
-        dev = {'overall_range': 3.0, 'overall_stddev': 0.1}
+        dev = {**self._LABELS, 'overall_range': 3.0, 'overall_stddev': 0.1}
         assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 0.2) is False
 
     def test_stddev_exceeds_is_fail(self):
-        dev = {'overall_range': 1.0, 'overall_stddev': 0.5}
+        dev = {**self._LABELS, 'overall_range': 1.0, 'overall_stddev': 0.5}
         assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 0.2) is False
 
     def test_boundary_is_inclusive_pass(self):
-        dev = {'overall_range': 2.0, 'overall_stddev': 0.2}
+        dev = {**self._LABELS, 'overall_range': 2.0, 'overall_stddev': 0.2}
         assert evaluate_deviation_pass({'count': 5}, dev, 2.0, 0.2) is True
 
     def test_no_data_is_none(self):

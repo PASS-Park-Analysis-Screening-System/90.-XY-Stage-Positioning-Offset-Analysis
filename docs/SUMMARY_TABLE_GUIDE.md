@@ -218,4 +218,4 @@ X/Y Pass/Fail 판정에 사용되는 기준값은 `settings.json` → `spec_devi
 | `spec_range` | 허용 편차 범위 (µm) — `Max - Min` 기준 |
 | `spec_stddev` | 허용 표준편차 (µm) |
 
-> 두 조건 모두 충족해야 해당 축(X/Y)이 PASS 판정됩니다.
+> 두 조건 모두 충족해야 해당 축(X/Y)이 PASS 판정됩니다. Die 또는 Repeat가 2개 미만이면 판정하지 않고 `—`로 표시합니다.

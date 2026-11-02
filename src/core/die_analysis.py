@@ -262,10 +262,9 @@ MIN_JUDGE_REPEATS = 2
 
 
 def below_minimum_size(deviation: dict) -> bool:
-    """행렬이 판정 최소 크기보다 작은가 (Die나 Repeat 라벨이 있는 행렬만 검사)."""
-    return (('die_labels' in deviation and len(deviation['die_labels']) < MIN_JUDGE_DIES)
-            or ('repeat_labels' in deviation
-                and len(deviation['repeat_labels']) < MIN_JUDGE_REPEATS))
+    """행렬이 판정 최소 크기보다 작은가 (라벨이 없는 행렬은 크기를 모르므로 작은 것으로 본다)."""
+    return (len(deviation.get('die_labels') or []) < MIN_JUDGE_DIES
+            or len(deviation.get('repeat_labels') or []) < MIN_JUDGE_REPEATS)
 
 
 def evaluate_deviation_pass(stats: dict, deviation: dict,
