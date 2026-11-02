@@ -108,6 +108,7 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
         self._trend_spec = None  # Spec 한계선용
         self._lot_filter_updating = False
         self._lot_checkboxes = {}  # {lot_name: QCheckBox}
+        self._die_filter_reset_pending = False  # True면 다음 표시 때 Die 필터를 기본값으로 재생성
 
         self._build_ui()
         self._restore_settings()  # 폴더 + 저장된 창 geometry 복원(또는 최대화)

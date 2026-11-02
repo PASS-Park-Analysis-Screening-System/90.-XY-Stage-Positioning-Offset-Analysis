@@ -3,7 +3,7 @@ import os
 from core.recipe_scanner import scan_recipes
 from ui.workers.data_loader_thread import DataLoaderThread
 from core.settings import add_recent_folder
-from core import compute_deviation_matrix, compute_affine_transform
+from core import compute_deviation_matrix, compute_affine_transform, filter_stabilization_die
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 import charts as viz
 
@@ -127,6 +127,7 @@ class ScanMixin:
         정상처럼 보이는 상황을 막기 위해 반드시 화면에 남긴다.
         """
         clean = True
+        repeat_unverified = False
         for r in results:
             label = r.get('short_name') or r.get('recipe', '')
 
@@ -144,6 +145,20 @@ class ScanMixin:
                 self.logger.info(
                     f"  ℹ {label}: Z Drive 채널 {dropped}행 제외 "
                     f"(위치 오프셋은 Height 채널로 분석)")
+
+            # 첫 리핏 제외도 정상 동작이지만 분석 대상이 바뀌므로 폴더 이름을 남긴다
+            first_repeat = r.get('first_repeat_excluded')
+            if first_repeat:
+                self.logger.info(
+                    f"  ℹ {label}: 첫 리핏 폴더 {first_repeat} 제외 (Repeat No 1)")
+
+            lot_total = r.get('first_repeat_unverified', 0)
+            if lot_total:
+                repeat_unverified = True
+                self.logger.warn(
+                    f"  ⚠ {label}: 폴더 {lot_total}개 전체를 분석합니다. "
+                    f"첫 폴더의 Repeat No가 1이 아니어서 제외하지 않았습니다 "
+                    f"(분석 기준 10회 — 폴더 구성 확인 필요)")
 
             # 측정 실패 행 요약 — '어느 Lot/Die가 실제로 문제인지' 구별용
             failed = r.get('failed_measurements') or {}
@@ -163,7 +178,8 @@ class ScanMixin:
                 clean = False
 
         if clean:
-            self.logger.ok("  ✅ 데이터 품질 이상 없음")
+            if not repeat_unverified:
+                self.logger.ok("  ✅ 데이터 품질 이상 없음")
         else:
             self.logger.info(
                 "  ℹ 위 항목은 분석·차트에서 제외되었습니다. "
@@ -183,7 +199,7 @@ class ScanMixin:
         # Affine Transform
         self.logger.section("Affine Transform 계통 오차 분석")
         for i, result in enumerate(self.recipe_results):
-            data = result.get('raw_data', [])
+            data = filter_stabilization_die(result.get('raw_data', []))
             dx = compute_deviation_matrix(data, 'X')
             dy = compute_deviation_matrix(data, 'Y')
             if dx['die_stats'] and dy['die_stats']:
@@ -203,6 +219,8 @@ class ScanMixin:
 
         self.main_tabs.setCurrentIndex(1)
         self.data_tabs.setCurrentIndex(0)
+        # 새 스캔은 이전 스캔의 Die 선택을 물려받지 않고 기본(안정화 Die 제외)으로 시작한다
+        self._die_filter_reset_pending = True
         if self.recipe_results:
             self._select_step(0)
 

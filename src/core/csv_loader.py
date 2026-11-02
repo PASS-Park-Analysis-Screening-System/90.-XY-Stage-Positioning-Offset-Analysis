@@ -551,6 +551,37 @@ def load_lot_data(lot_path: str) -> dict:
 # Batch Loading (핵심 — csv combine 대체)
 # ──────────────────────────────────────────────
 
+# 측정은 11 Repeat, 분석은 첫 Repeat을 뺀 10 Repeat이다.
+# 폴더가 이보다 적으면 엔지니어가 이미 뺀 것으로 보고 그대로 분석한다.
+MIN_LOTS_FOR_FIRST_REPEAT_EXCLUSION = 11
+
+
+def _is_first_repeat(lot: dict) -> bool:
+    """Lot 폴더 CSV 메타의 Repeat No가 1인가. 읽을 수 없으면 False."""
+    csv_name = lot.get('x_csv') or lot.get('y_csv')
+    if not csv_name:
+        return False
+    meta = parse_csv(os.path.join(lot['path'], csv_name))['meta']
+    return _safe_int(meta.get('repeat_no', '')) == 1
+
+
+def _exclude_first_repeat(lots: list, info: Optional[dict]) -> list:
+    """번호순 첫 폴더가 Repeat 1이고 폴더가 11개 이상이면 그 폴더를 뺀다.
+
+    폴더 이름과 시작 번호는 장비마다 달라(Sample1002~, Sample1501~, Lot208~)
+    위치만으로 판단하지 않는다. 근거가 없으면 빼지 않고 info로 알린다.
+    """
+    if len(lots) < MIN_LOTS_FOR_FIRST_REPEAT_EXCLUSION:
+        return lots
+    if _is_first_repeat(lots[0]):
+        if info is not None:
+            info['first_repeat_excluded'] = lots[0]['lot_name']
+        return lots[1:]
+    if info is not None:
+        info['first_repeat_unverified'] = len(lots)
+    return lots
+
+
 def batch_load(root_path: str,
                lot_range: Optional[Union[tuple, list]] = None,
                axis: str = 'both',
@@ -568,7 +599,9 @@ def batch_load(root_path: str,
         errors: 전달하면 Lot 단위 실패 메시지가 여기에 누적된다.
                 실패한 Lot은 건너뛰고 나머지 Lot은 정상 로드된다.
         warnings: 전달하면 로드는 됐지만 값이 비정상인 셀 경고가 여기에 누적된다.
-        info: 전달하면 부가 집계가 담긴다 ('channel_dropped' = Z Drive로 제외된 행 수).
+        info: 전달하면 부가 집계가 담긴다 ('channel_dropped' = Z Drive로 제외된 행 수,
+              'first_repeat_excluded' = 제외한 첫 리핏 폴더 이름,
+              'first_repeat_unverified' = 폴더가 11개 이상인데 첫 리핏을 확인하지 못한 폴더 수).
 
     Returns:
         [{'lot_name': 'Lot401', 'lot_index': 1, 'filename': 'Lot4_X_UL.csv',
@@ -588,6 +621,9 @@ def batch_load(root_path: str,
             lots = [l for l in lots if start <= l['index'] <= end]
         elif isinstance(lot_range, list):
             lots = [l for l in lots if l['index'] in lot_range]
+    else:
+        # 범위를 직접 지정한 호출은 그 선택을 그대로 따른다
+        lots = _exclude_first_repeat(lots, info)
 
     results = []
     for lot in lots:

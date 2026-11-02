@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QLabel, QPushButton, QCheckBox
 from functools import partial
-from core import compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass
+from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
+                  filter_stabilization_die)
 from core import compute_statistics, filter_by_method
 from core.recipe_scanner import scan_lot_folders
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
@@ -36,7 +37,8 @@ class StepMixin:
         """scan complete 후 모든 Step Pass/Fail 일괄 계산 후 버튼 색상 즉시 반영."""
         dev_spec = self.settings.get('spec_deviation', {})
         for i, result in enumerate(self.recipe_results):
-            data = result.get('raw_data', [])
+            # Summary 체크리스트·분석 시트와 같은 21 Die 기준 (안정화 Die 제외)
+            data = filter_stabilization_die(result.get('raw_data', []))
             short = result.get('short_name', '')
             ds = dev_spec.get(short, {})
             spec_r = ds.get('spec_range')
@@ -118,7 +120,16 @@ class StepMixin:
             extract_die_number(r.get('site_id', ''))
             for r in raw if extract_die_number(r.get('site_id', '')) is not None))
 
-        if set(die_nums_in_data) != set(self._die_checkboxes.keys()):
+        if (self._die_filter_reset_pending
+                or set(die_nums_in_data) != set(self._die_checkboxes.keys())):
+            self._die_filter_reset_pending = False
+
+            # 안정화 Die는 해제 상태로 시작한다. 카드·표·차트의 기본값을
+            # Summary 체크리스트·분석 시트의 21 Die와 맞추기 위함이다.
+            # Die가 하나뿐이면 분석할 데이터가 없어지므로 제외하지 않는다.
+            stabilization_die = (extract_die_number(raw[0].get('site_id', ''))
+                                 if len(die_nums_in_data) > 1 else None)
+
             # 기존 체크박스 제거 (접힌 상태)
             while self._die_cb_flow.count():
                 item = self._die_cb_flow.takeAt(0)
@@ -136,7 +147,7 @@ class StepMixin:
             def _make_die_cb(die_idx, hex_color):
                 """Die 체크박스 생성 헬퍼 (공통 스타일)."""
                 cb = QCheckBox(f"Die {die_idx + 1}")
-                cb.setChecked(True)
+                cb.setChecked(die_idx != stabilization_die)
                 cb.setStyleSheet(f"""
                     QCheckBox {{ color: {hex_color}; font-size: 8pt; font-weight: bold; border: none; }}
                     QCheckBox::indicator {{ width: 12px; height: 12px; }}
@@ -167,6 +178,8 @@ class StepMixin:
                 self._die_grid_layout.addWidget(cb_grid, row, col)
                 self._die_grid_checkboxes[d] = cb_grid
 
+            if self._die_filter_expanded:
+                self._render_mini_die_map()
 
         # 필터 적용: 체크 해제된 Die 제외
         excluded = {d for d, cb in self._die_checkboxes.items() if not cb.isChecked()}
