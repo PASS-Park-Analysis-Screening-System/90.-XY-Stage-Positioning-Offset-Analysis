@@ -8,12 +8,7 @@
   "outlier_threshold": 1.5,
   "export_delimiter": "\t",
   "window_geometry": "1920x1009+0+23",
-  "recent_folders": [
-    "C:/Users/Spare/Desktop/03. Program/97. XY Stage Positioning Offset Analysis/data",
-    "Z:/MC/03. 시스템 최정공정(C.I.M)/2025/177. C160112-020725_Huahong Grace Fab3 #2(NX-Wafer 200mm)/2) Check Data_2026-Q1-Rev.0/15. XY Stage/3. XY stage positioning test",
-    "C:\\Users\\Spare\\Desktop\\03. Program\\97. XY Stage Positioning Offset Analysis\\data",
-    "C:/Users/Spare/Desktop/새 폴더"
-  ],
+  "recent_folders": [],
   "spec_limits": {
     "Vision Pattern": {
       "X": {
