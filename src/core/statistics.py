@@ -7,6 +7,17 @@ import logging
 from typing import Optional
 
 
+def is_usable(row: dict, metric_key: str = 'value') -> bool:
+    """통계에 넣을 수 있는 행인가 (Valid이고 값이 유한한 숫자).
+
+    Valid=TRUE인데 값만 NaN인 행 하나가 평균·표준편차를 통째로 NaN으로 만들고,
+    NaN은 Spec 비교가 항상 거짓이라 FAIL로 나간다. 모든 집계가 이 기준을 쓴다.
+    """
+    val = row.get(metric_key)
+    return (isinstance(val, (int, float)) and math.isfinite(val)
+            and row.get('valid', True))
+
+
 def compute_statistics(data: list, metric_key: str = 'value') -> dict:
     """기본 통계 계산
 
@@ -17,8 +28,7 @@ def compute_statistics(data: list, metric_key: str = 'value') -> dict:
     Returns:
         {'count': N, 'mean': ..., 'stdev': ..., 'min': ..., 'max': ..., 'range': ...}
     """
-    values = [r[metric_key] for r in data
-              if isinstance(r.get(metric_key), (int, float)) and r.get('valid', True)]
+    values = [r[metric_key] for r in data if is_usable(r, metric_key)]
 
     if not values:
         return {'count': 0, 'mean': 0, 'stdev': 0, 'min': 0, 'max': 0, 'range': 0}
@@ -79,9 +89,8 @@ def compute_trend(data: list, metric_key: str = 'value') -> list:
         idx = r.get('lot_index', 0)
         if lot not in lot_groups:
             lot_groups[lot] = {'index': idx, 'values': []}
-        val = r.get(metric_key)
-        if isinstance(val, (int, float)) and r.get('valid', True):
-            lot_groups[lot]['values'].append(val)
+        if is_usable(r, metric_key):
+            lot_groups[lot]['values'].append(r[metric_key])
 
     trend = []
     for lot_name in sorted(lot_groups.keys(), key=lambda x: lot_groups[x]['index']):
@@ -311,8 +320,7 @@ def compute_repeatability(data: list, metric_key: str = 'value') -> dict:
         }
     """
     # Overall
-    all_values = [r[metric_key] for r in data
-                  if isinstance(r.get(metric_key), (int, float)) and r.get('valid', True)]
+    all_values = [r[metric_key] for r in data if is_usable(r, metric_key)]
 
     if not all_values:
         return {'lot_variation': {}, 'site_variation': [], 'overall': {}}
@@ -323,8 +331,9 @@ def compute_repeatability(data: list, metric_key: str = 'value') -> dict:
     cv = (overall_std / abs(overall_mean) * 100) if overall_mean != 0 else 0
 
     # Lot별 평균의 변동
+    # 전부 실패한 Lot은 평균이 0으로 나오므로 측정값처럼 섞이지 않게 뺀다
     lot_stats = compute_group_statistics(data, 'lot_name', metric_key)
-    lot_means = [s['mean'] for s in lot_stats]
+    lot_means = [s['mean'] for s in lot_stats if s['count'] > 0]
     if lot_means:
         mean_of_means = sum(lot_means) / len(lot_means)
         var_of_means = sum((m - mean_of_means) ** 2 for m in lot_means) / len(lot_means)
@@ -340,9 +349,8 @@ def compute_repeatability(data: list, metric_key: str = 'value') -> dict:
         key = f"{site}_{method}"
         if key not in site_groups:
             site_groups[key] = []
-        val = r.get(metric_key)
-        if isinstance(val, (int, float)) and r.get('valid', True):
-            site_groups[key].append(val)
+        if is_usable(r, metric_key):
+            site_groups[key].append(r[metric_key])
 
     site_variation = []
     for key in sorted(site_groups.keys()):

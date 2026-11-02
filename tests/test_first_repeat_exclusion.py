@@ -137,3 +137,118 @@ def test_load_recipe_data_reports_exclusion_per_recipe(tmp_path):
     assert ten['first_repeat_excluded'] is None
     assert len(_lots(eleven['raw_data'])) == len(_lots(ten['raw_data'])) == 10
     assert eleven['statistics'] == ten['statistics']
+
+
+# ── 측정 순서 ─────────────────────────────────────────────────────────────
+
+def _write_ordered_lot(root, name, repeat_no, minute=None):
+    lot = root / name
+    lot.mkdir(parents=True)
+    start = f'Start Time,2026.06.11 10:{minute:02d}:00\n' if minute is not None else ''
+    for axis in ('X', 'Y'):
+        (lot / f'Lot6_{axis}_UL.csv').write_text(
+            f'Lot ID,Lot6\nRepeat No,{repeat_no}\n{start}\n'
+            'Site ID,Site X,Site Y,Point No,X (um),Y (um),Method ID,State,Valid,'
+            'HZ1_O (nm),HZ1_O_Valid\n'
+            f'0001_X000_Y000,0,0,1,1,1,{axis},COMPLETED,TRUE,1.0,TRUE\n'
+            f'0002_X000_Y000,0,0,1,1,1,{axis},COMPLETED,TRUE,1.0,TRUE\n',
+            encoding='utf-8')
+
+
+def _lot6_names(count):
+    return ['Lot6'] + [f'Lot6 ({n})' for n in range(2, count + 1)]
+
+
+def _order(rows):
+    seen = []
+    for r in rows:
+        if r['lot_name'] not in seen:
+            seen.append(r['lot_name'])
+    return seen
+
+
+def test_copy_suffix_names_keep_measurement_order_by_start_time(tmp_path):
+    """Lot6, Lot6 (2) ... 형식: 마지막 숫자로 정렬하면 Lot6이 여섯째로 밀린다."""
+    names = _lot6_names(10)
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 2, minute=i)
+
+    assert _order(batch_load(str(tmp_path))) == names
+
+
+def test_copy_suffix_names_keep_order_without_start_time(tmp_path):
+    names = _lot6_names(10)
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 2)
+
+    assert _order(batch_load(str(tmp_path))) == names
+
+
+def test_eleven_copy_suffix_folders_drop_the_real_first_repeat(tmp_path):
+    names = _lot6_names(11)
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 1, minute=i)
+    info = {}
+
+    rows = batch_load(str(tmp_path), info=info)
+
+    assert info['first_repeat_excluded'] == 'Lot6'
+    assert _order(rows) == names[1:]
+
+
+def test_eleven_copy_suffix_folders_without_start_time_drop_first_repeat(tmp_path):
+    names = _lot6_names(11)
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 1)
+    info = {}
+
+    batch_load(str(tmp_path), info=info)
+
+    assert info['first_repeat_excluded'] == 'Lot6'
+
+
+def test_start_time_overrides_misleading_folder_names(tmp_path):
+    _write_ordered_lot(tmp_path, 'Sample2', 3, minute=2)
+    _write_ordered_lot(tmp_path, 'Sample9', 2, minute=1)
+
+    assert _order(batch_load(str(tmp_path))) == ['Sample9', 'Sample2']
+
+
+def test_missing_start_time_in_one_folder_falls_back_to_repeat_no(tmp_path):
+    _write_ordered_lot(tmp_path, 'Sample2', 3, minute=2)
+    _write_ordered_lot(tmp_path, 'Sample9', 2)
+
+    assert _order(batch_load(str(tmp_path))) == ['Sample9', 'Sample2']
+
+
+def _real_shape_names():
+    """실측 LLC 폴더 형식: Lot6 (2) ~ Lot6 (10)이 Repeat 2~10, 괄호 없는 Lot6이 Repeat 11."""
+    return [f'Lot6 ({n})' for n in range(2, 11)] + ['Lot6']
+
+
+def test_real_shape_bare_name_is_last_by_start_time(tmp_path):
+    names = _real_shape_names()
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 2, minute=i)
+
+    assert _order(batch_load(str(tmp_path))) == names
+
+
+def test_real_shape_bare_name_is_last_by_repeat_no(tmp_path):
+    names = _real_shape_names()
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 2)
+
+    assert _order(batch_load(str(tmp_path))) == names
+
+
+def test_real_shape_ten_folders_are_not_dropped(tmp_path):
+    names = _real_shape_names()
+    for i, name in enumerate(names):
+        _write_ordered_lot(tmp_path, name, i + 2, minute=i)
+    info = {}
+
+    rows = batch_load(str(tmp_path), info=info)
+
+    assert len(_order(rows)) == 10
+    assert 'first_repeat_excluded' not in info

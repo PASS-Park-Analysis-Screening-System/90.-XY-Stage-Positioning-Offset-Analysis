@@ -7,14 +7,26 @@ import csv
 import collections
 from typing import Optional
 
+from core.checklist import basis_warnings, build_checklist, result_text
+from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
+                               extract_die_number, stabilization_die)
 from core.statistics import (classify_row, spec_bounds, axis_reference_means,
                              active_anomaly_kinds, ANOMALY_FAILED,
                              ANOMALY_OUTLIER, ANOMALY_SPEC)
 
 
+def _analysis_flag(row: dict, excluded_die) -> str:
+    """행이 분석 대상이면 'Y', 안정화 Die라 분석에서 빠지면 'N'."""
+    return 'N' if (excluded_die is not None and
+                   extract_die_number(row.get('site_id', '')) == excluded_die) else 'Y'
+
+
 def export_combined_csv(data: list, output_path: str,
                         delimiter: str = '\t') -> str:
     """Analysis.txt 대체 — 배치 데이터를 CSV/TSV로 내보내기
+
+    분석 시트에 붙여 넣는 원본이므로 22 Die를 모두 내보낸다. 안정화 Die 행은
+    마지막 열 'Analysis Target'에 N으로 표시한다. 앞 13개 열은 시트의 복사 영역과 같다.
 
     Args:
         data: batch_load() 결과
@@ -29,7 +41,8 @@ def export_combined_csv(data: list, output_path: str,
 
     header = ['Foldername', 'Filename', 'Site ID', 'Site X', 'Site Y',
               'Point No', 'X (um)', 'Y (um)', 'Method ID', 'State',
-              'Valid', 'HZ1_O (nm)', 'HZ1_O_Valid']
+              'Valid', 'HZ1_O (nm)', 'HZ1_O_Valid', 'Analysis Target']
+    excluded_die = stabilization_die(data)
 
     with open(output_path, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f, delimiter=delimiter)
@@ -50,6 +63,7 @@ def export_combined_csv(data: list, output_path: str,
                 'TRUE' if r.get('valid', True) else 'FALSE',
                 r.get('value', ''),
                 'TRUE' if r.get('value_valid', True) else 'FALSE',
+                _analysis_flag(r, excluded_die),
             ])
 
     return output_path
@@ -90,7 +104,7 @@ def export_statistics_csv(stats: list, output_path: str) -> str:
 ANOMALY_HEADERS = ['Recipe', 'Round', 'Lot', 'Site ID', 'Die X', 'Die Y',
                    'Axis', 'Point No', 'State', 'Valid', 'HZ1_O (nm)',
                    '편차 (nm)', '기준평균 (nm)', '이상 유형', 'LSL', 'USL',
-                   '원본 CSV', 'Lot 폴더']
+                   '원본 CSV', 'Lot 폴더', '분석 대상']
 
 
 def collect_anomalies(recipe_results: list, spec_limits: dict = None) -> list:
@@ -106,9 +120,11 @@ def collect_anomalies(recipe_results: list, spec_limits: dict = None) -> list:
         round_name = result.get('round', '')
         round_path = result.get('round_path', '')
         # 화면 필터·PASS/FAIL과 같은 편차 기준을 쓴다 (Recipe별로 0점을 따로 잡는다)
-        axis_means = axis_reference_means(result.get('raw_data', []))
+        raw = result.get('raw_data', [])
+        axis_means = axis_reference_means(filter_stabilization_die(raw))
+        excluded_die = stabilization_die(raw)
 
-        for r in result.get('raw_data', []):
+        for r in raw:
             kinds = classify_row(r, spec_limits, recipe, axis_means=axis_means)
             if not kinds:
                 continue
@@ -143,6 +159,7 @@ def collect_anomalies(recipe_results: list, spec_limits: dict = None) -> list:
                 'usl': usl if usl is not None else '',
                 'csv_path': os.path.join(lot_dir, filename) if lot_dir and filename else filename,
                 'lot_dir': lot_dir,
+                'in_analysis': _analysis_flag(r, excluded_die),
             })
     return rows
 
@@ -160,11 +177,17 @@ def build_quality_summary(recipe_results: list, anomalies: list) -> list:
         c = by_recipe.get(recipe, collections.Counter())
         total = len(result.get('raw_data', []))
         failed = c.get(ANOMALY_FAILED, 0)
+        failed_in_analysis = sum(
+            1 for a in anomalies
+            if a['recipe'] == recipe and a['in_analysis'] == 'Y'
+            and ANOMALY_FAILED in a['kinds'].split(', '))
         summary.append({
             'recipe': recipe,
             'round': result.get('round', ''),
             'total': total,
+            'analysis_total': len(filter_stabilization_die(result.get('raw_data', []))),
             'failed': failed,
+            'failed_in_analysis': failed_in_analysis,
             'outlier': c.get(ANOMALY_OUTLIER, 0),
             'spec': c.get(ANOMALY_SPEC, 0),
             'file_issues': len(result.get('data_warnings', [])),
@@ -189,13 +212,15 @@ def build_file_issues(recipe_results: list) -> list:
 def _group_counts(anomalies: list, key: str) -> list:
     """key(lot/site_id)별 유형 집계."""
     table = collections.defaultdict(lambda: collections.Counter())
+    flags = {}
     for a in anomalies:
         ident = (a['recipe'], a[key])
+        flags[ident] = a['in_analysis']
         for kind in a['kinds'].split(', '):
             table[ident][kind] += 1
             table[ident]['합계'] += 1
 
-    rows = [{'recipe': rec, 'key': val,
+    rows = [{'recipe': rec, 'key': val, 'in_analysis': flags[(rec, val)],
              'failed': c.get(ANOMALY_FAILED, 0),
              'outlier': c.get(ANOMALY_OUTLIER, 0),
              'spec': c.get(ANOMALY_SPEC, 0),
@@ -209,15 +234,17 @@ def export_excel_report(data: list, stats: dict, trend: list,
                         output_path: str,
                         recipe_results: list = None,
                         spec_limits: dict = None,
-                        log_rows: list = None) -> str:
+                        log_rows: list = None,
+                        spec_deviation: dict = None) -> str:
     """Excel 리포트 (openpyxl 사용)
 
     시트 구성:
-        1. Raw Data — 선택된 Step의 측정 데이터
-        2. Statistics — 그룹별 통계
-        3. Trend — Lot별 트렌드
+        Raw Data — 선택된 Step의 측정 데이터 (22 Die, 분석 대상 열로 구분)
+        Statistics — 선택된 Step의 통계 (호출자가 분석 기준으로 계산해 넘긴 값)
+        Trend — 선택된 Step의 Lot별 트렌드 (호출자가 분석 기준으로 계산해 넘긴 값)
         recipe_results/log_rows를 넘기면 아래 시트가 추가된다 (전체 Recipe 기준):
-        4. Summary / Anomalies / By Lot / By Die / File Issues / System Log
+        Checklist / Analysis Basis / Summary / Anomalies / By Lot / By Die /
+        File Issues / System Log
     """
     try:
         from openpyxl import Workbook
@@ -247,7 +274,8 @@ def export_excel_report(data: list, stats: dict, trend: list,
 
     headers_raw = ['Lot', 'Filename', 'Site ID', 'Site X', 'Site Y',
                    'Point No', 'X (um)', 'Y (um)', 'Method', 'State',
-                   'Valid', 'HZ1_O (nm)', 'Outlier']
+                   'Valid', 'HZ1_O (nm)', 'Outlier', '분석 대상']
+    excluded_die = stabilization_die(data)
 
     for col, h in enumerate(headers_raw, 1):
         cell = ws1.cell(row=1, column=col, value=h)
@@ -266,6 +294,7 @@ def export_excel_report(data: list, stats: dict, trend: list,
             'TRUE' if r.get('valid', True) else 'FALSE',
             r.get('value', ''),
             'YES' if r.get('is_outlier', False) else '',
+            _analysis_flag(r, excluded_die),
         ]
         for col, val in enumerate(values, 1):
             cell = ws1.cell(row=row_idx, column=col, value=val)
@@ -322,9 +351,14 @@ def export_excel_report(data: list, stats: dict, trend: list,
             for col, val in enumerate(values, 1):
                 ws3.cell(row=row_idx, column=col, value=val).font = data_font
 
-    # === Sheet 4~: 데이터 품질 / 로그 (전달된 경우에만) ===
+    # === 체크리스트 / 분석 기준 (전체 Recipe) — 첫 화면에서 보이게 맨 앞에 둔다 ===
+    if recipe_results:
+        write_checklist_sheets(wb, recipe_results, spec_limits, spec_deviation)
+
+    # === 데이터 품질 / 로그 (전달된 경우에만) ===
     write_quality_sheets(wb, recipe_results, spec_limits, log_rows)
 
+    wb.active = 0
     wb.save(output_path)
     return output_path
 
@@ -376,6 +410,76 @@ def _write_table(ws, headers: list, rows: list, st: dict,
                               f'{len(rows) + 1}')
 
 
+# 시트마다 어떤 행으로 계산했는지 Analysis Basis 시트에 그대로 적는다
+SHEET_BASIS = [
+    ('Checklist', '분석 기준', '전체 Recipe. 화면 Summary·Step 카드 기본값과 같은 값'),
+    ('Statistics / Trend', '분석 기준', '선택한 Step. X, Y를 합친 값'),
+    ('Raw Data', '전체 22 Die', '선택한 Step의 원본. 안정화 Die 행은 분석 대상 열이 N'),
+    ('Summary', '전체 + 분석 기준',
+     '총 측정·측정 실패는 전체, 분석 대상 측정·실패(분석 대상)·이상치는 분석 기준'),
+    ('Anomalies / By Die', '전체 22 Die', '측정 실패는 안정화 Die도 표시. 분석 대상 열로 구분'),
+    ('By Lot', '전체 22 Die', '안정화 Die의 측정 실패도 합산'),
+    ('공통', '-', '첫 리핏 폴더가 제외되면 모든 시트에 나오지 않음. 위 표의 제외 리핏 폴더 참고'),
+]
+
+
+def write_checklist_sheets(wb, recipe_results: list, spec_limits: dict = None,
+                           spec_deviation: dict = None) -> None:
+    """Checklist·Analysis Basis 시트를 워크북 맨 앞에 추가한다."""
+    st = _make_styles()
+    rows = build_checklist(recipe_results, spec_limits, spec_deviation)
+
+    def shown(value):
+        return '—' if value is None else value
+
+    ws = wb.create_sheet('Checklist', 0)
+    _write_table(
+        ws,
+        ['Recipe', 'Round', 'Axis', 'Die', 'Repeat', 'Avg (nm)', 'Dev Range (µm)',
+         'Dev StdDev (µm)', 'Cpk', 'Result', 'Spec Range (µm)', 'Spec StdDev (µm)'],
+        [[r['recipe'], r['round'], r['axis'], r['die_count'], r['repeat_count'],
+          shown(r['avg']), shown(r['range']), shown(r['stddev']),
+          r['cpk'] if r['cpk'] == r['cpk'] else 'N/A', result_text(r['result']),
+          r['spec_range'], r['spec_stddev']] for r in rows],
+        st, highlight=lambda v: v[9] == 'FAIL')
+
+    write_basis_sheet(wb, recipe_results, 1)
+
+
+def write_basis_sheet(wb, recipe_results: list, position: int) -> None:
+    """Recipe별 분석 기준과 시트별 계산 기준을 적는다."""
+    st = _make_styles()
+    ws = wb.create_sheet('Analysis Basis', position)
+    per_recipe = []
+    for result in recipe_results:
+        raw = result.get('raw_data', [])
+        analysis = filter_stabilization_die(raw)
+        excluded_die = stabilization_die(raw)
+        devs = [compute_deviation_matrix(analysis, axis) for axis in ('X', 'Y')]
+        warnings = basis_warnings(result)
+        per_recipe.append([
+            result.get('short_name') or result.get('recipe', ''),
+            result.get('round', ''),
+            max(len(d['die_labels']) for d in devs),
+            max(len(d['repeat_labels']) for d in devs),
+            f'Die {excluded_die + 1}' if excluded_die is not None else '없음',
+            result.get('first_repeat_excluded') or '없음',
+            len(analysis), len(raw),
+            '; '.join(warnings) if warnings else 'OK',
+        ])
+    _write_table(ws, ['Recipe', 'Round', '분석 Die', '분석 Repeat', '제외 Die',
+                      '제외 리핏 폴더', '분석 행', '전체 행', '기준 확인'],
+                 per_recipe, st, width=18, highlight=lambda v: v[-1] != 'OK')
+    start = len(per_recipe) + 4
+    for col, title in enumerate(('시트', '계산 기준', '설명'), 1):
+        cell = ws.cell(row=start - 1, column=col, value=title)
+        cell.font = st['header_font']
+        cell.fill = st['header_fill']
+    for i, row in enumerate(SHEET_BASIS):
+        for col, val in enumerate(row, 1):
+            ws.cell(row=start + i, column=col, value=val).font = st['data_font']
+
+
 def write_quality_sheets(wb, recipe_results: list = None,
                          spec_limits: dict = None,
                          log_rows: list = None) -> None:
@@ -390,17 +494,19 @@ def write_quality_sheets(wb, recipe_results: list = None,
 
         # Summary
         ws = wb.create_sheet('Summary')
-        headers = ['Recipe', 'Round', '총 측정', '측정 실패', '측정 실패 %', '이상치']
+        headers = ['Recipe', 'Round', '총 측정', '분석 대상 측정', '측정 실패',
+                   '측정 실패 %', '실패 (분석 대상)', '이상치']
         if show_spec:
             headers.append('Spec 초과')
         headers += ['파일 이상', '로드 오류']
         _write_table(
             ws, headers,
-            [[s['recipe'], s['round'], s['total'], s['failed'], s['failed_pct'],
+            [[s['recipe'], s['round'], s['total'], s['analysis_total'], s['failed'],
+              s['failed_pct'], s['failed_in_analysis'],
               s['outlier']] + ([s['spec']] if show_spec else [])
              + [s['file_issues'], s['load_error']]
              for s in build_quality_summary(recipe_results, anomalies)],
-            st, highlight=lambda v: bool(v[3]) or bool(v[-1]))
+            st, highlight=lambda v: bool(v[4]) or bool(v[-1]))
 
         # Anomalies — 상세 목록 + 추적정보
         ws = wb.create_sheet('Anomalies')
@@ -409,7 +515,7 @@ def write_quality_sheets(wb, recipe_results: list = None,
             [[a['recipe'], a['round'], a['lot'], a['site_id'], a['die_x'],
               a['die_y'], a['axis'], a['point_no'], a['state'], a['valid'],
               a['value'], a['deviation'], a['ref_mean'], a['kinds'],
-              a['lsl'], a['usl'], a['csv_path'], a['lot_dir']]
+              a['lsl'], a['usl'], a['csv_path'], a['lot_dir'], a['in_analysis']]
              for a in anomalies],
             st, width=18, highlight=lambda v: ANOMALY_FAILED in str(v[13]))
 
@@ -419,9 +525,11 @@ def write_quality_sheets(wb, recipe_results: list = None,
             _write_table(
                 ws,
                 ['Recipe', 'Lot' if key == 'lot' else 'Site ID',
-                 '측정 실패', '이상치'] + (['Spec 초과'] if show_spec else []) + ['합계'],
+                 '측정 실패', '이상치'] + (['Spec 초과'] if show_spec else []) + ['합계']
+                + (['분석 대상'] if key == 'site_id' else []),
                 [[g['recipe'], g['key'], g['failed'], g['outlier']]
                  + ([g['spec']] if show_spec else []) + [g['total']]
+                 + ([g['in_analysis']] if key == 'site_id' else [])
                  for g in _group_counts(anomalies, key)],
                 st, width=18)
 
@@ -450,6 +558,8 @@ def export_quality_report(recipe_results: list, spec_limits: dict,
     wb = Workbook()
     wb.remove(wb.active)          # 기본 빈 시트 제거
     write_quality_sheets(wb, recipe_results, spec_limits, log_rows)
+    if recipe_results:
+        write_basis_sheet(wb, recipe_results, len(wb.sheetnames))
     if not wb.sheetnames:
         wb.create_sheet('Summary')
     wb.save(output_path)

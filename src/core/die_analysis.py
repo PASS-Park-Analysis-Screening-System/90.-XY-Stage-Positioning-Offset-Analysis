@@ -4,12 +4,17 @@ core/die_analysis.py
 import math
 from typing import Optional
 
+from core.statistics import is_usable
+
 
 # ──────────────────────────────────────────────
 # Die-based Deviation Analysis (from xy_stage_offset plugin)
 # ──────────────────────────────────────────────
 
-# 21 Die 표준 좌표 (wafer 좌표계) — fallback 용
+# 21 Die 표준 좌표 (Site 좌표, 1칸 = DIE_PITCH_MM) — fallback 용.
+# 순서는 Site 0002 ~ 0022다. Site 0001은 안정화 측정이라 Site 0002와 같은 (0, 0)에 있다.
+DIE_PITCH_MM = 10.0
+STABILIZATION_DIE_IDX = 0   # Site 0001
 DIE_POSITIONS = [
     (0, 0),   (2, 0),   (4, 0),   (6, 0),   (2, 2),
     (4, 4),   (0, 2),   (0, 4),   (0, 6),   (-2, 2),
@@ -38,8 +43,13 @@ def extract_die_positions(data: list) -> dict:
         die_idx = extract_die_number(r.get('site_id', ''))
         if die_idx is None:
             continue
+        # 측정 실패 행의 좌표는 믿을 수 없다. NaN이 섞이면 Affine 계산이 예외로 끝난다.
+        if not r.get('valid', True):
+            continue
         x_um = r.get('x_um', 0)
         y_um = r.get('y_um', 0)
+        if not (math.isfinite(x_um) and math.isfinite(y_um)):
+            continue
         if x_um == 0 and y_um == 0:
             continue
 
@@ -87,31 +97,39 @@ def get_die_position(die_label: str, dynamic_positions: dict = None) -> Optional
     if not m:
         return None
     die_num_1based = int(m.group(1))
-    idx = die_num_1based - 1  # 1-based label → 0-based index
+    idx = die_num_1based - 1  # 1-based label(= Site 번호) → 0-based index
 
-    # 동적 좌표 우선
-    if dynamic_positions and idx in dynamic_positions:
-        return dynamic_positions[idx]
+    # 동적 좌표가 있으면 그것만 쓴다. 표는 단위가 달라(격자) 섞으면 위치가 틀어진다.
+    if dynamic_positions:
+        return dynamic_positions.get(idx)
 
-    # fallback: 하드코딩 좌표
-    if 0 <= idx < len(DIE_POSITIONS):
-        return DIE_POSITIONS[idx]
+    # fallback: 하드코딩 좌표. 표의 첫 칸이 Site 0002이므로 한 칸 당겨 읽는다.
+    # Site 0001(idx 0)은 Site 0002와 같은 위치다.
+    table_idx = max(idx - 1, 0)
+    if table_idx < len(DIE_POSITIONS):
+        return DIE_POSITIONS[table_idx]
+    return None
+
+
+def stabilization_die(data: list) -> Optional[int]:
+    """분석에서 뺄 안정화 Die 번호(0-based). 없으면 None.
+
+    Site 0001이다 (Site 0002와 같은 위치를 안정화 목적으로 먼저 측정한다).
+    행 순서로 판단하면 첫 Lot에 Site 0001 행이 빠졌을 때 유효한 Die가 대신 제외된다.
+    Site 0001이 없거나 그것뿐이면 뺄 Die가 없으므로 None이다.
+    """
+    dies = {extract_die_number(r.get('site_id', '')) for r in data or []}
+    dies.discard(None)
+    if STABILIZATION_DIE_IDX in dies and len(dies) > 1:
+        return STABILIZATION_DIE_IDX
     return None
 
 
 def filter_stabilization_die(data: list) -> list:
-    """안정화 Die 제외: 각 Recipe의 가장 처음 측정된 Die를 제거.
-
-    측정 순서상 첫 번째 site_id의 Die 번호를 찾아서,
-    해당 Die 번호의 모든 데이터를 제외합니다.
-    """
-    if not data:
-        return data
-    # 첫 번째 측정의 Die 번호 추출
-    first_die = extract_die_number(data[0].get('site_id', ''))
+    """안정화 Die(Site 0001)의 모든 데이터를 제외한다."""
+    first_die = stabilization_die(data)
     if first_die is None:
         return data
-    # 해당 Die 번호의 모든 데이터 제외
     return [r for r in data if extract_die_number(r.get('site_id', '')) != first_die]
 
 
@@ -133,8 +151,7 @@ def compute_deviation_matrix(data: list, method: str = 'X',
     # 1) Filter by method
     filtered = [r for r in data
                 if r.get('method', '').upper() == method.upper()
-                and isinstance(r.get(metric_key), (int, float))
-                and r.get('valid', True)]
+                and is_usable(r, metric_key)]
     if not filtered:
         return {'die_labels': [], 'repeat_labels': [], 'matrix': {},
                 'average_nm': 0, 'die_stats': [], 'overall_range': 0, 'overall_stddev': 0}
@@ -241,7 +258,9 @@ def evaluate_deviation_pass(stats: dict, deviation: dict,
         spec_range/spec_stddev 중 하나라도 None이면 None을 반환해, 부분 spec에서
         float<=None 비교로 TypeError가 나는 것을 원천 차단한다.
     """
-    if stats.get('count', 0) == 0 or spec_range is None or spec_stddev is None:
+    # 값은 있어도 Site ID를 해석하지 못하면 행렬이 비어 Range가 0이다. 그것은 PASS가 아니다.
+    if (stats.get('count', 0) == 0 or not deviation.get('die_labels', True)
+            or spec_range is None or spec_stddev is None):
         return None
     return (deviation['overall_range'] <= spec_range
             and deviation['overall_stddev'] <= spec_stddev)
@@ -260,12 +279,17 @@ def compute_xy_product(x_die_stats: list, y_die_stats: list) -> dict:
     return result
 
 
-def compute_affine_transform(x_die_stats: list, y_die_stats: list) -> dict:
+def compute_affine_transform(x_die_stats: list, y_die_stats: list,
+                             die_positions: dict = None) -> dict:
     """Affine Transform 기반 계통 오차(Systematic Error) 분리.
 
     수학적 모델:
         dx = Tx + Sx * x - Theta * y
         dy = Ty + Sy * y + Theta * x
+
+    Args:
+        die_positions: extract_die_positions()의 실측 좌표 {die_idx: (x_mm, y_mm)}.
+            없으면 표준 좌표표(DIE_POSITIONS × DIE_PITCH_MM)를 쓴다.
 
     Returns:
         {
@@ -302,7 +326,11 @@ def compute_affine_transform(x_die_stats: list, y_die_stats: list) -> dict:
     dx_vals = []
     dy_vals = []
     for d in common:
-        pos = get_die_position(d)
+        if die_positions:
+            pos = die_positions.get(int(d[3:]) - 1)   # 'Die5' → die_idx 4
+        else:
+            table = get_die_position(d)
+            pos = (table[0] * DIE_PITCH_MM, table[1] * DIE_PITCH_MM) if table else None
         if pos is None:
             continue
         positions.append(pos)
@@ -335,8 +363,12 @@ def compute_affine_transform(x_die_stats: list, y_die_stats: list) -> dict:
     if rank_x < 3 or rank_y < 3:
         return _degenerate(n)
 
+    # 좌표는 mm, 오차는 µm이므로 기울기 단위가 µm/mm(= 1e-3)다. 무차원으로 환산한다.
+    sx *= 1e-3
+    sy *= 1e-3
+
     # Average theta from both equations
-    theta_rad = (neg_theta_x + theta_y) / 2.0
+    theta_rad = (neg_theta_x + theta_y) / 2.0 * 1e-3
 
     # Residuals
     dx_fit = A_x @ sol_x

@@ -1,9 +1,8 @@
 from PySide6.QtWidgets import QLabel, QPushButton, QCheckBox
 from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
-                  filter_stabilization_die)
+                  filter_stabilization_die, stabilization_die)
 from core import compute_statistics, filter_by_method
-from core.recipe_scanner import scan_lot_folders
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
@@ -24,6 +23,7 @@ class StepMixin:
             btn = QPushButton(f"Step {r['index']}: {r['short_name']}")
             btn.setProperty("step", True)
             btn.clicked.connect(partial(self._select_step, i))
+            btn.setToolTip("색상은 Summary 체크리스트 판정입니다 (안정화 Die 제외, Die 필터와 무관)")
             self.nav_layout.addWidget(btn)
             self.step_buttons.append(btn)
             if i < len(self.recipes) - 1:
@@ -99,9 +99,6 @@ class StepMixin:
             self.raw_data = result.get('raw_data', [])
             # 실제 측정 데이터에서 Die 좌표 추출
             self._dynamic_die_positions = extract_die_positions(self.raw_data)
-            rd1 = next((rd for rd in recipe.get('rounds', []) if rd['name'] == '1st'), None)
-            if rd1:
-                self.lot_list = scan_lot_folders(rd1['path'])
             self._display_result(result, recipe)
         else:
             self.statusBar().showMessage(f"데이터 로드 중: {recipe['short_name']}...")
@@ -126,9 +123,7 @@ class StepMixin:
 
             # 안정화 Die는 해제 상태로 시작한다. 카드·표·차트의 기본값을
             # Summary 체크리스트·분석 시트의 21 Die와 맞추기 위함이다.
-            # Die가 하나뿐이면 분석할 데이터가 없어지므로 제외하지 않는다.
-            stabilization_die = (extract_die_number(raw[0].get('site_id', ''))
-                                 if len(die_nums_in_data) > 1 else None)
+            default_off = stabilization_die(raw)
 
             # 기존 체크박스 제거 (접힌 상태)
             while self._die_cb_flow.count():
@@ -147,7 +142,7 @@ class StepMixin:
             def _make_die_cb(die_idx, hex_color):
                 """Die 체크박스 생성 헬퍼 (공통 스타일)."""
                 cb = QCheckBox(f"Die {die_idx + 1}")
-                cb.setChecked(die_idx != stabilization_die)
+                cb.setChecked(die_idx != default_off)
                 cb.setStyleSheet(f"""
                     QCheckBox {{ color: {hex_color}; font-size: 8pt; font-weight: bold; border: none; }}
                     QCheckBox::indicator {{ width: 12px; height: 12px; }}
@@ -183,18 +178,25 @@ class StepMixin:
 
         # 필터 적용: 체크 해제된 Die 제외
         excluded = {d for d, cb in self._die_checkboxes.items() if not cb.isChecked()}
-        if excluded:
-            data = [r for r in raw
-                    if extract_die_number(r.get('site_id', '')) not in excluded]
-            excluded_names = ', '.join(f'Die {d + 1}' for d in sorted(excluded))
-            count_removed = len(raw) - len(data)
+        data = ([r for r in raw if extract_die_number(r.get('site_id', '')) not in excluded]
+                if excluded else raw)
+
+        # 기본 기준과 다르면 카드·표·차트가 Summary·Step 버튼·내보내기와 달라진다고 알린다
+        default_off = stabilization_die(raw)
+        self._die_filter_is_custom = excluded != ({default_off} if default_off is not None else set())
+        excluded_names = ', '.join(f'Die {d + 1}' for d in sorted(excluded))
+        if self._die_filter_is_custom:
             self.filter_info_label.setText(
-                f"⚠ {excluded_names} excluded  |  "
-                f"{count_removed} removed → Analyzing {len(data)} "
-                f"(Total {len(raw)})")
+                f"⚠ Custom: Analyzing {len(data)} of {len(raw)}  |  Summary와 기준 다름")
+            self.filter_info_label.setToolTip(
+                f"제외: {excluded_names or '없음'}\n"
+                "카드·표·그래프만 적용됩니다. "
+                "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다.")
         else:
-            data = raw
-            self.filter_info_label.setText(f"✅ Analyzing All Dies ({len(raw)})")
+            self.filter_info_label.setText(
+                f"✅ Analysis basis: {excluded_names or 'No die'} excluded  |  "
+                f"Analyzing {len(data)} of {len(raw)}")
+            self.filter_info_label.setToolTip("")
 
         self._update_cards(data, recipe)
         self._update_die_avg_tables()    # self._dev_x/y 기반 → Die 필터 적용됨

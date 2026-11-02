@@ -21,7 +21,8 @@ import collections
 from core.csv_loader import scan_lot_folders, batch_load, get_scan_summary
 from core import (compute_statistics, compute_trend,
                       detect_outliers, compute_repeatability,
-                      compute_group_statistics, filter_by_method)
+                      compute_group_statistics, filter_by_method,
+                      filter_stabilization_die)
 
 
 def scan_recipes(root_path: str) -> list:
@@ -171,7 +172,12 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
                 'load_errors': load_errors, 'data_warnings': data_warnings,
                 'failed_measurements': {'count': 0}}
 
-    data = detect_outliers(data, method='iqr')
+    # raw_data는 22 Die 원본을 유지한다. 통계·트렌드·이상치는 분석 시트와 같은
+    # 21 Die로 계산한다. 안정화 Die는 판정 대상이 아니므로 이상치로 표시하지 않는다.
+    analysis = filter_stabilization_die(data)
+    for r in data:
+        r['is_outlier'] = False
+    detect_outliers(analysis, method='iqr')
 
     return {
         'recipe': recipe['name'],
@@ -184,14 +190,15 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
         'channel_dropped': load_info.get('channel_dropped', 0),
         'first_repeat_excluded': load_info.get('first_repeat_excluded'),
         'first_repeat_unverified': load_info.get('first_repeat_unverified', 0),
+        'no_measurement_folders': load_info.get('no_measurement_folders', []),
         'failed_measurements': summarize_failed_measurements(data),
-        'statistics': compute_statistics(data),
-        'trend': compute_trend(data),
-        'trend_x': compute_trend([r for r in data if r.get('method') == 'X']),
-        'trend_y': compute_trend([r for r in data if r.get('method') == 'Y']),
-        'repeatability': compute_repeatability(data),
-        'group_stats': compute_group_statistics(data, 'lot_name'),
-        'outlier_count': sum(1 for r in data if r.get('is_outlier')),
+        'statistics': compute_statistics(analysis),
+        'trend': compute_trend(analysis),
+        'trend_x': compute_trend(filter_by_method(analysis, 'X')),
+        'trend_y': compute_trend(filter_by_method(analysis, 'Y')),
+        'repeatability': compute_repeatability(analysis),
+        'group_stats': compute_group_statistics(analysis, 'lot_name'),
+        'outlier_count': sum(1 for r in analysis if r.get('is_outlier')),
     }
 
 

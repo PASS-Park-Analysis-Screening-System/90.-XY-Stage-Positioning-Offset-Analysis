@@ -239,7 +239,8 @@ def plot_die_position_map(dynamic_positions: dict = None,
         die_indices = sorted(dynamic_positions.keys())
         positions = [(i, dynamic_positions[i]) for i in die_indices]
     else:
-        positions = [(i, pos) for i, pos in enumerate(DIE_POSITIONS)]
+        # 표의 첫 칸은 Site 0002(die_idx 1)다
+        positions = [(i + 1, pos) for i, pos in enumerate(DIE_POSITIONS)]
 
     # mm → µm 변환하여 표시
     positions_um = [(idx, (x * 1000, y * 1000)) for idx, (x, y) in positions]
@@ -360,7 +361,8 @@ def plot_die_position_map_mini(dynamic_positions: dict = None,
         die_indices = sorted(dynamic_positions.keys())
         positions = [(i, dynamic_positions[i]) for i in die_indices]
     else:
-        positions = [(i, pos) for i, pos in enumerate(DIE_POSITIONS)]
+        # 표의 첫 칸은 Site 0002(die_idx 1)다
+        positions = [(i + 1, pos) for i, pos in enumerate(DIE_POSITIONS)]
 
     # mm → µm
     positions_um = [(idx, (x * 1000, y * 1000)) for idx, (x, y) in positions]

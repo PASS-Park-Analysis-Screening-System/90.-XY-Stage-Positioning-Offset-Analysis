@@ -2,8 +2,10 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 import os
 from core.recipe_scanner import scan_recipes
 from ui.workers.data_loader_thread import DataLoaderThread
+from core.checklist import basis_warnings
 from core.settings import add_recent_folder
-from core import compute_deviation_matrix, compute_affine_transform, filter_stabilization_die
+from core import (compute_deviation_matrix, compute_affine_transform, extract_die_positions,
+                  filter_stabilization_die)
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 import charts as viz
 
@@ -127,7 +129,7 @@ class ScanMixin:
         정상처럼 보이는 상황을 막기 위해 반드시 화면에 남긴다.
         """
         clean = True
-        repeat_unverified = False
+        basis_differs = False
         for r in results:
             label = r.get('short_name') or r.get('recipe', '')
 
@@ -152,13 +154,10 @@ class ScanMixin:
                 self.logger.info(
                     f"  ℹ {label}: 첫 리핏 폴더 {first_repeat} 제외 (Repeat No 1)")
 
-            lot_total = r.get('first_repeat_unverified', 0)
-            if lot_total:
-                repeat_unverified = True
-                self.logger.warn(
-                    f"  ⚠ {label}: 폴더 {lot_total}개 전체를 분석합니다. "
-                    f"첫 폴더의 Repeat No가 1이 아니어서 제외하지 않았습니다 "
-                    f"(분석 기준 10회 — 폴더 구성 확인 필요)")
+            # 시트 기준(21 Die × 10 Repeat)과 다르면 값은 나오지만 시트와 비교할 수 없다
+            for msg in basis_warnings(r):
+                basis_differs = True
+                self.logger.warn(f"  ⚠ {label}: {msg} — 폴더 구성 확인 필요")
 
             # 측정 실패 행 요약 — '어느 Lot/Die가 실제로 문제인지' 구별용
             failed = r.get('failed_measurements') or {}
@@ -173,20 +172,22 @@ class ScanMixin:
             if len(warns) > self._MAX_WARN_LINES:
                 self.logger.warn(
                     f"  ⚠ {label}: … 외 {len(warns) - self._MAX_WARN_LINES}건 "
-                    f"(요약 CSV 비정상 값, 총 {len(warns)}건)")
+                    f"(CSV 비정상 값, 총 {len(warns)}건)")
             if warns:
                 clean = False
 
         if clean:
-            if not repeat_unverified:
+            if not basis_differs:
                 self.logger.ok("  ✅ 데이터 품질 이상 없음")
         else:
             self.logger.info(
-                "  ℹ 위 항목은 분석·차트에서 제외되었습니다. "
+                "  ℹ 측정 실패 행은 분석·차트에서 제외되었습니다. "
                 "장비 원본 데이터 확인이 필요합니다.")
 
     def _on_scan_complete(self, results, comparison, elapsed):
         self.recipe_results = results
+        # 경로 입력란은 스캔 뒤에 바뀔 수 있다. 내보내기는 이 값으로 출처를 적는다.
+        self._scanned_folder = self._loader_thread.folder
         total = sum(len(r.get('raw_data', [])) for r in results)
         self.logger.ok(f"✅ 전체 로드 완료: {total}개 데이터 ({elapsed:.1f}초 소요)")
 
@@ -203,16 +204,22 @@ class ScanMixin:
             dx = compute_deviation_matrix(data, 'X')
             dy = compute_deviation_matrix(data, 'Y')
             if dx['die_stats'] and dy['die_stats']:
-                af = compute_affine_transform(dx['die_stats'], dy['die_stats'])
                 name = result.get('short_name', f'Step {i+1}')
                 self.logger.head(f"[{name}]")
+                # 이 로그 때문에 스캔 완료 처리(화면 표시, 버튼 복구)가 끊기면 안 된다
+                try:
+                    af = compute_affine_transform(dx['die_stats'], dy['die_stats'],
+                                                  extract_die_positions(data))
+                except Exception as e:
+                    self.logger.error(f"  Affine 계산 오류: {type(e).__name__}: {e}")
+                    continue
                 if af.get('degenerate'):
                     self.logger.warn(
                         f"  ⚠ Die 좌표가 공선이거나 유효 Die가 3점 미만이라 "
                         f"Affine 계통오차 분리 불가 (유효 Die {af.get('n_dies', 0)}개) "
-                        f"— Translation/Scaling/Rotation 신뢰 불가")
+                        f"— Scaling/Rotation 신뢰 불가")
                 else:
-                    self.logger.info(f"  Translation: Tx={af['tx']:+.4f} µm, Ty={af['ty']:+.4f} µm")
+                    # 입력이 평균을 뺀 편차라 절편에 병진 정보가 없다. 병진은 카드의 Avg로 본다.
                     self.logger.info(f"  Scaling: Sx={af['sx_ppm']:+.2f} ppm, Sy={af['sy_ppm']:+.2f} ppm")
                     self.logger.info(f"  Rotation: θ={af['theta_deg']:+.6f}° ({af['theta_urad']:+.2f} µrad)")
                     self.logger.info(f"  Residual RMS: X={af['residual_x']:.4f}, Y={af['residual_y']:.4f}")

@@ -7,15 +7,38 @@ matplotlib.backends.backend_pdf.PdfPages 를 활용하여
 
 import os
 import datetime
-import matplotlib.pyplot as plt
+import textwrap
 from matplotlib.backends.backend_pdf import PdfPages
-import charts as viz
-from core import filter_by_method, compute_trend
+from matplotlib.figure import Figure
+from charts.basic import _extract_site_data
+from core import filter_by_method, filter_stabilization_die, filter_valid_only
+from core.checklist import basis_warnings, build_checklist, result_text
 
 
-def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list):
-    """첫 페이지: 보고서 메타데이터 및 Summary 테이블"""
-    fig, ax = plt.subplots(figsize=(11, 8.5))
+NOTE_LINES_PER_PAGE = 34
+
+
+def _basis_notes(recipe_results: list) -> list:
+    """Recipe별로 실제 제외 내역과 기준 차이를 적는다 (제외했다고 단정하지 않는다)."""
+    notes = []
+    for result in recipe_results or []:
+        name = result.get('short_name') or result.get('recipe', '')
+        if result.get('first_repeat_excluded'):
+            notes.append(f"{name}: first repeat folder {result['first_repeat_excluded']} excluded")
+        notes.extend(f'{name}: {msg}' for msg in basis_warnings(result))
+    return notes
+
+
+def _text(value, fmt: str) -> str:
+    return '—' if value is None else format(value, fmt)
+
+
+def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list,
+                    checklist: list = None, notes: list = None):
+    """첫 페이지: 보고서 메타데이터, 체크리스트, Summary 테이블"""
+    # pyplot을 쓰지 않는다: 작업 스레드에서 돌고, 메인 스레드가 plt.close('all')을 호출한다
+    fig = Figure(figsize=(11, 8.5))
+    ax = fig.add_subplot(111)
     ax.axis('off')
 
     # 타이틀
@@ -25,7 +48,25 @@ def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list):
     # 메타데이터
     dt_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     ax.text(0.1, 0.8, f"Date: {dt_str}", fontsize=12)
-    ax.text(0.1, 0.75, f"Data Path: {root_folder}", fontsize=10)
+    # 긴 네트워크 경로가 페이지 밖으로 잘리지 않게 가운데를 줄인다
+    path_text = (root_folder if len(root_folder) <= 110
+                 else f"{root_folder[:35]} ... {root_folder[-70:]}")
+    ax.text(0.1, 0.75, f"Data Path: {path_text}", fontsize=8)
+
+    # Checklist Table — 화면 Summary·Step 카드 기본값과 같은 값
+    if checklist:
+        ax.text(0.5, 0.71, "Checklist (analysis basis: Site 0001 excluded, see Die x Repeat)",
+                ha='center', fontsize=12, fontweight='bold')
+        rows = [[r['recipe'], r['axis'], f"{r['die_count']} x {r['repeat_count']}",
+                 _text(r['avg'], '.3f'), _text(r['range'], '.3f'), _text(r['stddev'], '.3f'),
+                 'N/A' if r['cpk'] != r['cpk'] else f"{r['cpk']:.2f}",
+                 result_text(r['result'])] for r in checklist]
+        table = ax.table(cellText=rows,
+                         colLabels=['Recipe', 'Axis', 'Die x Repeat', 'Avg (nm)',
+                                    'Dev Range (um)', 'Dev StdDev (um)', 'Cpk', 'Result'],
+                         bbox=[0.0, 0.33, 1.0, 0.36], cellLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
 
     # Summary Table
     if comparison:
@@ -40,31 +81,51 @@ def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list):
                 f"{c.get('cv_percent', 0):.1f}", str(c.get('outliers', 0))
             ])
         
-        table = ax.table(cellText=cell_text, colLabels=col_labels, loc='center', cellLoc='center')
+        table = ax.table(cellText=cell_text, colLabels=col_labels,
+                         bbox=[0.0, 0.0, 1.0, 0.26], cellLoc='center')
         table.auto_set_font_size(False)
-        table.set_fontsize(10)
-        table.scale(1, 2)
-        
-        ax.text(0.5, 0.58, "Overall Summary", ha='center', fontsize=14, fontweight='bold')
+        table.set_fontsize(9)
+
+        ax.text(0.5, 0.28, "Overall Summary (X and Y combined, analysis basis)",
+                ha='center', fontsize=12, fontweight='bold')
+
+    if notes:
+        ax.text(0.0, -0.03, f"Analysis basis notes: {len(notes)} (see next page)",
+                va='top', fontsize=9, color='#C62828')
 
     pdf.savefig(fig)
-    plt.close(fig)
+
+
+def _add_notes_pages(pdf: PdfPages, notes: list):
+    """기준 관련 내역을 잘리지 않게 필요한 쪽수만큼 싣는다."""
+    lines = [line for note in notes for line in textwrap.wrap(note, 120)]
+    for start in range(0, len(lines), NOTE_LINES_PER_PAGE):
+        fig = Figure(figsize=(11, 8.5))
+        ax = fig.add_subplot(111)
+        ax.axis('off')
+        ax.set_title('Analysis basis notes', fontsize=14, fontweight='bold')
+        ax.text(0.0, 1.0, '\n'.join(lines[start:start + NOTE_LINES_PER_PAGE]),
+                va='top', fontsize=9, linespacing=1.4, color='#C62828')
+        pdf.savefig(fig)
 
 
 def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     """각 Recipe별 통합 결과 페이지 (1st 라운드 기준)"""
-    fig = plt.figure(figsize=(11, 8.5))
+    fig = Figure(figsize=(11, 8.5))
     
     recipe_name = recipe_data.get('short_name', 'Unknown Recipe')
-    fig.suptitle(f"Step: {recipe_name} (1st Round)", fontsize=16, fontweight='bold', y=0.96)
-    
-    data = recipe_data.get('raw_data', [])
+    # 라운드 폴더 없이 Recipe 바로 아래에 Lot이 있으면 라운드 이름이 '(root)'다
+    round_name = recipe_data.get('round', '')
+    round_text = f" ({round_name} Round)" if round_name and round_name != '(root)' else ''
+    fig.suptitle(f"Step: {recipe_name}{round_text}", fontsize=16, fontweight='bold', y=0.96)
+
+    # 통계·트렌드와 같은 분석 기준으로 등고선을 그린다 (안정화 Die 제외, 측정 실패 제외)
+    data = filter_valid_only(filter_stabilization_die(recipe_data.get('raw_data', [])))
     if not data:
         ax = fig.add_subplot(111)
         ax.axis('off')
         ax.text(0.5, 0.5, "No Data", ha='center')
         pdf.savefig(fig)
-        plt.close(fig)
         return
 
     # Layout: 
@@ -107,7 +168,7 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     ax_cx = fig.add_subplot(223)
     d_x = filter_by_method(data, 'X')
     if d_x:
-        xs, ys, means, _ = viz._extract_site_data(d_x, 'value', 'X')
+        xs, ys, means, _ = _extract_site_data(d_x, 'value', 'X')
         if len(xs) >= 4:
             try:
                 from scipy.interpolate import griddata
@@ -128,7 +189,7 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     ax_cy = fig.add_subplot(224)
     d_y = filter_by_method(data, 'Y')
     if d_y:
-        xs, ys, means, _ = viz._extract_site_data(d_y, 'value', 'Y')
+        xs, ys, means, _ = _extract_site_data(d_y, 'value', 'Y')
         if len(xs) >= 4:
             try:
                 from scipy.interpolate import griddata
@@ -147,13 +208,16 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     pdf.savefig(fig)
-    plt.close(fig)
 
 
-def generate_pdf_report(export_path: str, root_folder: str, recipe_results: list, comparison: list, spec_limits: dict):
+def generate_pdf_report(export_path: str, root_folder: str, recipe_results: list, comparison: list,
+                        spec_limits: dict, spec_deviation: dict = None):
     """지정된 경로로 다페이지 PDF 리포트 생성"""
+    checklist = build_checklist(recipe_results, spec_limits, spec_deviation)
     with PdfPages(export_path) as pdf:
-        _add_title_page(pdf, root_folder, comparison)
+        notes = _basis_notes(recipe_results)
+        _add_title_page(pdf, root_folder, comparison, checklist, notes)
+        _add_notes_pages(pdf, notes)
         
         for result in recipe_results:
             _add_recipe_page(pdf, result, spec_limits)

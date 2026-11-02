@@ -14,10 +14,12 @@ class LotFilterMixin:
         self._trend_short_name = short_name
         self._trend_spec = spec
 
-        # Lot 체크박스 동적 생성 (X의 Lot 리스트 기준, X/Y 동일 가정)
-        lot_names = [t.get('lot_name', f'Lot{i}') for i, t in enumerate(trend_x)]
-        if not lot_names and trend_y:
-            lot_names = [t.get('lot_name', f'Lot{i}') for i, t in enumerate(trend_y)]
+        # Lot 체크박스 동적 생성. 한 축만 있는 Lot도 빠지지 않게 X, Y를 합친다.
+        merged = {t.get('lot_name', f'Lot{i}'): t.get('lot_index', 0)
+                  for i, t in enumerate(trend_y)}
+        merged.update({t.get('lot_name', f'Lot{i}'): t.get('lot_index', 0)
+                       for i, t in enumerate(trend_x)})
+        lot_names = sorted(merged, key=merged.get)
 
         if set(lot_names) != set(self._lot_checkboxes.keys()):
             self._lot_filter_updating = True
@@ -51,8 +53,9 @@ class LotFilterMixin:
         """현재 체크 상태에 따라 Dual-Panel Lot 트렌드 차트 렌더링."""
         checked = {n for n, cb in self._lot_checkboxes.items() if cb.isChecked()}
 
-        fx = [t for t in self._trend_data_x if t.get('lot_name', '') in checked]
-        fy = [t for t in self._trend_data_y if t.get('lot_name', '') in checked]
+        # 복사본에 번호를 매긴다. 원본은 Recipe 비교 차트와 공유한다.
+        fx = [dict(t) for t in self._trend_data_x if t.get('lot_name', '') in checked]
+        fy = [dict(t) for t in self._trend_data_y if t.get('lot_name', '') in checked]
 
         # re-index for continuous display
         for i, t in enumerate(fx):
@@ -67,8 +70,8 @@ class LotFilterMixin:
             viz_pg.create_dual_trend_widget(fx, fy, spec=spec, title=title))
 
         # 필터 정보 라벨
-        total = max(len(self._trend_data_x), len(self._trend_data_y))
-        shown = max(len(fx), len(fy))
+        total = len(self._lot_checkboxes)
+        shown = len(checked)
         excluded = total - shown
         if excluded > 0:
             self._lot_filter_info.setText(

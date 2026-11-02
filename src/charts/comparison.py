@@ -19,7 +19,8 @@ RECIPE_COLORS = ['#2196F3', '#4CAF50', '#FF9800', '#E91E63',
 
 from charts.basic import plot_boxplot, plot_trend_chart, _fig_to_png, _extract_site_data
 from core import (compute_group_statistics, compute_trend,
-                  filter_by_method, filter_valid_only, drop_non_finite)
+                  filter_by_method, filter_valid_only, drop_non_finite,
+                  filter_stabilization_die)
 
 def plot_recipe_comparison_boxplot(recipe_results: list) -> Figure:
     """Recipe별 박스플롯 비교 (X/Y 분리, 2행)"""
@@ -35,7 +36,7 @@ def plot_recipe_comparison_boxplot(recipe_results: list) -> Figure:
     for row, axis_name in enumerate(['X', 'Y']):
         for i, result in enumerate(recipe_results):
             ax = axes[row][i]
-            data = result.get('raw_data', [])
+            data = filter_stabilization_die(result.get('raw_data', []))
             color = RECIPE_COLORS[i % len(RECIPE_COLORS)]
 
             # 측정 실패 행(Valid=FALSE)은 값이 NaN으로 기록된다. 거르지 않으면
@@ -116,7 +117,7 @@ def plot_recipe_comparison_heatmap(recipe_results: list,
         r, c = divmod(i, cols)
         ax = axes[r][c]
 
-        data = result.get('raw_data', [])
+        data = filter_valid_only(filter_stabilization_die(result.get('raw_data', [])))
         xs, ys, means, site_vals = _extract_site_data(data, 'value', method)
 
         if not xs:

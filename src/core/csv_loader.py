@@ -10,6 +10,7 @@ import os
 import re
 import csv
 import logging
+from datetime import datetime
 from typing import Optional, Union
 
 
@@ -390,6 +391,60 @@ def _extract_folder_number(name: str) -> int:
     return 999999
 
 
+def _folder_sort_key(name: str) -> tuple:
+    """폴더 이름의 숫자를 모두 비교하는 자연 정렬 키.
+
+    Lot6 → (6,), Lot6 (2) → (6, 2), Lot401 → (401,). 측정 순서를 메타에서 읽지
+    못할 때만 쓰는 마지막 기준이다. 복사본 표기에서는 실제 순서와 다를 수 있다
+    (실측: Lot6 (2) ~ Lot6 (10)이 Repeat 2~10이고 괄호 없는 Lot6이 Repeat 11).
+    """
+    numbers = tuple(int(n) for n in re.findall(r'\d+', name))
+    return (numbers or (999999,), name)
+
+
+def _read_order_meta(folder: dict) -> tuple:
+    """Lot 폴더 CSV 메타의 (Start Time, Repeat No). 없거나 형식이 다르면 None."""
+    start_time = repeat_no = None
+    csv_name = folder.get('x_csv') or folder.get('y_csv')
+    if not csv_name:
+        return start_time, repeat_no
+    for line in _open_csv_text(os.path.join(folder['path'], csv_name)):
+        key, _, value = line.partition(',')
+        key = key.strip().lower()
+        value = value.split(',')[0].strip()
+        try:
+            if key == 'start time':
+                start_time = datetime.strptime(value, '%Y.%m.%d %H:%M:%S')
+            elif key == 'repeat no':
+                repeat_no = int(float(value))
+        except ValueError:
+            pass
+    return start_time, repeat_no
+
+
+def _sort_by_measurement_order(folders: list) -> None:
+    """폴더를 측정 순서로 정렬한다: Start Time → Repeat No → 폴더 이름.
+
+    폴더 이름은 복사본 표기나 시작 번호가 장비마다 달라 실제 순서를 보장하지 못한다.
+    기준이 섞이지 않도록, 모든 측정 폴더에서 읽히는 기준만 쓴다.
+    X/Y 측정 CSV가 없는 폴더는 순서를 판단할 수 없으므로 맨 뒤에 둔다.
+    """
+    folders.sort(key=lambda f: _folder_sort_key(f['lot_name']))
+    measured = [f for f in folders if f.get('x_csv') or f.get('y_csv')]
+    others = [f for f in folders if not (f.get('x_csv') or f.get('y_csv'))]
+    meta = {f['lot_name']: _read_order_meta(f) for f in measured}
+    use_time = all(m[0] is not None for m in meta.values())
+    use_repeat = all(m[1] is not None for m in meta.values())
+
+    def key(folder):
+        start_time, repeat_no = meta[folder['lot_name']]
+        return (start_time if use_time else datetime.min,
+                repeat_no if use_repeat else 0)
+
+    measured.sort(key=key)   # 안정 정렬이라 같은 값은 이름 순서를 유지한다
+    folders[:] = measured + others
+
+
 def scan_lot_folders(root_path: str) -> list:
     """데이터 폴더 자동 탐지 + 정렬
 
@@ -441,8 +496,8 @@ def scan_lot_folders(root_path: str) -> list:
             'tiff_files': file_info['tiff_files'],
         })
 
-    # 숫자순 정렬 + 인덱스 부여
-    folders.sort(key=lambda x: x['lot_number'])
+    # 측정 순서 정렬 + 인덱스 부여
+    _sort_by_measurement_order(folders)
     for i, f in enumerate(folders):
         f['index'] = i + 1  # 1-based
 
@@ -566,7 +621,7 @@ def _is_first_repeat(lot: dict) -> bool:
 
 
 def _exclude_first_repeat(lots: list, info: Optional[dict]) -> list:
-    """번호순 첫 폴더가 Repeat 1이고 폴더가 11개 이상이면 그 폴더를 뺀다.
+    """측정 순서상 첫 폴더가 Repeat 1이고 폴더가 11개 이상이면 그 폴더를 뺀다.
 
     폴더 이름과 시작 번호는 장비마다 달라(Sample1002~, Sample1501~, Lot208~)
     위치만으로 판단하지 않는다. 근거가 없으면 빼지 않고 info로 알린다.
@@ -576,7 +631,11 @@ def _exclude_first_repeat(lots: list, info: Optional[dict]) -> list:
     if _is_first_repeat(lots[0]):
         if info is not None:
             info['first_repeat_excluded'] = lots[0]['lot_name']
-        return lots[1:]
+        # 레시피끼리 비교할 수 있게 분석 대상 기준으로 번호를 다시 매긴다
+        remaining = lots[1:]
+        for i, lot in enumerate(remaining):
+            lot['index'] = i + 1
+        return remaining
     if info is not None:
         info['first_repeat_unverified'] = len(lots)
     return lots
@@ -600,8 +659,10 @@ def batch_load(root_path: str,
                 실패한 Lot은 건너뛰고 나머지 Lot은 정상 로드된다.
         warnings: 전달하면 로드는 됐지만 값이 비정상인 셀 경고가 여기에 누적된다.
         info: 전달하면 부가 집계가 담긴다 ('channel_dropped' = Z Drive로 제외된 행 수,
+              'unreadable_values' = 측정값을 읽지 못한 행 수,
               'first_repeat_excluded' = 제외한 첫 리핏 폴더 이름,
-              'first_repeat_unverified' = 폴더가 11개 이상인데 첫 리핏을 확인하지 못한 폴더 수).
+              'first_repeat_unverified' = 폴더가 11개 이상인데 첫 리핏을 확인하지 못한 폴더 수,
+              'no_measurement_folders' = X/Y 측정 CSV가 없어 건너뛴 폴더 이름 목록).
 
     Returns:
         [{'lot_name': 'Lot401', 'lot_index': 1, 'filename': 'Lot4_X_UL.csv',
@@ -622,8 +683,13 @@ def batch_load(root_path: str,
         elif isinstance(lot_range, list):
             lots = [l for l in lots if l['index'] in lot_range]
     else:
-        # 범위를 직접 지정한 호출은 그 선택을 그대로 따른다
-        lots = _exclude_first_repeat(lots, info)
+        # 범위를 직접 지정한 호출은 그 선택을 그대로 따른다.
+        # 측정 CSV가 없는 폴더는 Repeat가 아니므로 폴더 수에 넣지 않는다.
+        skipped = [l['lot_name'] for l in lots if not (l.get('x_csv') or l.get('y_csv'))]
+        if skipped and info is not None:
+            info['no_measurement_folders'] = skipped
+        lots = _exclude_first_repeat(
+            [l for l in lots if l.get('x_csv') or l.get('y_csv')], info)
 
     results = []
     for lot in lots:
@@ -649,20 +715,56 @@ def batch_load(root_path: str,
             x_csv = lot.get('x_csv', '')
             for row in lot_data['x_data']:
                 results.append(_normalize_row(row, lot, x_csv, metric_col))
+            _report_unreadable(lot, 'X', lot_data['x_data'], metric_col, warnings, info)
 
         # Y 데이터
         if axis in ('both', 'y') and lot_data['y_data']:
             y_csv = lot.get('y_csv', '')
             for row in lot_data['y_data']:
                 results.append(_normalize_row(row, lot, y_csv, metric_col))
+            _report_unreadable(lot, 'Y', lot_data['y_data'], metric_col, warnings, info)
 
     return results
+
+
+def _report_unreadable(lot: dict, axis: str, rows: list, metric_col: str,
+                       warnings: Optional[list], info: Optional[dict]) -> None:
+    """측정값을 숫자로 읽지 못한 행을 알린다. 그 행은 NaN이라 집계에서 빠진다."""
+    count = sum(1 for r in rows if not _is_number(r.get(metric_col)))
+    if not count:
+        return
+    if info is not None:
+        info['unreadable_values'] = info.get('unreadable_values', 0) + count
+    if warnings is not None:
+        warnings.append(f"{lot['lot_name']} {axis}: '{metric_col}' 값을 읽을 수 없는 "
+                        f"행 {count}개 — 분석에서 제외")
+
+
+def _is_number(val) -> bool:
+    """CSV 칸이 숫자로 읽히는가 (장비가 실패로 기록한 'NaN' 문자열 포함)."""
+    try:
+        float(val)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _parse_measured(val) -> float:
+    """측정값·좌표 칸을 읽는다. 읽지 못하면 NaN이다.
+
+    0.0으로 바꾸면 실제 측정값처럼 집계된다. 측정 열 이름이 달라 값이 모두 0이 되면
+    Range 0으로 PASS가 나오고, 칸 하나가 비면 없는 오차로 FAIL이 나온다.
+    """
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return float('nan')
 
 
 def _normalize_row(row: dict, lot_info: dict, filename: str,
                    metric_col: str) -> dict:
     """CSV 행을 정규화된 dict로 변환"""
-    value_str = row.get(metric_col, '0')
+    value_str = row.get(metric_col)
     valid_str = row.get(f'{metric_col.split(" ")[0]}_Valid', 'TRUE')
 
     return {
@@ -674,12 +776,12 @@ def _normalize_row(row: dict, lot_info: dict, filename: str,
         'site_x': _safe_int(row.get('Site X', '0')),
         'site_y': _safe_int(row.get('Site Y', '0')),
         'point_no': _safe_int(row.get('Point No', '0')),
-        'x_um': _safe_float(row.get('X (um)', '0')),
-        'y_um': _safe_float(row.get('Y (um)', '0')),
+        'x_um': _parse_measured(row.get('X (um)', '0')),
+        'y_um': _parse_measured(row.get('Y (um)', '0')),
         'method': row.get('Method ID', ''),
         'state': row.get('State', ''),
         'valid': row.get('Valid', 'TRUE').upper() == 'TRUE',
-        'value': _safe_float(value_str),
+        'value': _parse_measured(value_str),
         'value_valid': valid_str.upper() == 'TRUE',
     }
 

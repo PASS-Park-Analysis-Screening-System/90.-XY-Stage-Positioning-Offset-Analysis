@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from ui.color_helpers import _heatmap_diverging, _heatmap_single, _contrast_fg
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
+from core.die_analysis import filter_stabilization_die
 from core.statistics import (classify_row, axis_reference_means,
                              spec_anomaly_enabled, ANOMALY_FAILED,
                              ANOMALY_OUTLIER, ANOMALY_SPEC)
@@ -82,6 +83,11 @@ class TableMixin:
                 # overall_range=0으로 인한 허위 PASS 대신 None('—')이 된다.
                 sx = compute_statistics(filter_by_method(data, 'X'))
                 sy = compute_statistics(filter_by_method(data, 'Y'))
+                # 측정이 없는 축은 0.000이 아니라 '—'로 표시한다
+                if not dx.get('die_labels'):
+                    x_range = x_std = None
+                if not dy.get('die_labels'):
+                    y_range = y_std = None
                 px = evaluate_deviation_pass(sx, dx, spec_r, spec_s)
                 py = evaluate_deviation_pass(sy, dy, spec_r, spec_s)
 
@@ -210,7 +216,7 @@ class TableMixin:
         v_max = max(abs(v) for v in all_vals) if all_vals else 1.0
 
         for i, rl in enumerate(repeat_labels):
-            item_rl = QTableWidgetItem(rl[:10])
+            item_rl = QTableWidgetItem(rl)
             item_rl.setBackground(QColor(BG3))
             item_rl.setTextAlignment(Qt.AlignCenter)
             table.setItem(i, 0, item_rl)
@@ -259,7 +265,8 @@ class TableMixin:
         spec_limits = self.settings.get('spec_limits', {})
         recipe = self._current_recipe_short_name()
         # Spec 판정은 PASS/FAIL(Dev Range/StdDev)과 같은 편차 기준을 쓴다
-        axis_means = axis_reference_means(self.raw_data)
+        analysis = filter_stabilization_die(self.raw_data)
+        axis_means = axis_reference_means(analysis)
 
         shown = 0
         for r in self.raw_data:
@@ -295,8 +302,9 @@ class TableMixin:
         label = getattr(self, 'raw_filter_label', None)
         if label is not None:
             total = len(self.raw_data)
-            label.setText(f"표시 {shown} / 전체 {total}" if wanted
-                          else f"전체 {total}행")
+            basis = f"분석 대상 {len(analysis)}행, 안정화 Die 포함 표시"
+            label.setText(f"표시 {shown} / 전체 {total} ({basis})" if wanted
+                          else f"전체 {total}행 ({basis})")
 
     # ──────────────────────────────────────────────
     # Charts — Hybrid: matplotlib + pyqtgraph

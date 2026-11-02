@@ -182,7 +182,7 @@ class TestExcelOutput:
 
         wb = load_workbook(out)
         assert wb.sheetnames == ["Summary", "Anomalies", "By Lot", "By Die",
-                                 "File Issues", "System Log"]
+                                 "File Issues", "System Log", "Analysis Basis"]
         assert wb["Anomalies"].max_row == 3          # 헤더 + 이상 2건
         assert wb["System Log"].max_row == 2
         assert wb["Anomalies"].freeze_panes == "A2"

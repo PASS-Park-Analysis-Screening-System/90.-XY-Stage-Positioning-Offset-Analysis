@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QStyle
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from ui.widgets.chart_widget import sync_canvas_dpi
 import charts as viz
-from core import filter_stabilization_die
+from core import stabilization_die
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
@@ -57,9 +57,9 @@ class DieFilterMixin:
         raw = self.recipe_results[self.current_recipe_idx].get('raw_data', [])
         if not raw:
             return
-        from core import extract_die_number
-        first_die = extract_die_number(raw[0].get('site_id', ''))
+        first_die = stabilization_die(raw)
         if first_die is None:
+            self.logger.warn("제외할 안정화 Die(Site 0001)가 없습니다.")
             return
 
         # 먼저 전체 선택 후, 안정화 Die만 해제 (양쪽 모두)

@@ -6,7 +6,7 @@ import math
 
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel
 from PySide6.QtCore import Qt
-from ui.theme import BG2, FG, FG2, BG, GREEN, RED
+from ui.theme import BG2, FG, FG2, BG, GREEN, RED, ORANGE
 
 
 class StatCard(QFrame):
@@ -24,6 +24,10 @@ class StatCard(QFrame):
         lbl_title = QLabel(title)
         lbl_title.setStyleSheet(f"font-size: 11pt; font-weight: bold; color: {FG2};")
         layout.addWidget(lbl_title)
+
+        self.lbl_basis = QLabel("")
+        self.lbl_basis.setStyleSheet(f"font-size: 8pt; color: {FG2};")
+        layout.addWidget(self.lbl_basis)
 
         self.lbl_avg = self._row(layout, "Avg (nm):")
         self.lbl_rng, self.lbl_rng_spec = self._row_with_spec(layout, "Dev Range (µm):")
@@ -69,7 +73,7 @@ class StatCard(QFrame):
 
     def _format_spec_delta(self, value, spec):
         """Spec 대비 표기 생성: 초과=빨강▲, 여유=초록✓"""
-        if spec is None or spec == 0:
+        if value is None or spec is None or spec == 0:
             return "", ""
         ratio = value / spec * 100
         if value > spec:
@@ -82,11 +86,25 @@ class StatCard(QFrame):
             color = GREEN
         return text, color
 
+    def set_basis(self, die_count: int, repeat_count: int, custom: bool = False):
+        """카드 값이 어떤 Die × Repeat로 계산됐는지 표시한다."""
+        text = f"{die_count} Die × {repeat_count} Repeat"
+        if custom:
+            text += "  ⚠ Custom"
+        self.lbl_basis.setText(text)
+        self.lbl_basis.setToolTip(
+            "Die 필터가 기본과 다릅니다. 이 카드와 표·그래프만 적용되며 "
+            "Summary·Step 버튼·Lot Trend·내보내기는 분석 기준으로 고정됩니다." if custom else "")
+        self.lbl_basis.setStyleSheet(
+            f"font-size: 8pt; color: {ORANGE if custom else FG2};"
+            + (" font-weight: bold;" if custom else ""))
+
     def update_stats(self, avg, rng, std, cpk, is_pass: bool = None,
                      spec_r=None, spec_s=None):
-        self.lbl_avg.setText(f"{avg:.3f}")
-        self.lbl_rng.setText(f"{rng:.3f}")
-        self.lbl_std.setText(f"{std:.3f}")
+        # 측정이 없는 축은 값이 None이다
+        self.lbl_avg.setText("—" if avg is None else f"{avg:.3f}")
+        self.lbl_rng.setText("—" if rng is None else f"{rng:.3f}")
+        self.lbl_std.setText("—" if std is None else f"{std:.3f}")
         # Cpk: 계산 불가(σ=0 등)는 compute_cpk가 NaN을 반환 → 'N/A'로 표시하여
         # 실제 Cpk 0.00(평균이 규격 한계에 위치)과 혼동되지 않게 한다.
         cpk_unavailable = cpk is None or (isinstance(cpk, float) and math.isnan(cpk))

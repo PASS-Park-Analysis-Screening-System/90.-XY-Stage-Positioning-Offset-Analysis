@@ -77,15 +77,16 @@ def plot_trend_chart(trend_data: list, title: str = 'Lot Trend',
 
 
 def _extract_site_data(data: list, metric_key: str, method: str):
+    from core.statistics import is_usable
     """히트맵/컨투어 공통 — Site별 평균값 추출"""
     site_vals = {}
     for r in data:
         if r.get('method', '').upper() != method.upper():
             continue
         sx, sy = r.get('site_x', 0), r.get('site_y', 0)
-        val = r.get(metric_key, 0)
-        if not isinstance(val, (int, float)):
+        if not is_usable(r, metric_key):
             continue
+        val = r[metric_key]
         key = (sx, sy)
         if key not in site_vals:
             site_vals[key] = {'values': [], 'site_id': r.get('site_id', '')}
