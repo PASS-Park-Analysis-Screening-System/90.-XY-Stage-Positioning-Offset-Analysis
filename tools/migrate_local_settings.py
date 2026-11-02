@@ -14,7 +14,8 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-USER_KEYS = ('last_folder', 'window_geometry', 'recent_folders', 'wafer_size')
+sys.path.insert(0, os.path.join(ROOT, 'src'))
+from core.settings import _USER_SETTING_KEYS  # noqa: E402
 
 
 def migrate(source: str, target: str) -> str:
@@ -25,7 +26,7 @@ def migrate(source: str, target: str) -> str:
         return 'nothing'
     if os.path.exists(target):
         return 'exists'
-    user_settings = {key: settings[key] for key in USER_KEYS if key in settings}
+    user_settings = {key: settings[key] for key in sorted(_USER_SETTING_KEYS) if key in settings}
     with open(target, 'x', encoding='utf-8') as f:
         json.dump(user_settings, f, indent=2, ensure_ascii=False)
     return 'written'
@@ -36,10 +37,13 @@ def main():
     target = os.path.join(ROOT, 'src', 'core', 'settings.local.json')
     result = migrate(source, target)
     if result == 'exists':
-        print(f'{target} 가 이미 있어 중단합니다. 두 파일을 비교해 직접 정리하세요.')
+        print(f'{target} 가 이미 있어 중단합니다.')
+        print('소스 실행이 이미 저장했을 수 있습니다. 필요한 경로가 그 파일에 있으면')
+        print('git restore src/core/settings.json 을 실행하세요.')
         return 1
     if result == 'nothing':
-        print('settings.json에 옮길 경로가 없습니다.')
+        print('last_folder, recent_folders에 옮길 값이 없습니다. '
+              '빌드가 다른 키 때문에 막히면 그 값은 직접 지우세요.')
         return 0
     print(f'보존했습니다: {target}')
     print('확인 후 실행하세요: git restore src/core/settings.json')

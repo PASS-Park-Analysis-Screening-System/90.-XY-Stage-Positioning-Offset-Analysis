@@ -4,8 +4,9 @@ import pytest
 
 from core.checklist import basis_warnings, build_checklist
 from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
-                               stabilization_die)
+                               select_display_rows, stabilization_die)
 from core.exporter import _analysis_flag, build_quality_summary, collect_anomalies
+from core.recipe_scanner import load_recipe_data
 from core.statistics import axis_reference_means, compute_statistics, detect_outliers
 
 DIES = range(1, 23)
@@ -144,3 +145,111 @@ def test_clean_data_is_not_affected():
     assert basis_warnings(_result(rows)) == []
     assert all(_analysis_flag(r, stabilization_die(rows)) == ('N' if r['site_id'].startswith('0001') else 'Y')
                for r in rows)
+
+
+def test_clean_data_values_are_pinned():
+    """값 4000 + Die + Repeat/10, Die 2~22, Repeat 1~10을 손으로 계산한 기대값."""
+    rows = build_checklist([_result(_rows())], SPEC_LIM, SPEC_DEV)
+
+    assert len(rows) == 2
+    for row in rows:
+        assert row['avg'] == pytest.approx(4012.55)        # 4000 + 12 + 0.55
+        assert row['range'] == pytest.approx(0.021)        # (20 + 0.9) / 1000
+        assert row['result'] is True
+        assert (row['die_count'], row['repeat_count']) == (21, 10)
+
+
+def test_display_rows_drop_unreadable_rows_with_or_without_excluded_die():
+    rows = _rows()
+    bad = _with_broken_row(rows)
+
+    assert bad not in select_display_rows(rows, {0})
+    assert bad not in select_display_rows(rows, set())
+    assert len(select_display_rows(rows, {0})) == len(filter_stabilization_die(rows))
+
+
+def _write_csv(root, broken_rows=False, all_broken=False):
+    """실제 로더를 거치도록 Lot 폴더와 CSV를 만든다."""
+    head = ('Site ID,Site X,Site Y,Point No,X (um),Y (um),Method ID,State,Valid,'
+            'HZ1_O (nm),HZ1_O_Valid')
+    for rep in range(2, 12):
+        lot = root / f'S{rep:02d}'
+        lot.mkdir(parents=True)
+        for axis in 'XY':
+            lines = []
+            for die in DIES:
+                site, value = f'{die:04d}_X000_Y000', 4000.0 + die + rep / 10
+                if all_broken or (broken_rows and axis == 'X' and die == 5 and rep == 3):
+                    site, value = 'BAD', 99999.0
+                lines.append(f'{site},0,0,1,{die * 1000.0},{die * 500.0},{axis},COMPLETED,TRUE,{value},TRUE')
+            (lot / f'S_{axis}_UL.csv').write_text(
+                '\n'.join([f'Repeat No,{rep}', '', head] + lines) + '\n', encoding='utf-8')
+
+
+def _load(root):
+    return load_recipe_data({'name': 'R', 'short_name': 'R',
+                             'rounds': [{'name': '1st', 'path': str(root)}]})
+
+
+def test_real_loader_keeps_statistics_and_outliers_off_unreadable_row(tmp_path):
+    _write_csv(tmp_path, broken_rows=True)
+
+    result = _load(tmp_path)
+
+    assert result['statistics']['max'] < 5000
+    assert not any(r['is_outlier'] for r in result['raw_data'] if r['site_id'] == 'BAD')
+
+
+@pytest.fixture
+def window(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    import main
+    monkeypatch.setattr(main, 'load_settings', lambda: dict(
+        spec_limits=SPEC_LIM, spec_deviation=SPEC_DEV))
+    monkeypatch.setattr(main, 'save_settings', lambda _: None)
+    win = main.DataAnalyzerApp()
+    yield win
+    win.deleteLater()
+    app.processEvents()
+
+
+def _show(window, result):
+    window.recipe_results = [result]
+    window.raw_data = result['raw_data']
+    window._display_result(result, {'name': 'R', 'short_name': 'R', 'index': 1})
+    return window.filter_info_label.text()
+
+
+def test_screen_label_counts_same_rows_as_analysis(tmp_path, window):
+    _write_csv(tmp_path, broken_rows=True)
+    result = _load(tmp_path)
+
+    label = _show(window, result)
+
+    assert 'Analyzing 419 of 440' in label
+    assert label.startswith('✅')
+
+
+def test_screen_does_not_claim_analysis_basis_when_nothing_is_readable(tmp_path, window):
+    _write_csv(tmp_path, all_broken=True)
+    result = _load(tmp_path)
+
+    label = _show(window, result)
+
+    assert 'Analyzing 0 of' in label
+    assert not label.startswith('✅')
+
+
+def test_summary_table_shows_dash_when_recipe_has_no_analysis_rows(tmp_path, window):
+    from core.recipe_scanner import compare_recipes
+    _write_csv(tmp_path, all_broken=True)
+    result = _load(tmp_path)
+
+    window._update_summary_table(compare_recipes([result]), [result])
+
+    texts = [window.sum_table.item(r, 0).text()
+             for r in range(window.sum_table.rowCount())
+             if window.sum_table.item(r, 0)]
+    assert '—' in texts
+    assert '0.0' not in texts

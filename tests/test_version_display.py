@@ -30,7 +30,7 @@ def test_build_config_reads_the_same_version():
 
 
 def test_no_hardcoded_app_version_in_source():
-    pattern = re.compile(r'''["'`]v\d+\.\d+''')
+    pattern = re.compile(r'\bv\d+\.\d+')
     hits = [str(p.relative_to(PROJECT)) for p in (PROJECT / 'src').rglob('*.py')
             if p.name != 'version.py' and pattern.search(p.read_text(encoding='utf-8'))]
 

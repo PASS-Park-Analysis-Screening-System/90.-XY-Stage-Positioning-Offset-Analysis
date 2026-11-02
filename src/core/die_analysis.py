@@ -141,7 +141,14 @@ def filter_stabilization_die(data: list) -> list:
     compute_deviation_matrix의 행렬과 같은 행을 본다.
     """
     excluded_die = stabilization_die(data)
-    return [r for r in data if is_analysis_row(r, excluded_die)]
+    return [r for r in data or [] if is_analysis_row(r, excluded_die)]
+
+
+def select_display_rows(data: list, excluded_dies: set) -> list:
+    """화면 Die 필터 결과: 체크 해제한 Die와 Site ID를 읽지 못한 행을 뺀다."""
+    return [r for r in data
+            if (die := extract_die_number(r.get('site_id', ''))) is not None
+            and die not in excluded_dies]
 
 
 def compute_deviation_matrix(data: list, method: str = 'X',

@@ -14,10 +14,12 @@ verify_build.py — 빌드된 onefile EXE에 필수 리소스가 **기대 경로
     python tools/verify_build.py <exe 경로>       # 특정 파일 검사
     python tools/verify_build.py <exe 경로> --module-json <module.json 경로>
                                                   # Core module.json 버전도 대조
+    Core 빌드 산출물의 이름은 xy_stage_positioning.exe이므로 경로를 지정한다.
 
 종료 코드: 0 = 정상, 1 = 리소스 누락/경로 불일치/번들 설정에 개인 값/버전 불일치, 2 = 검사 불가
 """
 
+import argparse
 import json
 import os
 import sys
@@ -100,17 +102,15 @@ def verify(exe_path):
 
 
 def main():
-    args = sys.argv[1:]
-    module_json = None
-    if '--module-json' in args:
-        at = args.index('--module-json')
-        module_json = args[at + 1]
-        del args[at:at + 2]
-    exe_path = args[0] if args else os.path.join(cfg.ROOT, 'dist', cfg.EXE_NAME + '.exe')
+    parser = argparse.ArgumentParser(description='빌드된 EXE의 번들 리소스와 설정을 검사한다.')
+    parser.add_argument('exe', nargs='?',
+                        default=os.path.join(cfg.ROOT, 'dist', cfg.EXE_NAME + '.exe'))
+    parser.add_argument('--module-json', help='버전을 대조할 Core module.json 경로')
+    args = parser.parse_args()
 
-    code = verify(exe_path)
-    if module_json:
-        mismatch = cfg.module_version_error(module_json)
+    code = verify(args.exe)
+    if args.module_json:
+        mismatch = cfg.module_version_error(args.module_json)
         if mismatch:
             print(f'[FAIL] {mismatch}')
             return code or 1

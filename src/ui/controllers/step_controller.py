@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QLabel, QPushButton, QCheckBox
 from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
                   filter_stabilization_die, stabilization_die)
+from core.die_analysis import select_display_rows
 from core import compute_statistics, filter_by_method
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
@@ -178,14 +179,18 @@ class StepMixin:
 
         # 필터 적용: 체크 해제된 Die 제외
         excluded = {d for d, cb in self._die_checkboxes.items() if not cb.isChecked()}
-        data = ([r for r in raw if extract_die_number(r.get('site_id', '')) not in excluded]
-                if excluded else raw)
+        data = select_display_rows(raw, excluded)
 
         # 기본 기준과 다르면 카드·표·차트가 Summary·Step 버튼·내보내기와 달라진다고 알린다
         default_off = stabilization_die(raw)
         self._die_filter_is_custom = excluded != ({default_off} if default_off is not None else set())
         excluded_names = ', '.join(f'Die {d + 1}' for d in sorted(excluded))
-        if self._die_filter_is_custom:
+        if not data:
+            self.filter_info_label.setText(
+                f"⚠ 분석할 수 있는 행이 없습니다  |  Analyzing 0 of {len(raw)}")
+            self.filter_info_label.setToolTip(
+                "Site ID를 읽지 못했거나 모든 Die를 해제했습니다.")
+        elif self._die_filter_is_custom:
             self.filter_info_label.setText(
                 f"⚠ Custom: Analyzing {len(data)} of {len(raw)}  |  Summary와 기준 다름")
             self.filter_info_label.setToolTip(

@@ -139,11 +139,14 @@ class TableMixin:
             # 통계 상세 (그룹 헤더 다음)
             t.setItem(ROW_R,      col, _stat_item(c.get('round', '—')))
             t.setItem(ROW_N,      col, _stat_item(c.get('data_count', '—')))
-            t.setItem(ROW_MEAN,   col, _stat_item(f"{c.get('mean', 0):.1f}"))
-            t.setItem(ROW_STDDEV, col, _stat_item(f"{c.get('stdev', 0):.1f}"))
-            t.setItem(ROW_MIN,    col, _stat_item(f"{c.get('min', 0):.1f}"))
-            t.setItem(ROW_MAX,    col, _stat_item(f"{c.get('max', 0):.1f}"))
-            t.setItem(ROW_CV,     col, _stat_item(f"{c.get('cv_percent', 0):.1f}"))
+            def _stat_text(key):
+                # 0.0으로 나가면 측정값이 있는 정상 결과처럼 보인다
+                return f"{c.get(key, 0):.1f}" if c.get('data_count') else '—'
+            t.setItem(ROW_MEAN,   col, _stat_item(_stat_text('mean')))
+            t.setItem(ROW_STDDEV, col, _stat_item(_stat_text('stdev')))
+            t.setItem(ROW_MIN,    col, _stat_item(_stat_text('min')))
+            t.setItem(ROW_MAX,    col, _stat_item(_stat_text('max')))
+            t.setItem(ROW_CV,     col, _stat_item(_stat_text('cv_percent')))
             t.setItem(ROW_OUT,    col, _stat_item(c.get('outliers', 0)))
 
 
@@ -302,7 +305,7 @@ class TableMixin:
         label = getattr(self, 'raw_filter_label', None)
         if label is not None:
             total = len(self.raw_data)
-            basis = f"분석 대상 {len(analysis)}행, 안정화 Die 포함 표시"
+            basis = f"분석 대상 {len(analysis)}행, 제외 행 포함 표시"
             label.setText(f"표시 {shown} / 전체 {total} ({basis})" if wanted
                           else f"전체 {total}행 ({basis})")
 

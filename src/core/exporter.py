@@ -24,8 +24,9 @@ def export_combined_csv(data: list, output_path: str,
                         delimiter: str = '\t') -> str:
     """Analysis.txt 대체 — 배치 데이터를 CSV/TSV로 내보내기
 
-    분석 시트에 붙여 넣는 원본이므로 22 Die를 모두 내보낸다. 안정화 Die 행은
-    마지막 열 'Analysis Target'에 N으로 표시한다. 앞 13개 열은 시트의 복사 영역과 같다.
+    분석 시트에 붙여 넣는 원본이므로 22 Die를 모두 내보낸다. 안정화 Die와 Site ID를
+    읽지 못한 행은 마지막 열 'Analysis Target'에 N으로 표시한다. 앞 13개 열은 시트의
+    복사 영역과 같다.
 
     Args:
         data: batch_load() 결과

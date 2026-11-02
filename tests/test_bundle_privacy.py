@@ -66,12 +66,40 @@ def test_source_run_restores_user_values_and_keeps_specs_from_bundle(source_mode
     assert loaded['spec_deviation'] == {'A': {'spec_range': 1.0}}
 
 
-@pytest.mark.parametrize('content', ['{broken', '[1, 2]'])
+@pytest.mark.parametrize('content', [
+    b'{broken', b'[1, 2]',
+    '{"last_folder": "D:/측정"}'.encode('cp949'),
+])
 def test_damaged_local_file_falls_back_to_bundle(source_mode, content):
     _, local = source_mode
-    local.write_text(content, encoding='utf-8')
+    local.write_bytes(content)
 
-    assert settings.load_settings()['wafer_size'] == 300
+    loaded = settings.load_settings()
+
+    assert loaded['wafer_size'] == 300
+    assert loaded['last_folder'] == ''
+
+
+@pytest.mark.parametrize('bad', [
+    {'recent_folders': 'D:/x'}, {'recent_folders': None}, {'recent_folders': [1]},
+    {'wafer_size': '200'}, {'wafer_size': True}, {'last_folder': 3},
+])
+def test_wrong_type_in_local_file_is_ignored(source_mode, bad):
+    _, local = source_mode
+    local.write_text(json.dumps(bad), encoding='utf-8')
+
+    loaded = settings.load_settings()
+
+    assert loaded['recent_folders'] == []
+    assert loaded['wafer_size'] == 300
+    assert settings.add_recent_folder(loaded, 'D:/y')['recent_folders'] == ['D:/y']
+
+
+def test_local_file_with_bom_is_read(source_mode):
+    _, local = source_mode
+    local.write_bytes(json.dumps({'wafer_size': 200}).encode('utf-8-sig'))
+
+    assert settings.load_settings()['wafer_size'] == 200
 
 
 def test_frozen_app_ignores_paths_that_slipped_into_bundle(tmp_path, monkeypatch):
@@ -110,6 +138,12 @@ def test_frozen_app_still_uses_registry_paths(tmp_path, monkeypatch):
     ({'extra': {'nested': ['Z:\\MC\\customer']}}, 'extra.nested[0]'),
     ({'extra': '\\\\10.60.20.11\\share'}, 'extra'),
     ({'extra': '//10.60.20.11/share'}, 'extra'),
+    ({'extra': 'see D:\\customer\\a'}, 'extra'),
+    ({'extra': 'copy of \\\\10.60.20.11\\share'}, 'extra'),
+    ({'extra': 'smb://10.60.20.11/share'}, 'extra'),
+    ({'extra': '/home/someone/data'}, 'extra'),
+    ({'D:/customer/recipe': 1}, '<키>'),
+    ({'spec': {'C:\\Users\\someone': 1}}, 'spec.<키>'),
 ])
 def test_privacy_check_finds_private_values(payload, where):
     errors = cfg.settings_privacy_errors(payload)

@@ -44,7 +44,7 @@ _MACHINE_SPECIFIC_DEFAULTS = {'last_folder': '', 'recent_folders': []}
 
 
 def _read_settings_file(file_path: str) -> dict:
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding='utf-8-sig') as f:
         return json.load(f)
 
 
@@ -53,15 +53,28 @@ def _write_settings_file(file_path: str, settings: dict):
         json.dump(settings, f, indent=2, ensure_ascii=False)
 
 
+def _is_valid_user_value(name: str, value) -> bool:
+    if name == 'recent_folders':
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
+    if name == 'wafer_size':
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, str)
+
+
 def _read_local_settings() -> dict:
-    """소스 실행의 사용자 환경설정을 읽는다. 없거나 손상되면 빈 dict."""
+    """소스 실행의 사용자 환경설정을 읽는다. 없거나 손상되면 빈 dict.
+
+    손으로 고친 파일이 앱 시작을 막으면 안 되므로, 인코딩이 틀리거나(ValueError)
+    형식이 맞지 않는 값은 버린다.
+    """
     try:
         local = _read_settings_file(LOCAL_SETTINGS_FILE)
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return {}
     if not isinstance(local, dict):
         return {}
-    return {key: value for key, value in local.items() if key in _USER_SETTING_KEYS}
+    return {key: value for key, value in local.items()
+            if key in _USER_SETTING_KEYS and _is_valid_user_value(key, value)}
 
 
 def _read_registry_settings() -> dict:

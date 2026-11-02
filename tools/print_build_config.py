@@ -49,7 +49,8 @@ def main():
         print()
         print(f'[경고] settings.json에 개인 값이 있습니다: {private}')
         print('       빌드 매니저는 XYStageOffset.spec을 쓰지 않아 이 값을 막지 못합니다.')
-        print('       python tools/migrate_local_settings.py 로 옮긴 뒤 빌드하세요.')
+        print('       python tools/migrate_local_settings.py 로 보존하고')
+        print('       git restore src/core/settings.json 을 실행한 뒤 빌드하세요.')
         return 1
     return 0
 

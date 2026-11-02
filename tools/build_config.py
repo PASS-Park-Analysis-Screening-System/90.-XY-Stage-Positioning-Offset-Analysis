@@ -64,7 +64,11 @@ COLLECT_ALL = ['pspylib']
 SETTINGS_SOURCE = os.path.join('src', 'core', 'settings.json')
 VERSION_SOURCE = os.path.join('src', 'core', 'version.py')
 _MUST_BE_EMPTY = ('last_folder', 'recent_folders')
-_PATH_LIKE = re.compile(r'^[A-Za-z]:[\\/]|^[\\/]{2}|[\\/]Users[\\/]', re.IGNORECASE)
+_PATH_LIKE = re.compile(
+    r'(?<![A-Za-z0-9])[A-Za-z]:[\\/]'     # 드라이브 경로 (문자열 중간 포함)
+    r'|[\\/]{2}[^\\/\s]'                 # UNC, URI
+    r'|[\\/](users|home|mnt)[\\/]',       # 사용자·마운트 경로
+    re.IGNORECASE)
 
 
 def _strings_in(value, where):
@@ -72,7 +76,10 @@ def _strings_in(value, where):
         yield where, value
     elif isinstance(value, dict):
         for key, item in value.items():
-            yield from _strings_in(item, f'{where}.{key}' if where else str(key))
+            path = f'{where}.{key}' if where else str(key)
+            if isinstance(key, str) and _PATH_LIKE.search(key):
+                yield f'{where}.<키>' if where else '<키>', key
+            yield from _strings_in(item, '<경로 키>' if _PATH_LIKE.search(str(key)) else path)
     elif isinstance(value, list):
         for i, item in enumerate(value):
             yield from _strings_in(item, f'{where}[{i}]')

@@ -42,7 +42,7 @@ if missing:
 private = cfg.settings_source_errors()
 if private:
     raise SystemExit('[build_config] settings.json에 개인 값이 있어 빌드를 중단합니다: '
-                     f'{private}\n먼저 python tools/migrate_local_settings.py 를 실행하세요.')
+                     f'{private}\n먼저 python tools/migrate_local_settings.py 로 보존하고 git restore src/core/settings.json 을 실행하세요.')
 
 
 a = Analysis(
