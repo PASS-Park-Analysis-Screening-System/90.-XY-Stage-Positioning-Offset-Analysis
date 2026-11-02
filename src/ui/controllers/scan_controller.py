@@ -38,8 +38,9 @@ class ScanMixin:
         self.logger.info(f"경로: {folder}")
         self.statusBar().showMessage("스캔 중...")
 
-        self.recipes = scan_recipes(folder)
-        if not self.recipes:
+        # 검증을 통과한 뒤에만 바꾼다. 취소했을 때 이전 결과가 새 Recipe 이름 아래 보이면 안 된다
+        recipes = scan_recipes(folder)
+        if not recipes:
             self.logger.warn("Recipe 구조를 찾지 못했습니다.")
             QMessageBox.information(self, "알림", "Recipe 구조를 찾지 못했습니다.")
             return
@@ -51,9 +52,9 @@ class ScanMixin:
         if std_names:
             # 설정의 스펙 이름과 발견된 Recipe의 short_name이 일치하는지 확인
             # (recipe_scanner가 '1. Vision Pattern' 처럼 앞의 숫자를 자른 short_name을 제공함)
-            detected = [r['short_name'] for r in self.recipes]
+            detected = [r['short_name'] for r in recipes]
             mismatched = []
-            for r in self.recipes:
+            for r in recipes:
                 is_match = False
                 for std in std_names:
                     # 엄격한 일치 (대소문자 무시, 공백 제거)
@@ -68,7 +69,7 @@ class ScanMixin:
 
             if mismatched:
                 std_list = '\n'.join(f"  • {s}" for s in std_names)
-                det_list = '\n'.join(f"  • {d}" for d in [r['name'] for r in self.recipes])
+                det_list = '\n'.join(f"  • {d}" for d in [r['name'] for r in recipes])
                 mis_list = '\n'.join(f"  ❌ {m}" for m in mismatched)
                 
                 msg = (f"데이터 폴더명이 설정된 Spec 이름과 일치하지 않습니다.\n"
@@ -81,24 +82,26 @@ class ScanMixin:
                 self.logger.error("폴더명 불일치로 스캔이 취소되었습니다.")
                 return
 
+        self.recipes = recipes
         self.logger.ok(f"✅ {len(self.recipes)}개 Recipe 발견")
         for r in self.recipes:
             self.logger.info(f"  Step {r['index']}: {r['name']}")
 
         self.settings = add_recent_folder(self.settings, folder)
         self._save_settings()
-        self._reset_results_for_scan()
 
         self.logger.info("전체 Recipe 데이터 로드 시작 (1st round)...")
         self._set_scan_controls_enabled(False)
         self._loader_thread = DataLoaderThread(folder)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
+        self._reset_results_for_scan()
         self._loader_thread.start()
 
     def _reset_results_for_scan(self):
         """이전 폴더의 결과를 지운다. 안 그러면 로드 중에 새 Step 이름으로 이전 판정이 보인다."""
         self.recipe_results = []
+        self.sum_table.setColumnCount(0)
         self._build_nav()
         if self.recipes:
             self._select_step(0)
@@ -122,6 +125,8 @@ class ScanMixin:
         self._loader_thread = None
         self._set_scan_controls_enabled(True)
         self.statusBar().showMessage("스캔 실패")
+        self.filter_info_label.setText("⚠ 스캔 실패")
+        self.filter_info_label.setToolTip(str(e))
         QMessageBox.critical(self, "오류", str(e))
 
 

@@ -290,8 +290,8 @@ def test_step_not_loaded_yet_also_clears_previous_verdict(window):
     window._select_step(0)
     window._select_step(1)
     assert window.card_x.badge.text() == '—'
-    assert not window.filter_info_label.text().startswith('✅')
-    assert '로드 중' in window.statusBar().currentMessage()
+    assert window.filter_info_label.text() == '⚠ 스캔 결과가 없습니다'
+    assert '스캔 결과가 없습니다' in window.statusBar().currentMessage()
 
 
 def test_step_button_shows_fail_when_other_axis_is_not_judged(window):
@@ -376,19 +376,97 @@ def test_axis_without_data_clears_only_charts_that_need_it(window):
         assert _chart_is_empty(window.chart_widgets[name])
 
 
-def test_rescan_hides_verdict_of_previous_folder_while_loading(window):
-    _two_steps(window)
-    window._select_step(0)
-    assert window.card_x.badge.text() == '✅ PASS'
+@pytest.fixture
+def scan(window, monkeypatch, tmp_path):
+    """실제 _scan_folder를 가짜 로더 스레드로 돌린다 (설정 파일과 대화상자는 막는다)."""
+    from PySide6.QtCore import QObject, Signal
+    from PySide6.QtWidgets import QMessageBox
+    import ui.controllers.scan_controller as controller
 
-    window._reset_results_for_scan()
+    class FakeThread(QObject):
+        finished = Signal(list, list, float)
+        error = Signal(object, str)
+
+        def __init__(self, folder):
+            super().__init__()
+            self.folder = folder
+
+        def start(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(controller, 'DataLoaderThread', FakeThread)
+    monkeypatch.setattr(controller, 'add_recent_folder', lambda settings, _: settings)
+    monkeypatch.setattr(window, '_save_settings', lambda: None)
+    for name in ('warning', 'information', 'critical'):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
+    window.path_edit.setText(str(tmp_path))
+    window.settings['spec_deviation'] = {'R': SPEC_DEV['R']}
+
+    def run(names):
+        recipes = [{'name': n, 'short_name': n, 'index': i + 1, 'rounds': []}
+                   for i, n in enumerate(names)]
+        monkeypatch.setattr(controller, 'scan_recipes', lambda _: recipes)
+        window._scan_folder()
+    yield run
+    window._loader_thread = None
+
+
+def _finish_scan(window):
+    from core.recipe_scanner import compare_recipes
+    result = dict(recipe='R', short_name='R', round='1st', raw_data=_table(), statistics={},
+                  data_warnings=[], load_errors=[], trend=[], trend_x=[], trend_y=[])
+    window._loader_thread.finished.emit([result], compare_recipes([result]), 1.0)
+
+
+def test_rescan_hides_verdict_of_previous_folder_while_loading(window, scan):
+    scan(['R'])
+    _finish_scan(window)
+    assert window.card_x.badge.text() == '✅ PASS'
+    assert window.sum_table.columnCount() == 1
+
+    scan(['R'])
 
     assert window.recipe_results == []
     assert window.step_pass_states == {}
+    assert window.sum_table.columnCount() == 0
     assert window.card_x.badge.text() == '—'
     assert window.filter_info_label.text() == '⚠ 데이터 로드 중'
-    assert window.filter_info_label.toolTip() == ''
     assert '로드 중' in window.statusBar().currentMessage()
+
+    _finish_scan(window)
+    assert window.card_x.badge.text() == '✅ PASS'
+    assert window.filter_info_label.text().startswith('✅')
+    assert window.sum_table.columnCount() == 1
+
+
+def test_scan_failure_does_not_stay_on_loading(window, scan):
+    scan(['R'])
+    window._loader_thread.error.emit(RuntimeError('읽기 실패'), '')
+
+    assert window.filter_info_label.text() == '⚠ 스캔 실패'
+    assert '읽기 실패' in window.filter_info_label.toolTip()
+    assert window.statusBar().currentMessage() == '스캔 실패'
+
+    window._select_step(0)
+    assert window.filter_info_label.text() == '⚠ 스캔 결과가 없습니다'
+    assert '로드 중' not in window.statusBar().currentMessage()
+
+
+@pytest.mark.parametrize('names', [['Z'], []])
+def test_cancelled_scan_keeps_previous_recipes_and_results(window, scan, names):
+    scan(['R'])
+    _finish_scan(window)
+    before = list(window.recipes)
+
+    scan(names)     # Z는 폴더명 불일치, []는 Recipe 없음
+
+    assert window.recipes == before
+    assert len(window.recipe_results) == 1
+    assert window.card_x.badge.text() == '✅ PASS'
+    window._on_die_filter_changed(None)     # 취소 뒤에도 예외가 없어야 한다
 
 
 def test_tooltip_keeps_hint_and_warnings_when_all_dies_are_unchecked(window):

@@ -122,12 +122,17 @@ class StepMixin:
             self.raw_data = []
             self._dynamic_die_positions = extract_die_positions(self.raw_data)
             self._display_result(result, recipe)
-            if not has_result:
+            if has_result:
+                message = f"{recipe['short_name']}: 분석할 데이터가 없습니다"
+            elif self._loader_thread is not None:
+                message = f"데이터 로드 중: {recipe['short_name']}..."
                 self.filter_info_label.setText("⚠ 데이터 로드 중")
                 self.filter_info_label.setToolTip("")
-            self.statusBar().showMessage(
-                f"{recipe['short_name']}: 분석할 데이터가 없습니다" if has_result
-                else f"데이터 로드 중: {recipe['short_name']}...")
+            else:
+                message = f"{recipe['short_name']}: 스캔 결과가 없습니다"
+                self.filter_info_label.setText("⚠ 스캔 결과가 없습니다")
+                self.filter_info_label.setToolTip("")
+            self.statusBar().showMessage(message)
 
     # ──────────────────────────────────────────────
     # Display Result
