@@ -43,6 +43,7 @@ from core import (
 )
 from core.exporter import export_combined_csv, export_excel_report
 from core.settings import load_settings, save_settings, add_recent_folder, parse_geometry_string
+from core.version import APP_VERSION_LABEL
 ## sparkline_delegate not currently used (gauge removed)
 from core.recipe_scanner import scan_recipes, load_recipe_data, load_all_recipes, compare_recipes
 import charts as viz
@@ -84,7 +85,7 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("📊 XY Stage Offset Analyzer — Workflow")
+        self.setWindowTitle(f"📊 XY Stage Offset Analyzer {APP_VERSION_LABEL} — Workflow")
         # Cross-display: keep the floor small enough for a DPI-scaled laptop
         # (1920×1080 @150% = 1280×720 logical). Initial sizing is delegated to
         # the geometry-restore / fit-to-screen path in _restore_geometry().

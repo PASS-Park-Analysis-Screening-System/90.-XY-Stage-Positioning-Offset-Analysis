@@ -15,7 +15,7 @@ from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
-from core.version import APP_VERSION
+from core.version import APP_VERSION_LABEL
 from ui.controllers.table_controller import (
     SUMMARY_ROW_LABELS, SUMMARY_GROUP_HEADER_ROWS, SUMMARY_CHK_ROWS)
 
@@ -840,7 +840,7 @@ class UIBuilderMixin:
         info_header.setAlignment(Qt.AlignCenter)
         help_scroll_layout.addWidget(info_header)
 
-        info_version = QLabel("v1.0  |  Production & Quality Control Team, Manufacturing Dept.")
+        info_version = QLabel(f"{APP_VERSION_LABEL}  |  Production & Quality Control Team, Manufacturing Dept.")
         info_version.setStyleSheet(f"color:{FG2}; font-size:9pt;")
         info_version.setAlignment(Qt.AlignCenter)
         help_scroll_layout.addWidget(info_version)
@@ -961,11 +961,14 @@ class UIBuilderMixin:
         QTimer.singleShot(200, self._render_die_position)
 
         # Boot log
-        QTimer.singleShot(50, lambda: self.logger.head(f"XY Stage Offset Analyzer v{APP_VERSION} 시작"))
+        QTimer.singleShot(50, lambda: self.logger.head(f"XY Stage Offset Analyzer {APP_VERSION_LABEL} 시작"))
         QTimer.singleShot(100, lambda: self.logger.info(
             "폴더를 선택하고 '스캔 & 분석'을 눌러주세요."))
 
-        # Status bar
+        # Status bar: 영구 위젯은 showMessage가 덮어쓰지 않아 실행 버전이 항상 보인다
+        self.version_status_label = QLabel(APP_VERSION_LABEL)
+        self.version_status_label.setStyleSheet(f"color:{FG2}; padding:0 8px;")
+        self.statusBar().addPermanentWidget(self.version_status_label)
         self.statusBar().showMessage("폴더를 선택하세요.")
 
     # ──────────────────────────────────────────────
