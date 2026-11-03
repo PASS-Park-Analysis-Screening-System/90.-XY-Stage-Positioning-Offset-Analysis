@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+import logging
 import os
 import traceback
 from core.recipe_scanner import scan_recipes
@@ -119,11 +120,18 @@ class ScanMixin:
 
         복구 중이므로 다시 예외를 내지 않는다. 버튼 복구와 대화상자가 막히면 안 된다.
         """
+        for card in (self.card_x, self.card_y):
+            try:
+                card.clear_stats()
+            except Exception as e:
+                self._log_during_recovery(f"카드 초기화 오류: {type(e).__name__}: {e}")
+
+    def _log_during_recovery(self, text):
+        """System Log 기록 실패가 스캔 실패 복구를 막지 않게 한다."""
         try:
-            self.card_x.clear_stats()
-            self.card_y.clear_stats()
-        except Exception as e:
-            self.logger.error(f"카드 초기화 오류: {type(e).__name__}: {e}")
+            self.logger.error(text)
+        except Exception:
+            logging.getLogger(__name__).exception('System Log 기록 실패')
 
     def _set_scan_controls_enabled(self, enabled: bool):
         """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open 버튼 활성/비활성."""
@@ -138,13 +146,17 @@ class ScanMixin:
         다이얼로그에는 요약만, System Log에는 traceback 전문을 남긴다.
         (현장에서 어느 파일·어느 함수인지 추적할 수 있어야 한다)
         """
-        # 메시지 없는 예외도 대화상자가 비지 않게 한다
-        message = str(e).strip() or type(e).__name__
-        self.logger.error(f"로드 오류: {message}")
-        if tb:
-            self.logger.error(tb.rstrip())
         self._loader_thread = None
         self._set_scan_controls_enabled(True)
+        # 메시지 없는 예외도 대화상자가 비지 않게 한다
+        try:
+            text = str(e)
+        except Exception:
+            text = ''
+        message = text if text.strip() else type(e).__name__
+        self._log_during_recovery(f"로드 오류: {message}")
+        if tb:
+            self._log_during_recovery(tb.rstrip())
         self.statusBar().showMessage("스캔 실패")
         self.filter_info_label.setText("⚠ 스캔 실패")
         self.filter_info_label.setToolTip(message)

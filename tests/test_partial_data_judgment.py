@@ -385,7 +385,7 @@ def scan(window, monkeypatch, tmp_path):
 
     class FakeThread(QObject):
         finished = Signal(list, list, float)
-        error = Signal(object, str)
+        error = Signal(str, str)     # 실제 DataLoaderThread와 같은 형태
 
         def __init__(self, folder):
             super().__init__()
@@ -444,10 +444,12 @@ def test_rescan_hides_verdict_of_previous_folder_while_loading(window, scan):
 
 def test_scan_failure_does_not_stay_on_loading(window, scan):
     scan(['R'])
-    window._loader_thread.error.emit(RuntimeError('읽기 실패'), '')
+    window._loader_thread.error.emit('RuntimeError: 읽기 실패', 'Traceback: 원문')
 
     assert window.filter_info_label.text() == '⚠ 스캔 실패'
-    assert '읽기 실패' in window.filter_info_label.toolTip()
+    assert window.filter_info_label.toolTip() == 'RuntimeError: 읽기 실패'
+    logged = str(window.logger.export_rows())
+    assert 'RuntimeError: 읽기 실패' in logged and 'Traceback: 원문' in logged
     assert window.statusBar().currentMessage() == '스캔 실패'
 
     window._select_step(0)
@@ -511,11 +513,25 @@ def _dialogs(monkeypatch):
     return shown
 
 
+def test_load_thread_message_is_shown_as_it_came(window, scan, monkeypatch):
+    shown = _dialogs(monkeypatch)
+    scan(['R'])
+    window._loader_thread.error.emit('RuntimeError: ', '')
+    assert shown == ['RuntimeError: ']
+
+
 def test_scan_start_failure_clears_previous_cards(window, scan, monkeypatch):
-    _show(window, _table())
+    import ui.controllers.scan_controller as controller
+    rows = _table()
+    _show(window, rows)
     assert window.card_x.badge.text() == '✅ PASS'
     assert window.card_x.lbl_cpk.text() not in ('—', 'N/A')
-    shown = _dialogs(monkeypatch)
+    at_dialog = []
+
+    def dialog(_parent, _title, text):  # 대화상자는 모달이므로 떠 있는 동안의 카드를 본다
+        at_dialog.append((text, window.card_x.badge.text(), window.card_y.badge.text(),
+                          window.card_x.lbl_cpk.text(), window.card_y.lbl_cpk.text()))
+    monkeypatch.setattr(controller.QMessageBox, 'critical', dialog)
 
     def boom(_idx):     # 실제 _reset_results_for_scan이 화면을 다시 그리다 실패한다
         raise RuntimeError('화면 오류')
@@ -530,11 +546,19 @@ def test_scan_start_failure_clears_previous_cards(window, scan, monkeypatch):
         assert card.lbl_rng.text() == '—'
         assert card.lbl_std.text() == '—'
         assert card.lbl_rng_spec.text() == ''
+        assert card.lbl_std_spec.text() == ''
         assert card.lbl_basis.text() == ''
-    assert shown == ['화면 오류']
+    assert at_dialog == [('화면 오류', '—', '—', '—', '—')]
+    logged = str(window.logger.export_rows())
+    assert '화면 오류' in logged and 'Traceback' in logged
+
+    _show(window, rows)     # 다음 표시에서는 정상으로 돌아온다
+    assert window.card_x.badge.text() == '✅ PASS'
+    assert window.card_x.lbl_basis.text() == '21 Die × 10 Repeat'
 
 
 def test_scan_start_recovery_survives_card_clear_failure(window, scan, monkeypatch):
+    _show(window, _table())
     shown = _dialogs(monkeypatch)
 
     def boom(*_args, **_kwargs):
@@ -548,6 +572,40 @@ def test_scan_start_recovery_survives_card_clear_failure(window, scan, monkeypat
     assert window.btn_scan.isEnabled()
     assert window._loader_thread is None
     assert window.filter_info_label.text() == '⚠ 스캔 실패'
+    assert window.card_y.badge.text() == '—'    # 한 카드의 실패가 다른 카드를 막지 않는다
+
+
+def test_scan_start_recovery_survives_log_failure(window, scan, monkeypatch):
+    shown = _dialogs(monkeypatch)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError('화면 오류')
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+    monkeypatch.setattr(window.card_x, 'clear_stats', boom)
+    monkeypatch.setattr(window.logger, 'error', boom)
+
+    scan(['R'])
+
+    assert shown == ['화면 오류']
+    assert window._loader_thread is None
+    assert window.btn_scan.isEnabled()
+
+
+def test_exception_whose_str_fails_still_recovers(window, scan, monkeypatch):
+    class BadError(Exception):
+        def __str__(self):
+            raise ValueError('str 실패')
+    shown = _dialogs(monkeypatch)
+
+    def boom():
+        raise BadError()
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+
+    scan(['R'])
+
+    assert shown == ['BadError']
+    assert window._loader_thread is None
+    assert window.btn_scan.isEnabled()
 
 
 @pytest.mark.parametrize('error', [RuntimeError(), RuntimeError('  ')])
