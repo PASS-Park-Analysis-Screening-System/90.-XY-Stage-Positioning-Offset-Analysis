@@ -530,7 +530,8 @@ def test_scan_start_failure_clears_previous_cards(window, scan, monkeypatch):
 
     def dialog(_parent, _title, text):  # 대화상자는 모달이므로 떠 있는 동안의 카드를 본다
         at_dialog.append((text, window.card_x.badge.text(), window.card_y.badge.text(),
-                          window.card_x.lbl_cpk.text(), window.card_y.lbl_cpk.text()))
+                          window.card_x.lbl_cpk.text(), window.card_y.lbl_cpk.text(),
+                          window.btn_scan.isEnabled(), window._loader_thread is None))
     monkeypatch.setattr(controller.QMessageBox, 'critical', dialog)
 
     def boom(_idx):     # 실제 _reset_results_for_scan이 화면을 다시 그리다 실패한다
@@ -548,7 +549,7 @@ def test_scan_start_failure_clears_previous_cards(window, scan, monkeypatch):
         assert card.lbl_rng_spec.text() == ''
         assert card.lbl_std_spec.text() == ''
         assert card.lbl_basis.text() == ''
-    assert at_dialog == [('화면 오류', '—', '—', '—', '—')]
+    assert at_dialog == [('화면 오류', '—', '—', '—', '—', True, True)]
     logged = str(window.logger.export_rows())
     assert '화면 오류' in logged and 'Traceback' in logged
 
@@ -589,6 +590,29 @@ def test_scan_start_recovery_survives_log_failure(window, scan, monkeypatch):
     assert shown == ['화면 오류']
     assert window._loader_thread is None
     assert window.btn_scan.isEnabled()
+
+
+def test_scan_start_recovery_survives_label_and_unprintable_card_error(window, scan, monkeypatch):
+    class BadError(Exception):
+        def __str__(self):
+            raise ValueError('str 실패')
+    shown = _dialogs(monkeypatch)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError('화면 오류')
+
+    def bad_clear():
+        raise BadError()
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+    monkeypatch.setattr(window.card_x, 'clear_stats', bad_clear)
+    monkeypatch.setattr(window.filter_info_label, 'setText', boom)
+
+    scan(['R'])
+
+    assert shown == ['화면 오류']
+    assert window._loader_thread is None
+    assert window.btn_scan.isEnabled()
+    assert window.card_y.badge.text() == '—'
 
 
 def test_exception_whose_str_fails_still_recovers(window, scan, monkeypatch):

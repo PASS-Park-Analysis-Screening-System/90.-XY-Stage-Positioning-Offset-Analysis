@@ -120,11 +120,11 @@ class ScanMixin:
 
         복구 중이므로 다시 예외를 내지 않는다. 버튼 복구와 대화상자가 막히면 안 된다.
         """
-        for card in (self.card_x, self.card_y):
+        for name in ('card_x', 'card_y'):
             try:
-                card.clear_stats()
+                getattr(self, name).clear_stats()
             except Exception as e:
-                self._log_during_recovery(f"카드 초기화 오류: {type(e).__name__}: {e}")
+                self._log_during_recovery(f"{name} 초기화 오류: {type(e).__name__}")
 
     def _log_during_recovery(self, text):
         """System Log 기록 실패가 스캔 실패 복구를 막지 않게 한다."""
@@ -157,9 +157,12 @@ class ScanMixin:
         self._log_during_recovery(f"로드 오류: {message}")
         if tb:
             self._log_during_recovery(tb.rstrip())
-        self.statusBar().showMessage("스캔 실패")
-        self.filter_info_label.setText("⚠ 스캔 실패")
-        self.filter_info_label.setToolTip(message)
+        try:
+            self.statusBar().showMessage("스캔 실패")
+            self.filter_info_label.setText("⚠ 스캔 실패")
+            self.filter_info_label.setToolTip(message)
+        except Exception as label_error:
+            self._log_during_recovery(f"실패 표시 오류: {type(label_error).__name__}")
         QMessageBox.critical(self, "오류", message)
 
 
