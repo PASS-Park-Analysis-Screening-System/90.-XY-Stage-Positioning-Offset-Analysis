@@ -99,6 +99,12 @@ class StatCard(QFrame):
             f"font-size: 8pt; color: {ORANGE if custom else FG2};"
             + (" font-weight: bold;" if custom else ""))
 
+    def clear_stats(self):
+        """값, 판정, 분석 기준을 지운다."""
+        self.update_stats(None, None, None, None)
+        self.lbl_basis.setText("")
+        self.lbl_basis.setToolTip("")
+
     def update_stats(self, avg, rng, std, cpk, is_pass: bool = None,
                      spec_r=None, spec_s=None, warned: bool = False):
         # 측정이 없는 축은 값이 None이다

@@ -99,7 +99,9 @@ class ScanMixin:
             self._reset_results_for_scan()
         except Exception as e:
             # 시작하지 않은 스레드를 남기면 스캔이 돌지 않는데도 로드 중으로 보인다
-            self._on_scan_error(e, traceback.format_exc())
+            tb = traceback.format_exc()
+            self._clear_cards_after_failed_start()
+            self._on_scan_error(e, tb)
             return
         self._set_scan_controls_enabled(False)
         self._loader_thread.start()
@@ -111,6 +113,17 @@ class ScanMixin:
         self._build_nav()
         if self.recipes:
             self._select_step(0)
+
+    def _clear_cards_after_failed_start(self):
+        """화면을 비우다 실패하면 이전 폴더의 PASS와 Cpk가 카드에 남는다.
+
+        복구 중이므로 다시 예외를 내지 않는다. 버튼 복구와 대화상자가 막히면 안 된다.
+        """
+        try:
+            self.card_x.clear_stats()
+            self.card_y.clear_stats()
+        except Exception as e:
+            self.logger.error(f"카드 초기화 오류: {type(e).__name__}: {e}")
 
     def _set_scan_controls_enabled(self, enabled: bool):
         """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open 버튼 활성/비활성."""
@@ -125,15 +138,17 @@ class ScanMixin:
         다이얼로그에는 요약만, System Log에는 traceback 전문을 남긴다.
         (현장에서 어느 파일·어느 함수인지 추적할 수 있어야 한다)
         """
-        self.logger.error(f"로드 오류: {e}")
+        # 메시지 없는 예외도 대화상자가 비지 않게 한다
+        message = str(e).strip() or type(e).__name__
+        self.logger.error(f"로드 오류: {message}")
         if tb:
             self.logger.error(tb.rstrip())
         self._loader_thread = None
         self._set_scan_controls_enabled(True)
         self.statusBar().showMessage("스캔 실패")
         self.filter_info_label.setText("⚠ 스캔 실패")
-        self.filter_info_label.setToolTip(str(e))
-        QMessageBox.critical(self, "오류", str(e))
+        self.filter_info_label.setToolTip(message)
+        QMessageBox.critical(self, "오류", message)
 
 
     # System Log에 한 Recipe당 표시할 개별 경고 줄 수 상한 (나머지는 '외 N건'으로 요약)

@@ -503,6 +503,67 @@ def test_scan_start_failure_recovers_like_a_scan_error(window, scan, monkeypatch
     assert window.statusBar().currentMessage() == '스캔 실패'
 
 
+def _dialogs(monkeypatch):
+    import ui.controllers.scan_controller as controller
+    shown = []
+    monkeypatch.setattr(controller.QMessageBox, 'critical',
+                        lambda _parent, _title, text: shown.append(text))
+    return shown
+
+
+def test_scan_start_failure_clears_previous_cards(window, scan, monkeypatch):
+    _show(window, _table())
+    assert window.card_x.badge.text() == '✅ PASS'
+    assert window.card_x.lbl_cpk.text() not in ('—', 'N/A')
+    shown = _dialogs(monkeypatch)
+
+    def boom(_idx):     # 실제 _reset_results_for_scan이 화면을 다시 그리다 실패한다
+        raise RuntimeError('화면 오류')
+    monkeypatch.setattr(window, '_select_step', boom)
+
+    scan(['R'])
+
+    for card in (window.card_x, window.card_y):
+        assert card.badge.text() == '—'
+        assert card.lbl_cpk.text() == '—'
+        assert card.lbl_avg.text() == '—'
+        assert card.lbl_rng.text() == '—'
+        assert card.lbl_std.text() == '—'
+        assert card.lbl_rng_spec.text() == ''
+        assert card.lbl_basis.text() == ''
+    assert shown == ['화면 오류']
+
+
+def test_scan_start_recovery_survives_card_clear_failure(window, scan, monkeypatch):
+    shown = _dialogs(monkeypatch)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError('화면 오류')
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+    monkeypatch.setattr(window.card_x, 'update_stats', boom)
+
+    scan(['R'])
+
+    assert shown == ['화면 오류']
+    assert window.btn_scan.isEnabled()
+    assert window._loader_thread is None
+    assert window.filter_info_label.text() == '⚠ 스캔 실패'
+
+
+@pytest.mark.parametrize('error', [RuntimeError(), RuntimeError('  ')])
+def test_exception_without_message_still_fills_the_dialog(window, scan, monkeypatch, error):
+    shown = _dialogs(monkeypatch)
+
+    def boom():
+        raise error
+    monkeypatch.setattr(window, '_reset_results_for_scan', boom)
+
+    scan(['R'])
+
+    assert shown == ['RuntimeError']
+    assert window.filter_info_label.toolTip() == 'RuntimeError'
+
+
 # ── 사용자 결정: 경고가 있는 PASS 배지, 판정이 없을 때의 Cpk ─────────────────
 
 def _excel_rows(result):
