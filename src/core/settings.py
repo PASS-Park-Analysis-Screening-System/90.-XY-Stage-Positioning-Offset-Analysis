@@ -38,9 +38,13 @@ _USER_SETTING_KEYS = {
     'window_geometry',
     'recent_folders',
     'wafer_size',
+    'workflow_folder_map',
 }
 # 빌드본은 번들에 값이 섞여 들어와도 이 항목을 쓰지 않는다. 빌드한 PC의 경로다.
-_MACHINE_SPECIFIC_DEFAULTS = {'last_folder': '', 'recent_folders': []}
+_MACHINE_SPECIFIC_DEFAULTS = {'last_folder': '', 'recent_folders': [],
+                              'workflow_folder_map': {}}
+# 값을 JSON 문자열로 레지스트리에 저장하는 항목
+_JSON_REGISTRY_KEYS = ('recent_folders', 'workflow_folder_map')
 
 
 def _read_settings_file(file_path: str) -> dict:
@@ -58,6 +62,12 @@ def _is_valid_user_value(name: str, value) -> bool:
         return isinstance(value, list) and all(isinstance(v, str) for v in value)
     if name == 'wafer_size':
         return isinstance(value, int) and not isinstance(value, bool)
+    if name == 'workflow_folder_map':
+        # {Spec 이름: {'path': 폴더, 'enabled': 사용 여부}}
+        return isinstance(value, dict) and all(
+            isinstance(k, str) and isinstance(v, dict)
+            and isinstance(v.get('path'), str) and isinstance(v.get('enabled'), bool)
+            for k, v in value.items())
     return isinstance(value, str)
 
 
@@ -95,12 +105,12 @@ def _read_registry_settings() -> dict:
             except OSError:
                 continue
 
-            if name == 'recent_folders':
+            if name in _JSON_REGISTRY_KEYS:
                 try:
                     value = json.loads(value)
                 except (TypeError, json.JSONDecodeError):
                     continue
-                if not isinstance(value, list):
+                if not _is_valid_user_value(name, value):
                     continue
             elif name == 'wafer_size':
                 try:
@@ -123,7 +133,7 @@ def _write_registry_settings(settings: dict):
                 if name not in settings:
                     continue
                 value = settings[name]
-                if name == 'recent_folders':
+                if name in _JSON_REGISTRY_KEYS:
                     value = json.dumps(value, ensure_ascii=False)
                     value_type = winreg.REG_SZ
                 elif name == 'wafer_size':

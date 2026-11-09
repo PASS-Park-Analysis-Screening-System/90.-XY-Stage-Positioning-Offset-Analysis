@@ -63,7 +63,7 @@ COLLECT_ALL = ['pspylib']
 # ──────────────────────────────────────────────────────────────────────────
 SETTINGS_SOURCE = os.path.join('src', 'core', 'settings.json')
 VERSION_SOURCE = os.path.join('src', 'core', 'version.py')
-_MUST_BE_EMPTY = ('last_folder', 'recent_folders')
+_MUST_BE_EMPTY = ('last_folder', 'recent_folders', 'workflow_folder_map')
 _PATH_LIKE = re.compile(
     r'(?<![A-Za-z0-9])[A-Za-z]:[\\/]'     # 드라이브 경로 (문자열 중간 포함)
     r'|[\\/]{2}[^\\/\s]'                 # UNC, URI

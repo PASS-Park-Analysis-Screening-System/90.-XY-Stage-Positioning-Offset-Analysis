@@ -10,16 +10,18 @@ class DataLoaderThread(QThread):
     finished = Signal(object, object, float)
     error = Signal(str, str)  # (다이얼로그용 요약, System Log용 traceback 전문)
 
-    def __init__(self, folder, parent=None):
+    def __init__(self, folder, recipes=None, parent=None):
         super().__init__(parent)
         self.folder = folder
+        self.recipes = recipes  # 주면 folder를 다시 스캔하지 않고 이 Recipe 목록을 읽는다
 
     def run(self):
         import time
         import traceback
         t0 = time.perf_counter()
         try:
-            results = load_all_recipes(self.folder, round_name='1st', axis='both')
+            results = load_all_recipes(self.folder, round_name='1st', axis='both',
+                                       recipes=self.recipes)
             comparison = compare_recipes(results)
             elapsed = time.perf_counter() - t0
             self.finished.emit(results, comparison, elapsed)

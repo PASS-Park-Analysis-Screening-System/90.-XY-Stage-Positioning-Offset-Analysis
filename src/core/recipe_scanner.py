@@ -25,6 +25,61 @@ from core import (compute_statistics, compute_trend,
                       filter_stabilization_die)
 
 
+def build_recipe(path: str, name: str = None):
+    """폴더 하나를 Recipe dict로 만든다. Lot 데이터가 없으면 None.
+
+    폴더 바로 아래에 Lot이 있으면 라운드 '(root)' 하나, 아니면 하위 폴더(1st/2nd 등)
+    중 Lot이 있는 것을 라운드로 삼는다. index는 폴더명 앞 숫자(없으면 0)이며,
+    여러 Recipe를 묶는 쪽에서 1..N으로 다시 매긴다.
+    """
+    if not path or not os.path.isdir(path):
+        return None
+    name = name if name is not None else os.path.basename(os.path.normpath(path))
+
+    # 1차: Recipe 폴더 바로 아래에 Lot 폴더가 있는지 확인 (플랫 구조)
+    #      서버 데이터: Recipe/Lot102, Recipe/Lot103, ...
+    rounds = []
+    direct_lots = scan_lot_folders(path)
+    if direct_lots:
+        rounds.append({
+            'name': '(root)',
+            'path': path,
+            'lot_count': len(direct_lots),
+        })
+    else:
+        # 2차: 하위에 1st/2nd 라운드 폴더가 있는지 확인
+        sub_items = sorted(os.listdir(path))
+        for sub in sub_items:
+            sub_path = os.path.join(path, sub)
+            if not os.path.isdir(sub_path):
+                continue
+            lots = scan_lot_folders(sub_path)
+            if lots:
+                rounds.append({
+                    'name': sub,
+                    'path': sub_path,
+                    'lot_count': len(lots),
+                })
+
+    if not rounds:
+        return None
+
+    idx_match = re.match(r'^(\d+)', name)
+
+    # 짧은 이름 생성
+    short = re.sub(r'^\d+\.\s*', '', name).strip()
+    if len(short) > 20:
+        short = short[:18] + '…'
+
+    return {
+        'name': name,
+        'path': path,
+        'index': int(idx_match.group(1)) if idx_match else 0,
+        'short_name': short,
+        'rounds': rounds,
+    }
+
+
 def scan_recipes(root_path: str) -> list:
     """루트 폴더에서 Recipe 하위 구조 자동 탐지
 
@@ -47,56 +102,96 @@ def scan_recipes(root_path: str) -> list:
         if not os.path.isdir(recipe_path):
             continue
 
-        # 1차: Recipe 폴더 바로 아래에 Lot 폴더가 있는지 확인 (플랫 구조)
-        #      서버 데이터: Recipe/Lot102, Recipe/Lot103, ...
-        rounds = []
-        direct_lots = scan_lot_folders(recipe_path)
-        if direct_lots:
-            rounds.append({
-                'name': '(root)',
-                'path': recipe_path,
-                'lot_count': len(direct_lots),
-            })
-        else:
-            # 2차: 하위에 1st/2nd 라운드 폴더가 있는지 확인
-            sub_items = sorted(os.listdir(recipe_path))
-            for sub in sub_items:
-                sub_path = os.path.join(recipe_path, sub)
-                if not os.path.isdir(sub_path):
-                    continue
-                lots = scan_lot_folders(sub_path)
-                if lots:
-                    rounds.append({
-                        'name': sub,
-                        'path': sub_path,
-                        'lot_count': len(lots),
-                    })
-
-        if rounds:
+        recipe = build_recipe(recipe_path, name)
+        if recipe:
             # 인덱스 추출 (폴더명 앞의 숫자). 번호 없는 폴더는 큰 센티넬로 뒤에 배치
             # (발견 순서 유지). 최종 index는 정렬 후 1..N으로 재부여하므로 여기서의
             # 중복/충돌은 표시 번호에 영향을 주지 않는다.
-            idx_match = re.match(r'^(\d+)', name)
-            idx = int(idx_match.group(1)) if idx_match else 10 ** 6 + len(recipes)
-
-            # 짧은 이름 생성
-            short = re.sub(r'^\d+\.\s*', '', name).strip()
-            if len(short) > 20:
-                short = short[:18] + '…'
-
-            recipes.append({
-                'name': name,
-                'path': recipe_path,
-                'index': idx,
-                'short_name': short,
-                'rounds': rounds,
-            })
+            if not re.match(r'^\d+', name):
+                recipe['index'] = 10 ** 6 + len(recipes)
+            recipes.append(recipe)
 
     recipes.sort(key=lambda x: x['index'])
     # 정렬 후 1..N 연속 번호로 재부여 → Step 라벨 유일성·연속성 보장
     for i, r in enumerate(recipes):
         r['index'] = i + 1
     return recipes
+
+
+def strip_step_number(name: str) -> str:
+    """'1. Vision Pattern' → 'Vision Pattern' (앞의 번호와 공백 제거)."""
+    return re.sub(r'^\d+\.\s*', '', name or '').strip()
+
+
+def match_spec_key(name: str, spec_keys) -> str:
+    """폴더명이 Spec 이름과 같으면(대소문자 무시, 앞 번호 무시) 정확한 Spec 키, 아니면 None."""
+    candidates = {(name or '').strip().lower(), strip_step_number(name).lower()}
+    for key in spec_keys:
+        if key.strip().lower() in candidates:
+            return key
+    return None
+
+
+def normalize_spec_names(recipes: list, spec_keys) -> list:
+    """자동 스캔 Recipe의 short_name을 정확한 Spec 키로 맞추고, 맞지 않는 폴더명을 돌려준다.
+
+    판정·Cpk는 short_name으로 Spec을 정확히 찾는다. 'vision pattern' 폴더는 이름 검사를
+    통과해도 'Vision Pattern' 키를 찾지 못해 판정이 비었다.
+    """
+    mismatched = []
+    for r in recipes:
+        key = match_spec_key(r['name'], spec_keys)
+        if key is None:
+            key = match_spec_key(r.get('short_name', ''), spec_keys)
+        if key is None:
+            mismatched.append(r['name'])
+        else:
+            r['short_name'] = key
+    return mismatched
+
+
+def recipes_from_mapping(mapping, spec_order=None):
+    """Workflow(Spec 이름)별로 고른 폴더로 Recipe 목록을 만든다.
+
+    Args:
+        mapping: [(spec_name, path), ...]
+        spec_order: Spec 키 순서 (spec_deviation 키 순서). 없으면 mapping 순서
+
+    Returns:
+        (recipes, problems) — problems는 [(spec_name, path, 이유), ...]
+    """
+    order = list(spec_order or [])
+    recipes, problems, seen = [], [], set()
+    for spec_name, path in mapping:
+        if spec_name in seen:
+            continue
+        seen.add(spec_name)
+        if not path or not os.path.isdir(path):
+            problems.append((spec_name, path, '폴더 없음'))
+            continue
+        try:
+            recipe = build_recipe(path, spec_name)
+        except OSError as e:
+            problems.append((spec_name, path, f'폴더를 읽을 수 없음 ({e.strerror or e})'))
+            continue
+        if recipe is None:
+            problems.append((spec_name, path, 'Lot 데이터 없음'))
+            continue
+        recipe.update({
+            'name': spec_name,
+            'short_name': spec_name,
+            'source_path': path,
+            'source_label': os.path.basename(os.path.normpath(path)),
+        })
+        recipes.append(recipe)
+
+    def _rank(recipe):
+        name = recipe['name']
+        return order.index(name) if name in order else len(order)
+    recipes.sort(key=_rank)
+    for i, r in enumerate(recipes):
+        r['index'] = i + 1
+    return recipes, problems
 
 
 def summarize_failed_measurements(data: list) -> dict:
@@ -204,16 +299,18 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
 
 def load_all_recipes(root_path: str, round_name: str = '1st',
                      axis: str = 'both',
-                     progress_cb=None) -> list:
+                     progress_cb=None, recipes=None) -> list:
     """모든 Recipe 일괄 로드
 
     Args:
         progress_cb: callback(recipe_index, total, recipe_name)
+        recipes: 이미 정한 Recipe 목록 (Workflow별 폴더 선택). 주면 root_path를 스캔하지 않는다
 
     Returns:
         [load_recipe_data() 결과, ...]
     """
-    recipes = scan_recipes(root_path)
+    if recipes is None:
+        recipes = scan_recipes(root_path)
     results = []
 
     for i, recipe in enumerate(recipes):
@@ -235,6 +332,9 @@ def load_all_recipes(root_path: str, round_name: str = '1st',
                 'data_warnings': [],
                 'failed_measurements': {'count': 0},
             }
+        # Workflow별로 고른 폴더는 Recipe마다 출처가 달라 내보내기에 따로 적는다
+        if recipe.get('source_path'):
+            result['source_path'] = recipe['source_path']
         results.append(result)
 
     return results
