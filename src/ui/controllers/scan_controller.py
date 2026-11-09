@@ -101,8 +101,12 @@ class ScanMixin:
             return
 
         mapping = dlg.selected_mapping()
+        # 지금 Spec에 없는 Workflow의 지난 지정은 버린다
+        merged = {**(remembered if isinstance(remembered, dict) else {}), **dlg.folder_map()}
         self.settings['workflow_folder_map'] = {
-            **(remembered if isinstance(remembered, dict) else {}), **dlg.folder_map()}
+            key: value for key, value in merged.items() if key in spec_keys}
+        for text in dlg.warnings():
+            self.logger.warn(f"  ⚠ {text}")
         recipes, problems = recipes_from_mapping(mapping, spec_keys)
         if problems:
             lines = '\n'.join(f"  • {name}: {reason_text} ({path or '경로 없음'})"
@@ -117,7 +121,7 @@ class ScanMixin:
             return
 
         for r in recipes:
-            self.logger.info(f"  {r['short_name']} ← {r['source_path']}")
+            self.logger.info(f"  {r['short_name']} ← {r['source_label']} ({r['source_path']})")
         source = common_source_folder([r['source_path'] for r in recipes])
         self._start_load(recipes, source, source_label='Workflow별 선택')
 

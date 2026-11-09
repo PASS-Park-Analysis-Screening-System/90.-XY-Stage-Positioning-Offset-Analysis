@@ -16,8 +16,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from core import recipe_scanner, settings
 from core.recipe_scanner import (build_recipe, load_all_recipes, normalize_spec_names,
                                  recipes_from_mapping, scan_recipes)
-from core.workflow_map import (common_source_folder, compute_prefill, describe_folder,
-                               validate_rows)
+from core.workflow_map import (NOTE_REMEMBERED, NOTE_ROOT, clean_path, common_source_folder,
+                               compute_prefill, describe_folder, validate_rows)
 
 SPECS = ['Vision Pattern', 'In-Die Align', 'LLC Translation', 'Global Align']
 
@@ -205,53 +205,120 @@ def test_describe_folder_texts(tmp_path):
     assert describe_folder('  ')[0] is False
 
 
+def test_pasted_quotes_are_stripped_and_relative_path_rejected(tmp_path):
+    flat = _make_lots(tmp_path / 'flat', ['L1'])
+    assert clean_path(f'  "{flat}"  ') == str(flat)
+    assert describe_folder(f'"{flat}"') == (True, '✅ Lot 1개 · (root)')
+    assert describe_folder('flat') == (False, '❌ 전체 경로를 입력하세요')
+    assert describe_folder('"') == (False, '❌ 전체 경로를 입력하세요')
+
+
+def test_describe_folder_reads_each_folder_once_with_cache(tmp_path, monkeypatch):
+    import core.workflow_map as wm
+    flat = _make_lots(tmp_path / 'flat', ['L1'])
+    calls = []
+    real = wm.build_recipe
+    monkeypatch.setattr(wm, 'build_recipe', lambda p: calls.append(p) or real(p))
+    cache = {}
+    describe_folder(str(flat), cache)
+    describe_folder(f'"{flat}"', cache)
+    describe_folder(str(flat).upper(), cache)
+    compute_prefill(SPECS, str(flat), {}, cache)
+    validate_rows([('Vision Pattern', True, str(flat))], cache)
+    assert len(calls) == 1
+
+
 def test_prefill_matches_root_subfolders_then_remembered(tmp_path):
     root = tmp_path / 'root'
     _make_lots(root / '1. vision pattern', ['L1'])
     _make_lots(root / '20261101', ['L1'])
-    remembered_ida = _make_lots(tmp_path / 'old_ida', ['L1'])
+    inside = _make_lots(root / 'ida_today', ['L1'])
+    outside = _make_lots(tmp_path / 'old_llc', ['L1'])
     remembered = {
         'Vision Pattern': {'path': str(tmp_path / 'old_vp'), 'enabled': True},
-        'In-Die Align': {'path': str(remembered_ida), 'enabled': True},
-        'LLC Translation': {'path': str(tmp_path / 'gone'), 'enabled': True},
+        'In-Die Align': {'path': str(inside), 'enabled': True},
+        'LLC Translation': {'path': str(outside), 'enabled': True},
+        'Global Align': {'path': str(tmp_path / 'gone'), 'enabled': True},
     }
 
     prefill = compute_prefill(SPECS, str(root), remembered)
 
     assert prefill == {
-        'Vision Pattern': {'path': str(root / '1. vision pattern'), 'enabled': True},
-        'In-Die Align': {'path': str(remembered_ida), 'enabled': True},
-        'LLC Translation': {'path': str(tmp_path / 'gone'), 'enabled': False},
-        'Global Align': {'path': '', 'enabled': False},
+        'Vision Pattern': {'path': str(root / '1. vision pattern'), 'enabled': True, 'note': ''},
+        'In-Die Align': {'path': str(inside), 'enabled': True, 'note': NOTE_REMEMBERED},
+        # 루트 밖의 지난 폴더는 체크하지 않는다 (지난 데이터가 섞이지 않게)
+        'LLC Translation': {'path': str(outside), 'enabled': False, 'note': NOTE_REMEMBERED},
+        'Global Align': {'path': str(tmp_path / 'gone'), 'enabled': False,
+                         'note': NOTE_REMEMBERED},
     }
 
 
-def test_prefill_keeps_remembered_unchecked_rows_unchecked(tmp_path):
+def test_prefill_without_root_keeps_remembered_checks(tmp_path):
     ida = _make_lots(tmp_path / 'ida', ['L1'])
-    prefill = compute_prefill(SPECS, '', {'In-Die Align': {'path': str(ida), 'enabled': False}})
-    assert prefill['In-Die Align'] == {'path': str(ida), 'enabled': False}
+    ga = _make_lots(tmp_path / 'ga', ['L1'])
+    prefill = compute_prefill(SPECS, '', {
+        'In-Die Align': {'path': str(ida), 'enabled': False},
+        'Global Align': {'path': str(ga), 'enabled': True}})
+    assert prefill['In-Die Align'] == {'path': str(ida), 'enabled': False,
+                                       'note': NOTE_REMEMBERED}
+    assert prefill['Global Align'] == {'path': str(ga), 'enabled': True,
+                                       'note': NOTE_REMEMBERED}
 
 
-def test_prefill_proposes_root_that_holds_lots(tmp_path):
-    """화면 사례: 고른 폴더 아래가 Lot 1..14뿐이다."""
+def test_prefill_proposes_root_that_holds_lots_unchecked(tmp_path):
+    """화면 사례: 고른 폴더 아래가 Lot 1..14뿐이다. 어느 Workflow인지는 사용자가 정한다."""
     root = _make_lots(tmp_path / 'Vision Pattern 20261101', range(1, 15))
     prefill = compute_prefill(SPECS, str(root), {})
-    assert prefill['Vision Pattern'] == {'path': str(root), 'enabled': True}
+    assert prefill['Vision Pattern'] == {'path': str(root), 'enabled': False, 'note': NOTE_ROOT}
     assert all(not prefill[k]['path'] for k in SPECS[1:])
+
+
+def test_root_with_lots_wins_over_remembered(tmp_path):
+    """지난번 VP·GA가 남아 있어도 오늘 고른 루트가 어느 행에도 안 보이면 안 된다."""
+    root = _make_lots(tmp_path / 'today', range(1, 4))
+    old_vp = _make_lots(tmp_path / 'old_vp', ['L1'])
+    old_ga = _make_lots(tmp_path / 'old_ga', ['L1'])
+    prefill = compute_prefill(SPECS, str(root), {
+        'Vision Pattern': {'path': str(old_vp), 'enabled': True},
+        'Global Align': {'path': str(old_ga), 'enabled': True}})
+
+    assert prefill['Vision Pattern'] == {'path': str(root), 'enabled': False, 'note': NOTE_ROOT}
+    assert prefill['Global Align'] == {'path': str(old_ga), 'enabled': False,
+                                       'note': NOTE_REMEMBERED}
+    # 아무것도 체크돼 있지 않아 지난 데이터로 바로 분석되지 않는다
+    assert not validate_rows([(k, v['enabled'], v['path']) for k, v in prefill.items()])[0]
+
+
+def test_root_with_lots_goes_to_first_row_not_matched_by_name(tmp_path):
+    root = _make_lots(tmp_path / 'root', ['L1'])
+    _make_lots(root / 'Vision Pattern' / '1st', ['L1'])
+    prefill = compute_prefill(SPECS, str(root), {})
+    assert prefill['Vision Pattern']['path'] == str(root / 'Vision Pattern')
+    assert prefill['In-Die Align'] == {'path': str(root), 'enabled': False, 'note': NOTE_ROOT}
 
 
 def test_validate_rows(tmp_path):
     good = _make_lots(tmp_path / 'good', ['L1'])
-    ok, reasons = validate_rows([('Vision Pattern', False, str(good))])
+    ok, reasons, warnings = validate_rows([('Vision Pattern', False, str(good))])
     assert not ok and reasons == ['사용할 Workflow를 하나 이상 선택해 주세요.']
 
-    ok, reasons = validate_rows([('Vision Pattern', True, str(good)),
-                                 ('Global Align', True, str(tmp_path / 'missing'))])
+    ok, reasons, warnings = validate_rows([('Vision Pattern', True, str(good)),
+                                           ('Global Align', True, str(tmp_path / 'missing'))])
     assert not ok and reasons == ['Global Align: 폴더 없음']
 
-    ok, reasons = validate_rows([('Vision Pattern', True, str(good)),
-                                 ('Global Align', False, str(tmp_path / 'missing'))])
+    ok, reasons, warnings = validate_rows([('Vision Pattern', True, str(good)),
+                                           ('Global Align', False, str(tmp_path / 'missing'))])
+    assert ok and reasons == [] and warnings == []
+
+
+def test_same_folder_twice_is_a_warning_not_a_block(tmp_path):
+    good = _make_lots(tmp_path / 'good', ['L1'])
+    ok, reasons, warnings = validate_rows([
+        ('Vision Pattern', True, str(good)),
+        ('In-Die Align', True, f'"{str(good).upper()}{os.sep}"'),
+        ('Global Align', False, str(good))])
     assert ok and reasons == []
+    assert warnings == ['같은 폴더를 여러 Workflow에 지정했습니다: Vision Pattern, In-Die Align']
 
 
 def test_common_source_folder(tmp_path):
@@ -262,28 +329,69 @@ def test_common_source_folder(tmp_path):
     assert common_source_folder([]) == ''
 
 
-def test_dialog_ok_follows_rows(tmp_path):
-    from PySide6.QtWidgets import QApplication, QDialogButtonBox
+@pytest.fixture
+def qapp():
+    from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
+    yield app
+    app.processEvents()
+
+
+def test_dialog_ok_follows_rows(qapp, tmp_path):
+    from PySide6.QtWidgets import QDialogButtonBox
     from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
     root = _make_lots(tmp_path / 'lots', range(1, 4))
 
     dlg = WorkflowFolderDialog(None, SPECS, str(root), {}, '이유 문구')
     ok_btn = dlg.buttons.button(QDialogButtonBox.Ok)
+    check, edit, status, _timer = dlg._rows['Vision Pattern']
+    assert not check.isChecked() and edit.text() == str(root)
+    assert NOTE_ROOT in status.text()
+    assert not ok_btn.isEnabled()     # 루트는 사용자가 체크해야 한다
+
+    check.setChecked(True)
     assert ok_btn.isEnabled()
     assert dlg.selected_mapping() == [('Vision Pattern', str(root))]
 
-    check, edit, status, _timer = dlg._rows['Global Align']
-    edit.setText(str(tmp_path / 'missing'))
-    check.setChecked(True)
+    ga_check, ga_edit, _status, _timer = dlg._rows['Global Align']
+    ga_edit.setText(str(tmp_path / 'missing'))
+    ga_check.setChecked(True)
     assert not ok_btn.isEnabled()
     assert 'Global Align' in dlg.block_label.text()
 
-    check.setChecked(False)
-    assert ok_btn.isEnabled()
-    assert dlg.folder_map()['Global Align'] == {'path': str(tmp_path / 'missing'), 'enabled': False}
+    ga_edit.setText(f'"{root}"')    # 탐색기 '경로로 복사' 붙여넣기
+    dlg._accept_if_valid()
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert '같은 폴더' in dlg.warn_label.text()
+    assert dlg.warnings() == ['같은 폴더를 여러 Workflow에 지정했습니다: Vision Pattern, Global Align']
+    assert dlg.folder_map()['Global Align'] == {'path': str(root), 'enabled': True}
     dlg.deleteLater()
-    app.processEvents()
+
+
+def test_dialog_rechecks_only_changed_row(qapp, tmp_path, monkeypatch):
+    import core.workflow_map as wm
+    from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
+    vp = _make_lots(tmp_path / 'vp', ['L1'])
+    ida = _make_lots(tmp_path / 'ida', ['L1'])
+    calls = []
+    real = wm.build_recipe
+    monkeypatch.setattr(wm, 'build_recipe', lambda p: calls.append(p) or real(p))
+
+    dlg = WorkflowFolderDialog(None, SPECS, '', {
+        'Vision Pattern': {'path': str(vp), 'enabled': True},
+        'In-Die Align': {'path': str(ida), 'enabled': True}})
+    assert sorted(calls) == sorted([str(vp), str(ida)])     # 열 때 폴더마다 한 번
+
+    calls.clear()
+    dlg._rows['Global Align'][0].setChecked(True)
+    dlg._rows['Global Align'][0].setChecked(False)
+    dlg._rows['LLC Translation'][1].setText(str(vp))
+    dlg._update_status('LLC Translation')
+    assert calls == []      # 이미 읽은 폴더는 다시 읽지 않고, 다른 행도 다시 읽지 않는다
+
+    dlg._accept_if_valid()  # 확인할 때는 한 번 새로 읽는다
+    assert sorted(calls) == sorted([str(vp), str(ida)])
+    dlg.deleteLater()
 
 
 # ── 설정 저장 ──────────────────────────────────────────────────────
@@ -415,7 +523,9 @@ def flow(window, monkeypatch):
     from PySide6.QtWidgets import QDialog, QMessageBox
     import ui.controllers.scan_controller as controller
 
-    state = {'threads': [], 'dialogs': [], 'critical': [], 'recent': [], 'answer': None}
+    state = {'threads': [], 'dialogs': [], 'critical': [], 'recent': [], 'answer': None,
+             'running': False, 'warnings': [], 'folder_map': None,
+             'shown_warning': [], 'shown_info': []}
 
     class FakeThread:
         def __init__(self, folder, recipes=None):
@@ -430,11 +540,12 @@ def flow(window, monkeypatch):
             pass
 
         def isRunning(self):
-            return False
+            return state['running']
 
     class FakeDialog:
         def __init__(self, parent, spec_keys, root, remembered, reason):
-            state['dialogs'].append({'root': root, 'reason': reason, 'specs': spec_keys})
+            state['dialogs'].append({'root': root, 'reason': reason, 'specs': spec_keys,
+                                     'remembered': remembered})
 
         def exec(self):
             return QDialog.Accepted if state['answer'] else QDialog.Rejected
@@ -443,7 +554,12 @@ def flow(window, monkeypatch):
             return state['answer']
 
         def folder_map(self):
+            if state['folder_map'] is not None:
+                return state['folder_map']
             return {k: {'path': p, 'enabled': True} for k, p in state['answer']}
+
+        def warnings(self):
+            return state['warnings']
 
     monkeypatch.setattr(controller, 'DataLoaderThread', FakeThread)
     monkeypatch.setattr(controller, 'WorkflowFolderDialog', FakeDialog)
@@ -452,8 +568,10 @@ def flow(window, monkeypatch):
     monkeypatch.setattr(window, '_save_settings', lambda: None)
     monkeypatch.setattr(QMessageBox, 'critical',
                         staticmethod(lambda *a, **k: state['critical'].append(a)))
-    for name in ('warning', 'information'):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, 'warning',
+                        staticmethod(lambda *a, **k: state['shown_warning'].append(a[2])))
+    monkeypatch.setattr(QMessageBox, 'information',
+                        staticmethod(lambda *a, **k: state['shown_info'].append(a[2])))
     return state
 
 
@@ -535,7 +653,7 @@ def test_workflow_button_opens_dialog_and_is_disabled_while_loading(window, flow
 
 # ── 내보내기 출처 ──────────────────────────────────────────────────
 
-def _pdf_texts(monkeypatch, tmp_path, results):
+def _pdf_texts(monkeypatch, tmp_path, results, root='D:/data'):
     from core import pdf_generator
     seen = {'root': None, 'texts': []}
     real_title = pdf_generator._add_title_page
@@ -551,7 +669,7 @@ def _pdf_texts(monkeypatch, tmp_path, results):
 
     monkeypatch.setattr(pdf_generator, '_add_title_page', spy_title)
     monkeypatch.setattr(pdf_generator.Figure, 'text', spy_text)
-    pdf_generator.generate_pdf_report(str(tmp_path / 'r.pdf'), 'D:/data', results, [], {}, {})
+    pdf_generator.generate_pdf_report(str(tmp_path / 'r.pdf'), root, results, [], {}, {})
     return seen
 
 
@@ -559,8 +677,18 @@ def test_pdf_shows_source_per_workflow(monkeypatch, tmp_path):
     results = [{'short_name': 'Vision Pattern', 'round': '(root)', 'raw_data': [],
                 'source_path': 'D:/data/20261101'}]
     seen = _pdf_texts(monkeypatch, tmp_path, results)
-    assert seen['root'] == 'per-workflow folders (see Source on each Step page), common: D:/data'
+    assert seen['root'] == 'Per-workflow folders (common: D:/data)'
     assert 'Source: D:/data/20261101' in seen['texts']
+
+
+def test_pdf_title_shortens_only_the_path(monkeypatch, tmp_path):
+    long_root = 'D:/' + '/'.join(f'folder{i:02d}' for i in range(20))
+    results = [{'short_name': 'Vision Pattern', 'round': '(root)', 'raw_data': [],
+                'source_path': long_root + '/vp'}]
+    seen = _pdf_texts(monkeypatch, tmp_path, results, root=long_root)
+    title = seen['root']
+    assert title.startswith('Per-workflow folders (common: D:/folder00')
+    assert title.endswith('folder19)') and ' ... ' in title and len(title) <= 110
 
 
 def test_pdf_auto_scan_source_is_unchanged(monkeypatch, tmp_path):
@@ -568,3 +696,144 @@ def test_pdf_auto_scan_source_is_unchanged(monkeypatch, tmp_path):
     seen = _pdf_texts(monkeypatch, tmp_path, results)
     assert seen['root'] == 'D:/data'
     assert not any(str(t).startswith('Source:') for t in seen['texts'])
+
+
+def _logged(window):
+    return str(window.logger.export_rows())
+
+
+def test_scan_complete_in_mapping_mode_keeps_sources(window, flow, tmp_path):
+    window.settings['spec_deviation'] = {'Vision Pattern': SPEC_DEV['Vision Pattern'],
+                                         'Global Align': SPEC_DEV['Vision Pattern']}
+    vp = _make_lots(tmp_path / 'root' / 'vp-0101', ['L1', 'L2'])
+    ga = _make_lots(tmp_path / 'root' / 'ga-0102', ['L1', 'L2'])
+    flow['answer'] = [('Global Align', str(ga)), ('Vision Pattern', str(vp))]
+
+    window._open_workflow_dialog()
+    thread = flow['threads'][-1]
+    assert thread.folder == str(tmp_path / 'root')
+    results = load_all_recipes(thread.folder, recipes=thread.recipes)
+    window._on_scan_complete(results, recipe_scanner.compare_recipes(results), 1.0)
+
+    assert window._scanned_folder == str(tmp_path / 'root')
+    assert [r['source_path'] for r in window.recipe_results] == [str(vp), str(ga)]
+    assert [b.text() for b in window.step_buttons] == [
+        'Step 1: Vision Pattern', 'Step 2: Global Align']
+    assert 'Vision Pattern ← vp-0101' in _logged(window)
+    assert window._loader_thread is None and window.btn_workflow.isEnabled()
+
+
+def test_problem_workflows_are_skipped_with_warning(window, flow, tmp_path):
+    window.settings['spec_deviation'] = {'Vision Pattern': SPEC_DEV['Vision Pattern'],
+                                         'Global Align': SPEC_DEV['Vision Pattern']}
+    vp = _make_lots(tmp_path / 'vp', ['L1'])
+    flow['answer'] = [('Vision Pattern', str(vp)), ('Global Align', str(tmp_path / 'gone'))]
+
+    window._open_workflow_dialog()
+
+    assert len(flow['shown_warning']) == 1
+    shown = flow['shown_warning'][0]
+    assert '건너뜁니다' in shown and 'Global Align: 폴더 없음' in shown
+    assert [r['short_name'] for r in flow['threads'][-1].recipes] == ['Vision Pattern']
+
+
+def test_no_usable_workflow_starts_no_load(window, flow, tmp_path):
+    (tmp_path / 'empty').mkdir()
+    flow['answer'] = [('Vision Pattern', str(tmp_path / 'empty'))]
+
+    window._open_workflow_dialog()
+
+    assert flow['threads'] == []
+    assert flow['shown_info'] == ['분석할 Workflow 폴더가 없습니다.']
+    assert window._loader_thread is None
+
+
+def test_saved_map_merges_and_drops_unknown_specs(window, flow, tmp_path):
+    vp = _make_lots(tmp_path / 'vp', ['L1'])
+    window.settings['workflow_folder_map'] = {
+        'Old Spec': {'path': 'D:/old', 'enabled': True},
+        'Vision Pattern': {'path': 'D:/old_vp', 'enabled': True}}
+    flow['answer'] = [('Vision Pattern', str(vp))]
+
+    window._open_workflow_dialog()
+
+    assert flow['dialogs'][0]['remembered']['Vision Pattern']['path'] == 'D:/old_vp'
+    assert window.settings['workflow_folder_map'] == {
+        'Vision Pattern': {'path': str(vp), 'enabled': True}}
+
+
+def test_duplicate_folder_warning_is_logged(window, flow, tmp_path):
+    vp = _make_lots(tmp_path / 'vp', ['L1'])
+    flow['answer'] = [('Vision Pattern', str(vp))]
+    flow['warnings'] = ['같은 폴더를 여러 Workflow에 지정했습니다: Vision Pattern, Global Align']
+
+    window._open_workflow_dialog()
+
+    assert '같은 폴더를 여러 Workflow에 지정했습니다' in _logged(window)
+
+
+def test_workflow_button_refuses_while_loading(window, flow):
+    flow['running'] = True
+    window._loader_thread = type('RunningThread', (), {'isRunning': lambda self: True})()
+
+    window._open_workflow_dialog()
+
+    assert flow['dialogs'] == []
+    assert flow['shown_info'] == ['이미 스캔이 진행 중입니다. 완료될 때까지 기다려주세요.']
+
+
+def test_scan_with_real_dialog_logic(window, flow, tmp_path, monkeypatch):
+    """실제 대화상자(초기값·검증)를 _scan_folder에 연결한다. 사용자는 첫 행만 체크한다."""
+    import ui.controllers.scan_controller as controller
+    from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
+    root = _make_lots(tmp_path / 'today', range(1, 15))     # 고른 폴더 = Lot 묶음
+    old = _make_lots(tmp_path / 'old', ['L1'])
+    window.settings['workflow_folder_map'] = {
+        'Vision Pattern': {'path': str(old), 'enabled': True}}
+    seen = {}
+
+    def user_checks_first_row(dlg):
+        check, edit, status, _timer = dlg._rows['Vision Pattern']
+        seen['before'] = (check.isChecked(), edit.text(), status.text())
+        check.setChecked(True)
+        dlg._accept_if_valid()
+        return dlg.result()
+
+    monkeypatch.setattr(WorkflowFolderDialog, 'exec', user_checks_first_row)
+    monkeypatch.setattr(controller, 'WorkflowFolderDialog', WorkflowFolderDialog)
+    window.path_edit.setText(str(root))
+
+    window._scan_folder()
+
+    assert seen['before'][0] is False and seen['before'][1] == str(root)
+    assert NOTE_ROOT in seen['before'][2]
+    thread = flow['threads'][-1]
+    assert thread.folder == str(root)
+    assert [(r['short_name'], r['rounds'][0]['lot_count']) for r in thread.recipes] == [
+        ('Vision Pattern', 14)]
+    assert window.settings['workflow_folder_map'] == {
+        'Vision Pattern': {'path': str(root), 'enabled': True}}
+
+
+def _basis_cells(results):
+    from openpyxl import Workbook
+    from core.exporter import write_basis_sheet
+    wb = Workbook()
+    write_basis_sheet(wb, results, 0)
+    return [row for row in wb['Analysis Basis'].iter_rows(values_only=True) if any(row)]
+
+
+def test_excel_basis_sheet_lists_workflow_folders():
+    rows = _basis_cells([
+        {'short_name': 'Vision Pattern', 'round': '(root)', 'raw_data': [],
+         'source_path': 'D:/data/vp'},
+        {'short_name': 'Global Align', 'round': '1st', 'raw_data': [],
+         'source_path': 'D:/data/ga'}])
+    i = next(n for n, r in enumerate(rows) if r[:2] == ('Workflow', '데이터 폴더'))
+    assert [r[:2] for r in rows[i + 1:]] == [('Vision Pattern', 'D:/data/vp'),
+                                             ('Global Align', 'D:/data/ga')]
+
+
+def test_excel_basis_sheet_auto_scan_is_unchanged():
+    rows = _basis_cells([{'short_name': 'Vision Pattern', 'round': '1st', 'raw_data': []}])
+    assert not any(r[0] == 'Workflow' for r in rows)

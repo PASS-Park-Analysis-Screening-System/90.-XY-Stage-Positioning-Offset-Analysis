@@ -11,8 +11,9 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QVBoxLayout,
 )
 
-from core.workflow_map import compute_prefill, describe_folder, validate_rows
-from ui.theme import ACCENT, BG, BG3, FG, FG2, GREEN, RED
+from core.workflow_map import (clean_path, compute_prefill, describe_folder,
+                               validate_rows)
+from ui.theme import ACCENT, BG, BG3, FG, FG2, GREEN, ORANGE, RED
 
 
 class WorkflowFolderDialog(QDialog):
@@ -23,8 +24,12 @@ class WorkflowFolderDialog(QDialog):
         self.setWindowTitle("📂 Workflow별 데이터 폴더 선택")
         self.setMinimumSize(820, 300)
         self.setStyleSheet(f"background: {BG}; color: {FG};")
+        # 대화상자가 열려 있는 동안 폴더 확인 결과를 재사용한다 (CSV 머리글 읽기가 느리다)
+        self._cache = {}
         self._rows = {}     # spec_key → (checkbox, path_edit, status_label, timer)
-        self._build_ui(reason, compute_prefill(self.spec_keys, self.root, remembered))
+        self._notes = {}    # spec_key → 초기값 안내 문구 (경로를 바꾸면 지운다)
+        prefill = compute_prefill(self.spec_keys, self.root, remembered, self._cache)
+        self._build_ui(reason, prefill)
         self._refresh_ok()
 
     def _build_ui(self, reason, prefill):
@@ -36,6 +41,7 @@ class WorkflowFolderDialog(QDialog):
 
         intro = QLabel((reason + "\n\n" if reason else "")
                        + "사용에 체크한 Workflow만 분석합니다. 체크하지 않은 Workflow는 건너뜁니다.\n"
+                         "'지난번 선택'과 선택한 폴더는 어느 Workflow인지 확인한 뒤 체크하세요.\n"
                          "Lot(Repeat) 수는 참고용이며 분석을 막지 않습니다.")
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {FG2}; font-size: 9pt;")
@@ -59,15 +65,16 @@ class WorkflowFolderDialog(QDialog):
             edit.setStyleSheet(edit_style)
             browse = QPushButton("찾아보기")
             status = QLabel()
-            status.setMinimumWidth(200)
-            # 네트워크 폴더는 읽는 데 시간이 걸리므로 입력이 멈춘 뒤에 확인한다
+            status.setMinimumWidth(220)
+            status.setWordWrap(True)
+            # 네트워크 폴더는 읽는 데 시간이 걸리므로 입력이 멈춘 뒤 그 행만 확인한다
             timer = QTimer(self)
             timer.setSingleShot(True)
             timer.setInterval(300)
             timer.timeout.connect(lambda k=key: self._update_status(k))
 
             check.toggled.connect(lambda _checked: self._refresh_ok())
-            edit.textChanged.connect(lambda _text, t=timer: t.start())
+            edit.textChanged.connect(lambda _text, k=key, t=timer: self._on_text_changed(k, t))
             browse.clicked.connect(lambda _=False, k=key: self._browse(k))
 
             grid.addWidget(check, row, 0)
@@ -76,9 +83,15 @@ class WorkflowFolderDialog(QDialog):
             grid.addWidget(browse, row, 3)
             grid.addWidget(status, row, 4)
             self._rows[key] = (check, edit, status, timer)
+            self._notes[key] = prefill[key].get('note', '')
             self._update_status(key, refresh=False)
         grid.setColumnStretch(2, 1)
         layout.addLayout(grid)
+
+        self.warn_label = QLabel()
+        self.warn_label.setWordWrap(True)
+        self.warn_label.setStyleSheet(f"color: {ORANGE}; font-size: 9pt;")
+        layout.addWidget(self.warn_label)
 
         self.block_label = QLabel()
         self.block_label.setWordWrap(True)
@@ -92,9 +105,13 @@ class WorkflowFolderDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
+    def _on_text_changed(self, key, timer):
+        self._notes[key] = ''
+        timer.start()
+
     def _browse(self, key):
         _check, edit, _status, timer = self._rows[key]
-        start = edit.text().strip() or self.root
+        start = clean_path(edit.text()) or self.root
         path = QFileDialog.getExistingDirectory(self, f"{key} 데이터 폴더 선택", start)
         if path:
             edit.setText(path)
@@ -103,30 +120,38 @@ class WorkflowFolderDialog(QDialog):
 
     def _update_status(self, key, refresh=True):
         _check, edit, status, _timer = self._rows[key]
-        ok, text = describe_folder(edit.text())
-        status.setText(text)
-        status.setStyleSheet(f"color: {GREEN if ok else (RED if edit.text().strip() else FG2)};")
+        ok, text = describe_folder(edit.text(), self._cache)
+        note = self._notes.get(key)
+        status.setText(f"{text} ({note})" if note else text)
+        status.setStyleSheet(
+            f"color: {GREEN if ok else (RED if clean_path(edit.text()) else FG2)};")
         if refresh:
             self._refresh_ok()
 
     def _rows_state(self):
-        return [(key, check.isChecked(), edit.text().strip())
+        return [(key, check.isChecked(), clean_path(edit.text()))
                 for key, (check, edit, _status, _timer) in self._rows.items()]
 
     def _refresh_ok(self):
-        ok, reasons = validate_rows(self._rows_state())
+        ok, reasons, warnings = validate_rows(self._rows_state(), self._cache)
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(ok)
         self.block_label.setText('' if ok else '확인할 수 없습니다: ' + ' / '.join(reasons))
+        self.warn_label.setText(' / '.join(f'⚠ {w}' for w in warnings))
 
     def _accept_if_valid(self):
-        # 입력 직후 바로 누르면 상태 확인 타이머가 아직 돌지 않았을 수 있다
-        for key, (_check, _edit, _status, timer) in self._rows.items():
-            if timer.isActive():
-                timer.stop()
-                self._update_status(key, refresh=False)
+        # 열어 둔 사이에 폴더가 바뀌었을 수 있으므로 확인할 때 한 번 새로 읽는다
+        for _check, _edit, _status, timer in self._rows.values():
+            timer.stop()
+        self._cache = {}
+        for key in self._rows:
+            self._update_status(key, refresh=False)
         self._refresh_ok()
         if self.buttons.button(QDialogButtonBox.Ok).isEnabled():
             self.accept()
+
+    def warnings(self):
+        """막지 않는 경고 (예: 같은 폴더를 두 Workflow에 지정)."""
+        return validate_rows(self._rows_state(), self._cache)[2]
 
     def selected_mapping(self):
         """사용에 체크한 Workflow의 [(spec_key, path), ...] (Spec 순서)."""
