@@ -29,6 +29,14 @@ def _basis_notes(recipe_results: list) -> list:
     return notes
 
 
+def _short_path(path: str, limit: int) -> str:
+    """긴 네트워크 경로가 페이지 밖으로 잘리지 않게 가운데를 줄인다."""
+    if len(path) <= limit:
+        return path
+    head = (limit - 5) // 3
+    return f"{path[:head]} ... {path[-(limit - 5 - head):]}"
+
+
 def _text(value, fmt: str) -> str:
     return '—' if value is None else format(value, fmt)
 
@@ -48,9 +56,7 @@ def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list,
     # 메타데이터
     dt_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     ax.text(0.1, 0.8, f"Date: {dt_str}", fontsize=12)
-    # 긴 네트워크 경로가 페이지 밖으로 잘리지 않게 가운데를 줄인다
-    path_text = (root_folder if len(root_folder) <= 110
-                 else f"{root_folder[:35]} ... {root_folder[-70:]}")
+    path_text = _short_path(root_folder, 110)
     ax.text(0.1, 0.75, f"Data Path: {path_text}", fontsize=8)
 
     # Checklist Table — 화면 Summary·Step 카드 기본값과 같은 값
@@ -121,8 +127,7 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     # Workflow별로 고른 폴더는 Step마다 출처가 다르다
     source = recipe_data.get('source_path')
     if source:
-        source_text = source if len(source) <= 130 else f"{source[:40]} ... {source[-85:]}"
-        fig.text(0.5, 0.925, f"Source: {source_text}", ha='center', fontsize=8)
+        fig.text(0.5, 0.925, f"Source: {_short_path(source, 130)}", ha='center', fontsize=8)
 
     # 통계·트렌드와 같은 분석 기준으로 등고선을 그린다 (안정화 Die 제외, 측정 실패 제외)
     data = filter_valid_only(filter_stabilization_die(recipe_data.get('raw_data', [])))
@@ -222,7 +227,8 @@ def generate_pdf_report(export_path: str, root_folder: str, recipe_results: list
     with PdfPages(export_path) as pdf:
         notes = _basis_notes(recipe_results)
         if any(r.get('source_path') for r in recipe_results or []):
-            root_folder = f"per-workflow folders (see Source on each Step page), common: {root_folder}"
+            # 앞 문구는 남기고 경로만 줄인다 (표지 한 줄 110자)
+            root_folder = f"Per-workflow folders (common: {_short_path(root_folder, 79)})"
         _add_title_page(pdf, root_folder, comparison, checklist, notes)
         _add_notes_pages(pdf, notes)
         

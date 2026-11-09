@@ -480,6 +480,19 @@ def write_basis_sheet(wb, recipe_results: list, position: int) -> None:
         for col, val in enumerate(row, 1):
             ws.cell(row=start + i, column=col, value=val).font = st['data_font']
 
+    # Workflow별로 고른 폴더는 Recipe마다 출처가 다르다 (자동 스캔은 적지 않는다)
+    sources = [(result.get('short_name') or result.get('recipe', ''), result['source_path'])
+               for result in recipe_results if result.get('source_path')]
+    if sources:
+        start += len(SHEET_BASIS) + 2
+        for col, title in enumerate(('Workflow', '데이터 폴더'), 1):
+            cell = ws.cell(row=start - 1, column=col, value=title)
+            cell.font = st['header_font']
+            cell.fill = st['header_fill']
+        for i, row in enumerate(sources):
+            for col, val in enumerate(row, 1):
+                ws.cell(row=start + i, column=col, value=val).font = st['data_font']
+
 
 def write_quality_sheets(wb, recipe_results: list = None,
                          spec_limits: dict = None,
