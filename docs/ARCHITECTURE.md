@@ -65,8 +65,10 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
 [2] 폴더 스캔 (ScanWorker)
     └─ recipe_scanner.scan_recipes(folder)
        → recipes[]: [{name, short_name, path, round_paths}, ...]
-    └─ 폴더명 검증: short_name ↔ spec_deviation 키 대조
-       → 불일치 시 QMessageBox.critical → 스캔 차단
+    └─ 폴더명 검증: normalize_spec_names(recipes, spec_deviation 키)
+       → 일치하면 short_name을 정확한 Spec 키로 맞춤
+       → 불일치 시 WorkflowFolderDialog(Workflow별 폴더 지정)
+         → recipes_from_mapping(mapping) → 지정한 Recipe로 로드 (취소 시 로드 안 함)
 
 [3] 데이터 로드 (ScanWorker)
     └─ csv_loader.batch_load_lots(recipe_path)
@@ -206,16 +208,12 @@ DataAnalyzerApp (QMainWindow)
 ## 7. Spec 검증 로직
 
 ```python
-# 폴더명 검증 (scan 시점)
-for recipe in recipes:
-    short = recipe['short_name'].strip().lower()
-    matched = any(short == key.strip().lower() for key in spec_deviation.keys())
-    if not matched:
-        mismatched.append(recipe['name'])
-
+# 폴더명 검증 (scan 시점) — 대소문자·앞 번호("4. ") 무시, 일치하면 short_name = Spec 키
+mismatched = normalize_spec_names(recipes, list(spec_deviation))
 if mismatched:
-    QMessageBox.critical(...)  # 분석 차단
-    return
+    # Workflow별 폴더 지정 대화상자. 체크한 Workflow만 분석, 지정 내역은 workflow_folder_map에 저장
+    dlg = WorkflowFolderDialog(...)
+    recipes, problems = recipes_from_mapping(dlg.selected_mapping(), list(spec_deviation))
 
 # PASS/FAIL 판정 (분석 시점)
 pass_x = (dev_x.overall_range <= spec_range) and (dev_x.overall_stddev <= spec_stddev)

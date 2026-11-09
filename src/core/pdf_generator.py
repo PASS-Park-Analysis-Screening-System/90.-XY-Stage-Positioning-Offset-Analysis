@@ -118,6 +118,11 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     round_name = recipe_data.get('round', '')
     round_text = f" ({round_name} Round)" if round_name and round_name != '(root)' else ''
     fig.suptitle(f"Step: {recipe_name}{round_text}", fontsize=16, fontweight='bold', y=0.96)
+    # Workflow별로 고른 폴더는 Step마다 출처가 다르다
+    source = recipe_data.get('source_path')
+    if source:
+        source_text = source if len(source) <= 130 else f"{source[:40]} ... {source[-85:]}"
+        fig.text(0.5, 0.925, f"Source: {source_text}", ha='center', fontsize=8)
 
     # 통계·트렌드와 같은 분석 기준으로 등고선을 그린다 (안정화 Die 제외, 측정 실패 제외)
     data = filter_valid_only(filter_stabilization_die(recipe_data.get('raw_data', [])))
@@ -216,6 +221,8 @@ def generate_pdf_report(export_path: str, root_folder: str, recipe_results: list
     checklist = build_checklist(recipe_results, spec_limits, spec_deviation)
     with PdfPages(export_path) as pdf:
         notes = _basis_notes(recipe_results)
+        if any(r.get('source_path') for r in recipe_results or []):
+            root_folder = f"per-workflow folders (see Source on each Step page), common: {root_folder}"
         _add_title_page(pdf, root_folder, comparison, checklist, notes)
         _add_notes_pages(pdf, notes)
         

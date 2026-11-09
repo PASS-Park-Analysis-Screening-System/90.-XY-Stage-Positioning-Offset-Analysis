@@ -387,9 +387,10 @@ def scan(window, monkeypatch, tmp_path):
         finished = Signal(list, list, float)
         error = Signal(str, str)     # 실제 DataLoaderThread와 같은 형태
 
-        def __init__(self, folder):
+        def __init__(self, folder, recipes=None):
             super().__init__()
             self.folder = folder
+            self.recipes = recipes
 
         def start(self):
             pass
@@ -398,6 +399,15 @@ def scan(window, monkeypatch, tmp_path):
             return False
 
     monkeypatch.setattr(controller, 'DataLoaderThread', FakeThread)
+
+    class CancelledDialog:  # 폴더명 불일치 때 여는 Workflow별 폴더 선택을 취소한다
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(controller, 'WorkflowFolderDialog', CancelledDialog)
     monkeypatch.setattr(controller, 'add_recent_folder', lambda settings, _: settings)
     monkeypatch.setattr(window, '_save_settings', lambda: None)
     for name in ('warning', 'information', 'critical'):

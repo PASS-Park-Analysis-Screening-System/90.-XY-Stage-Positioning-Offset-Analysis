@@ -1,8 +1,11 @@
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 import logging
 import os
 import traceback
-from core.recipe_scanner import scan_recipes
+from core.recipe_scanner import (build_recipe, normalize_spec_names, recipes_from_mapping,
+                                 scan_recipes)
+from core.workflow_map import common_source_folder
+from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
 from ui.workers.data_loader_thread import DataLoaderThread
 from core.checklist import basis_warnings
 from core.settings import add_recent_folder
@@ -42,58 +45,100 @@ class ScanMixin:
 
         # 검증을 통과한 뒤에만 바꾼다. 취소했을 때 이전 결과가 새 Recipe 이름 아래 보이면 안 된다
         recipes = scan_recipes(folder)
+        spec_keys = list(self.settings.get('spec_deviation', {}).keys())
         if not recipes:
+            # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
+            # Workflow를 지정해 분석할 수 있게 한다
+            if spec_keys and build_recipe(folder) is not None:
+                self._load_with_workflow_dialog(
+                    folder, "선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
+                            "어느 Workflow의 데이터인지 지정해 주세요.")
+                return
             self.logger.warn("Recipe 구조를 찾지 못했습니다.")
             QMessageBox.information(self, "알림", "Recipe 구조를 찾지 못했습니다.")
             return
 
         # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
-        spec_dev = self.settings.get('spec_deviation', {})
-        std_names = list(spec_dev.keys())
-
-        if std_names:
-            # 설정의 스펙 이름과 발견된 Recipe의 short_name이 일치하는지 확인
-            # (recipe_scanner가 '1. Vision Pattern' 처럼 앞의 숫자를 자른 short_name을 제공함)
-            detected = [r['short_name'] for r in recipes]
-            mismatched = []
-            for r in recipes:
-                is_match = False
-                for std in std_names:
-                    # 엄격한 일치 (대소문자 무시, 공백 제거)
-                    std_clean = std.strip().lower()
-                    if std_clean == r['name'].strip().lower() or \
-                       std_clean == r['short_name'].strip().lower():
-                        is_match = True
-                        break
-
-                if not is_match:
-                    mismatched.append(r['name'])  # 불일치하면 원본 폴더명을 기록
-
+        # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
+        if spec_keys:
+            mismatched = normalize_spec_names(recipes, spec_keys)
             if mismatched:
-                std_list = '\n'.join(f"  • {s}" for s in std_names)
-                det_list = '\n'.join(f"  • {d}" for d in [r['name'] for r in recipes])
-                mis_list = '\n'.join(f"  ❌ {m}" for m in mismatched)
-                
-                msg = (f"데이터 폴더명이 설정된 Spec 이름과 일치하지 않습니다.\n"
-                       f"정확한 분석 및 Spec 판정을 위해 폴더명을 아래와 같이 변경해 주세요.\n\n"
-                       f"【권장 폴더명 (Spec 설정 기준)】\n{std_list}\n\n"
-                       f"【현재 감지된 폴더명】\n{det_list}\n\n"
-                       f"【불일치 항목】\n{mis_list}")
-                
-                QMessageBox.critical(self, "❌ 폴더명 불일치 오류", msg)
-                self.logger.error("폴더명 불일치로 스캔이 취소되었습니다.")
+                self.logger.warn("폴더명이 Spec 이름과 달라 Workflow별 폴더 선택을 엽니다: "
+                                 + ', '.join(mismatched))
+                mis_list = '\n'.join(f"  • {m}" for m in mismatched)
+                self._load_with_workflow_dialog(
+                    folder, "폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
+                            f"Spec 이름과 다른 폴더:\n{mis_list}")
                 return
 
+        self._start_load(recipes, folder)
+
+    def _open_workflow_dialog(self):
+        """상단 'Workflow별 선택' 버튼 — 폴더명과 관계없이 Workflow마다 폴더를 고른다."""
+        if self._loader_thread is not None and self._loader_thread.isRunning():
+            self.logger.warn("이미 스캔이 진행 중입니다. 완료 후 다시 시도하세요.")
+            QMessageBox.information(self, "알림",
+                                    "이미 스캔이 진행 중입니다. 완료될 때까지 기다려주세요.")
+            return
+        if not self.settings.get('spec_deviation'):
+            QMessageBox.warning(self, "경고", "Spec 설정(spec_deviation)이 없어 Workflow를 지정할 수 없습니다.")
+            return
+        folder = self.path_edit.text().strip()
+        self.main_tabs.setCurrentIndex(0)
+        self.logger.section("Workflow별 폴더 선택")
+        self._load_with_workflow_dialog(
+            folder if os.path.isdir(folder) else '',
+            "Workflow마다 분석할 데이터 폴더를 지정합니다. 폴더 이름은 Spec 이름과 달라도 됩니다.")
+
+    def _load_with_workflow_dialog(self, root, reason):
+        """Workflow별 폴더 대화상자를 열고, 확인하면 그 폴더들로 로드한다. 취소하면 아무것도 바꾸지 않는다."""
+        spec_keys = list(self.settings.get('spec_deviation', {}).keys())
+        remembered = self.settings.get('workflow_folder_map', {})
+        dlg = WorkflowFolderDialog(self, spec_keys, root, remembered, reason)
+        if dlg.exec() != QDialog.Accepted:
+            self.logger.info("Workflow별 폴더 선택을 취소했습니다. 분석하지 않습니다.")
+            self.statusBar().showMessage("스캔 취소")
+            return
+
+        mapping = dlg.selected_mapping()
+        self.settings['workflow_folder_map'] = {
+            **(remembered if isinstance(remembered, dict) else {}), **dlg.folder_map()}
+        recipes, problems = recipes_from_mapping(mapping, spec_keys)
+        if problems:
+            lines = '\n'.join(f"  • {name}: {reason_text} ({path or '경로 없음'})"
+                              for name, path, reason_text in problems)
+            for name, path, reason_text in problems:
+                self.logger.warn(f"  ⚠ {name}: {reason_text} — {path}")
+            QMessageBox.warning(self, "경고", f"아래 Workflow는 건너뜁니다.\n{lines}")
+        if not recipes:
+            self._save_settings()
+            self.logger.warn("분석할 Workflow 폴더가 없습니다.")
+            QMessageBox.information(self, "알림", "분석할 Workflow 폴더가 없습니다.")
+            return
+
+        for r in recipes:
+            self.logger.info(f"  {r['short_name']} ← {r['source_path']}")
+        source = common_source_folder([r['source_path'] for r in recipes])
+        self._start_load(recipes, source, source_label='Workflow별 선택')
+
+    def _start_load(self, recipes, source_folder, source_label=None):
+        """검증을 마친 Recipe 목록으로 로드를 시작한다.
+
+        source_label이 없으면 루트 폴더 자동 스캔이다. 그때만 최근 폴더에 넣는다
+        (Workflow별 선택의 공통 상위 폴더는 다시 스캔할 루트가 아니다).
+        """
         self.recipes = recipes
-        self.logger.ok(f"✅ {len(self.recipes)}개 Recipe 발견")
+        self.logger.ok(f"✅ {len(self.recipes)}개 Recipe 발견"
+                       + (f" ({source_label})" if source_label else ""))
         for r in self.recipes:
             self.logger.info(f"  Step {r['index']}: {r['name']}")
 
-        self.settings = add_recent_folder(self.settings, folder)
+        if source_label is None:
+            self.settings = add_recent_folder(self.settings, source_folder)
         self._save_settings()
 
         self.logger.info("전체 Recipe 데이터 로드 시작 (1st round)...")
-        self._loader_thread = DataLoaderThread(folder)
+        self._loader_thread = DataLoaderThread(source_folder, recipes=recipes)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
         try:
@@ -134,8 +179,8 @@ class ScanMixin:
             logging.getLogger(__name__).exception('System Log 기록 실패')
 
     def _set_scan_controls_enabled(self, enabled: bool):
-        """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open 버튼 활성/비활성."""
-        for attr in ('btn_scan', 'btn_browse'):
+        """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open/Workflow별 선택 버튼 활성/비활성."""
+        for attr in ('btn_scan', 'btn_browse', 'btn_workflow'):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setEnabled(enabled)

@@ -44,6 +44,12 @@ class UIBuilderMixin:
         self.btn_scan.clicked.connect(self._scan_folder)
         top.addWidget(self.btn_scan)
 
+        # 폴더명이 Spec 이름과 달라도 Workflow마다 폴더를 골라 분석한다
+        self.btn_workflow = QPushButton("Workflow별 선택")
+        self.btn_workflow.setToolTip("Workflow(Spec)마다 데이터 폴더를 직접 지정해 분석합니다")
+        self.btn_workflow.clicked.connect(self._open_workflow_dialog)
+        top.addWidget(self.btn_workflow)
+
         # Wafer 크기 선택 (200mm / 300mm)
         top.addSpacing(16)
         wafer_label = QLabel("Wafer Size:")
