@@ -25,6 +25,42 @@ from core import (compute_statistics, compute_trend,
                       filter_stabilization_die)
 
 
+def natural_key(name: str) -> tuple:
+    """숫자를 값으로 비교하는 정렬 키. '2' < '10', '2026-11-01' < '2026-11-02'."""
+    parts = re.split(r'(\d+)', name or '')
+    return tuple((0, int(p), '') if p.isdigit() else (1, 0, p.lower())
+                 for p in parts if p) + ((2, 0, name or ''),)
+
+
+_ORDINAL = re.compile(r'^\d+(st|nd|rd|th)$', re.IGNORECASE)
+
+
+def is_run_style(round_names) -> bool:
+    """회차 폴더(1, 2, … 14 또는 날짜 이름)인지. 1st/2nd 같은 서수 이름은 아니다."""
+    names = list(round_names)
+    return bool(names) and all(re.search(r'\d', n) and not _ORDINAL.match(n) for n in names)
+
+
+def default_round_name(round_names, preferred: str = '1st'):
+    """Step 상세(카드·차트·PDF)에 기본으로 보여 줄 라운드 이름.
+
+    - preferred('1st')가 있으면 그것 (기존 1st/2nd 구조는 1.1.3과 결과가 같아야 한다)
+    - 라운드가 하나면 그것 ('(root)' 포함)
+    - 회차 폴더(숫자·날짜 이름)면 자연 정렬의 마지막 회차 (가장 최근 시험)
+    - 그 밖에는 자연 정렬의 첫 라운드 (1.1.3의 rounds[0]과 같다)
+    """
+    names = sorted(round_names, key=natural_key)
+    if not names:
+        return None
+    if preferred in names:
+        return preferred
+    if len(names) == 1:
+        return names[0]
+    if is_run_style(names):
+        return names[-1]
+    return names[0]
+
+
 def build_recipe(path: str, name: str = None):
     """폴더 하나를 Recipe dict로 만든다. Lot 데이터가 없으면 None.
 
@@ -47,8 +83,8 @@ def build_recipe(path: str, name: str = None):
             'lot_count': len(direct_lots),
         })
     else:
-        # 2차: 하위에 1st/2nd 라운드 폴더가 있는지 확인
-        sub_items = sorted(os.listdir(path))
+        # 2차: 하위에 1st/2nd 라운드(또는 1..14 회차) 폴더가 있는지 확인. 숫자는 값 순서로
+        sub_items = sorted(os.listdir(path), key=natural_key)
         for sub in sub_items:
             sub_path = os.path.join(path, sub)
             if not os.path.isdir(sub_path):
@@ -316,28 +352,76 @@ def load_all_recipes(root_path: str, round_name: str = '1st',
     for i, recipe in enumerate(recipes):
         if progress_cb:
             progress_cb(i + 1, len(recipes), recipe['name'])
-        # Recipe 단위 격리 — 한 Recipe의 실패가 나머지 Recipe 분석까지 무효화하지 않게 한다.
-        try:
-            result = load_recipe_data(recipe, round_name=round_name, axis=axis)
-        except Exception as e:
-            logging.warning("Recipe '%s' 로드 실패:\n%s",
-                            recipe['name'], traceback.format_exc())
-            result = {
-                'recipe': recipe['name'],
-                'short_name': recipe.get('short_name', recipe['name']),
-                'round': round_name,
-                'raw_data': [],
-                'error': f'{type(e).__name__}: {e}',
-                'load_errors': [],
-                'data_warnings': [],
-                'failed_measurements': {'count': 0},
-            }
+        rounds = recipe.get('rounds', [])
+        if len(rounds) >= 2:
+            result = _load_all_runs(recipe, round_name, axis,
+                                    lambda k, n: progress_cb and progress_cb(
+                                        i + 1, len(recipes), f"{recipe['name']} 회차 {k}/{n}"))
+        else:
+            result = _load_isolated(recipe, round_name, axis)
         # Workflow별로 고른 폴더는 Recipe마다 출처가 달라 내보내기에 따로 적는다
         if recipe.get('source_path'):
             result['source_path'] = recipe['source_path']
         results.append(result)
 
     return results
+
+
+def _load_isolated(recipe: dict, round_name: str, axis: str) -> dict:
+    """Recipe(회차) 단위 격리 — 하나의 실패가 나머지 분석까지 무효화하지 않게 한다."""
+    try:
+        return load_recipe_data(recipe, round_name=round_name, axis=axis)
+    except Exception as e:
+        logging.warning("Recipe '%s' (%s) 로드 실패:\n%s",
+                        recipe['name'], round_name, traceback.format_exc())
+        return {
+            'recipe': recipe['name'],
+            'short_name': recipe.get('short_name', recipe['name']),
+            'round': round_name,
+            'raw_data': [],
+            'error': f'{type(e).__name__}: {e}',
+            'load_errors': [],
+            'data_warnings': [],
+            'failed_measurements': {'count': 0},
+        }
+
+
+def _load_all_runs(recipe: dict, round_name: str, axis: str, progress=None) -> dict:
+    """라운드(회차)가 둘 이상이면 모두 읽는다. 회차마다 기존 분석 기준을 그대로 쓴다.
+
+    돌려주는 값은 기본 회차의 결과(기존 화면·내보내기가 그대로 쓴다)에
+    'run_results'(회차별 전체 결과, 자연 정렬)와 'default_run'을 붙인 것이다.
+    """
+    names = [r['name'] for r in recipe['rounds']]
+    default = default_round_name(names, preferred=round_name)
+    run_results = []
+    for k, name in enumerate(names, 1):
+        if progress:
+            progress(k, len(names))
+        run_results.append(_load_isolated(recipe, name, axis))
+    # 기본 회차 결과를 복사해 쓴다 (자기 자신을 run_results에 넣으면 순환 참조가 된다)
+    result = dict(run_results[names.index(default)])
+    result['run_results'] = run_results
+    result['default_run'] = default
+    return result
+
+
+def run_view(result: dict, run_index: int) -> dict:
+    """회차를 바꿔 볼 때의 Recipe 결과: 그 회차의 결과에 회차 목록 정보를 붙인 것."""
+    runs = result.get('run_results') or []
+    view = dict(runs[run_index])
+    for key in ('run_results', 'default_run', 'runs', 'source_path'):
+        if key in result:
+            view[key] = result[key]
+    return view
+
+
+def run_label(result: dict) -> str:
+    """내보내기에 적을 회차 표시. 회차가 하나뿐이면 빈 문자열."""
+    runs = result.get('run_results') or []
+    if len(runs) < 2:
+        return ''
+    return f"Run: {result.get('round', '')} ({len(runs)}회차 중)"
 
 
 def compare_recipes(results: list) -> list:

@@ -7,7 +7,8 @@ import csv
 import collections
 from typing import Optional
 
-from core.checklist import basis_warnings, build_checklist, result_text
+from core.checklist import basis_warnings, build_checklist, result_text, summarize_runs
+from core.recipe_scanner import run_label
 from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
                                extract_die_number, is_analysis_row, stabilization_die)
 from core.statistics import (classify_row, spec_bounds, axis_reference_means,
@@ -354,6 +355,7 @@ def export_excel_report(data: list, stats: dict, trend: list,
     # === 체크리스트 / 분석 기준 (전체 Recipe) — 첫 화면에서 보이게 맨 앞에 둔다 ===
     if recipe_results:
         write_checklist_sheets(wb, recipe_results, spec_limits, spec_deviation)
+        write_run_comparison_sheet(wb, recipe_results, spec_limits, spec_deviation)
 
     # === 데이터 품질 / 로그 (전달된 경우에만) ===
     write_quality_sheets(wb, recipe_results, spec_limits, log_rows)
@@ -480,18 +482,82 @@ def write_basis_sheet(wb, recipe_results: list, position: int) -> None:
         for col, val in enumerate(row, 1):
             ws.cell(row=start + i, column=col, value=val).font = st['data_font']
 
-    # Workflow별로 고른 폴더는 Recipe마다 출처가 다르다 (자동 스캔은 적지 않는다)
+    # 아래 표는 해당할 때만 붙인다 (자동 스캔·회차 하나는 그대로)
+    next_row = start + len(SHEET_BASIS) + 2
+
+    def block(headers, rows):
+        nonlocal next_row
+        for col, title in enumerate(headers, 1):
+            cell = ws.cell(row=next_row - 1, column=col, value=title)
+            cell.font = st['header_font']
+            cell.fill = st['header_fill']
+        for i, row in enumerate(rows):
+            for col, val in enumerate(row, 1):
+                ws.cell(row=next_row + i, column=col, value=val).font = st['data_font']
+        next_row += len(rows) + 2
+
+    # 회차 폴더가 여럿이면 이 파일이 어느 회차 기준인지 적는다
+    run_rows = [(result.get('short_name') or result.get('recipe', ''), run_label(result))
+                for result in recipe_results if run_label(result)]
+    if run_rows:
+        block(('Workflow', '선택 회차'), run_rows)
+
+    # Workflow별로 고른 폴더는 Recipe마다 출처가 다르다
     sources = [(result.get('short_name') or result.get('recipe', ''), result['source_path'])
                for result in recipe_results if result.get('source_path')]
     if sources:
-        start += len(SHEET_BASIS) + 2
-        for col, title in enumerate(('Workflow', '데이터 폴더'), 1):
-            cell = ws.cell(row=start - 1, column=col, value=title)
+        block(('Workflow', '데이터 폴더'), sources)
+
+
+RUN_COMPARISON_HEADERS = ['회차', 'Lot 수', 'X Range (µm)', 'X StdDev (µm)', 'X Avg (nm)',
+                          'Y Range (µm)', 'Y StdDev (µm)', 'Y Avg (nm)', 'Cpk X', 'Cpk Y',
+                          '판정', '경고']
+
+
+def write_run_comparison_sheet(wb, recipe_results: list, spec_limits: dict = None,
+                               spec_deviation: dict = None) -> None:
+    """회차가 둘 이상인 Workflow마다 회차 비교 표를 한 시트에 쌓는다. 없으면 시트를 만들지 않는다."""
+    blocks = [(result.get('short_name') or result.get('recipe', ''), result.get('round', ''),
+               summarize_runs(result, spec_limits, spec_deviation))
+              for result in recipe_results or []]
+    blocks = [b for b in blocks if b[2]]
+    if not blocks:
+        return
+    st = _make_styles()
+    ws = wb.create_sheet('Run Comparison')
+
+    def shown(value):
+        if value is None:
+            return '—'
+        return 'N/A' if value != value else value
+
+    row = 1
+    for name, selected, runs in blocks:
+        ws.cell(row=row, column=1,
+                value=f'{name} — 회차 {len(runs)}개 (선택 회차 {selected}, 분석 기준: 안정화 Die 제외)'
+                ).font = st['header_font']
+        row += 1
+        for col, title in enumerate(RUN_COMPARISON_HEADERS, 1):
+            cell = ws.cell(row=row, column=col, value=title)
             cell.font = st['header_font']
             cell.fill = st['header_fill']
-        for i, row in enumerate(sources):
-            for col, val in enumerate(row, 1):
-                ws.cell(row=start + i, column=col, value=val).font = st['data_font']
+            cell.border = st['border']
+        for run in runs:
+            row += 1
+            x, y = run['x'], run['y']
+            values = [run['run'], run['lot_count'],
+                      shown(x['range']), shown(x['stddev']), shown(x['avg']),
+                      shown(y['range']), shown(y['stddev']), shown(y['avg']),
+                      shown(x['cpk']), shown(y['cpk']), result_text(run['result']),
+                      '; '.join(run['warnings']) if run['warnings'] else '']
+            bad = run['result'] is False
+            for col, val in enumerate(values, 1):
+                cell = ws.cell(row=row, column=col, value=val)
+                cell.font = st['bad_font'] if bad else st['data_font']
+                cell.border = st['border']
+        row += 3
+    for col in range(1, len(RUN_COMPARISON_HEADERS) + 1):
+        ws.column_dimensions[chr(64 + col)].width = 14
 
 
 def write_quality_sheets(wb, recipe_results: list = None,

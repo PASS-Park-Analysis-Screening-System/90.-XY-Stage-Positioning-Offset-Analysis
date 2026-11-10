@@ -123,3 +123,39 @@ def result_text(result) -> str:
     if result is None:
         return '—'
     return 'PASS' if result else 'FAIL'
+
+
+def combine_verdicts(*results):
+    """축별 판정을 하나로 (Step 버튼과 같은 규칙): FAIL이 있으면 FAIL, 미판정이 있으면 미판정."""
+    if any(r is False for r in results):
+        return False
+    if any(r is None for r in results):
+        return None
+    return True
+
+
+def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict = None) -> list:
+    """회차별 요약 (회차 비교 표·Excel 시트). 회차가 하나뿐이면 빈 목록.
+
+    값은 체크리스트·Step 카드 기본값과 같은 분석 기준(안정화 Die 제외)과 같은 함수
+    (compute_axis_metrics)로 계산한다.
+    """
+    runs = result.get('run_results') or []
+    if len(runs) < 2:
+        return []
+    recipe = result.get('short_name') or result.get('recipe', '')
+    summary = []
+    for run in runs:
+        raw = run.get('raw_data', [])
+        data = filter_stabilization_die(raw)
+        axes = {axis: compute_axis_metrics(data, axis, recipe, spec_limits, spec_deviation)
+                for axis in ('X', 'Y')}
+        summary.append({
+            'run': run.get('round', ''),
+            'lot_count': len({r.get('lot_name') for r in raw}),
+            'x': axes['X'],
+            'y': axes['Y'],
+            'result': combine_verdicts(axes['X']['result'], axes['Y']['result']),
+            'warnings': analysis_warnings(run),
+        })
+    return summary

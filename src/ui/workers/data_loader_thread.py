@@ -9,11 +9,15 @@ from core.recipe_scanner import load_all_recipes, compare_recipes
 class DataLoaderThread(QThread):
     finished = Signal(object, object, float)
     error = Signal(str, str)  # (다이얼로그용 요약, System Log용 traceback 전문)
+    progress = Signal(str)    # 상태 표시줄 문구 (예: "데이터 로드 1/4: Vision Pattern 회차 3/14")
 
     def __init__(self, folder, recipes=None, parent=None):
         super().__init__(parent)
         self.folder = folder
         self.recipes = recipes  # 주면 folder를 다시 스캔하지 않고 이 Recipe 목록을 읽는다
+
+    def _report_progress(self, index, total, text):
+        self.progress.emit(f"데이터 로드 중 {index}/{total}: {text}")
 
     def run(self):
         import time
@@ -21,7 +25,8 @@ class DataLoaderThread(QThread):
         t0 = time.perf_counter()
         try:
             results = load_all_recipes(self.folder, round_name='1st', axis='both',
-                                       recipes=self.recipes)
+                                       recipes=self.recipes,
+                                       progress_cb=self._report_progress)
             comparison = compare_recipes(results)
             elapsed = time.perf_counter() - t0
             self.finished.emit(results, comparison, elapsed)

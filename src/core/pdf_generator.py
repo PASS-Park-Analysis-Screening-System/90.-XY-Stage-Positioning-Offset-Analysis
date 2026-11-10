@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 from charts.basic import _extract_site_data
 from core import filter_by_method, filter_stabilization_die, filter_valid_only
 from core.checklist import basis_warnings, build_checklist, result_text
+from core.recipe_scanner import run_label
 
 
 NOTE_LINES_PER_PAGE = 34
@@ -123,6 +124,9 @@ def _add_recipe_page(pdf: PdfPages, recipe_data: dict, spec_limits: dict):
     # 라운드 폴더 없이 Recipe 바로 아래에 Lot이 있으면 라운드 이름이 '(root)'다
     round_name = recipe_data.get('round', '')
     round_text = f" ({round_name} Round)" if round_name and round_name != '(root)' else ''
+    # 회차 폴더가 여럿이면 어느 회차인지 적는다 (화면 회차 콤보에서 고른 회차)
+    if run_label(recipe_data):
+        round_text = f" — {run_label(recipe_data)}"
     fig.suptitle(f"Step: {recipe_name}{round_text}", fontsize=16, fontweight='bold', y=0.96)
     # Workflow별로 고른 폴더는 Step마다 출처가 다르다
     source = recipe_data.get('source_path')

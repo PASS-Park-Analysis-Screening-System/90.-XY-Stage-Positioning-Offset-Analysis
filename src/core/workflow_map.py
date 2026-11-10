@@ -11,7 +11,7 @@ workflow_map.py — Workflow(Spec 이름)별 데이터 폴더 지정의 화면 �
 
 import os
 
-from core.recipe_scanner import build_recipe, match_spec_key
+from core.recipe_scanner import build_recipe, is_run_style, match_spec_key
 
 NOTE_REMEMBERED = '지난번 선택'
 NOTE_ROOT = '선택한 폴더 — 어느 Workflow인지 확인 후 체크하세요'
@@ -63,6 +63,13 @@ def _read_folder_status(path: str):
     rounds = recipe['rounds']
     if len(rounds) == 1 and rounds[0]['name'] == '(root)':
         return True, f"✅ Lot {rounds[0]['lot_count']}개{_FLAT_SUFFIX}"
+    names = [r['name'] for r in rounds]
+    if len(rounds) >= 2 and is_run_style(names):
+        # 회차 폴더(1..14, 날짜)는 목록 대신 개수와 범위로 줄여 보여 준다
+        counts = [r['lot_count'] for r in rounds]
+        lots = (f'Lot {counts[0]}개씩' if min(counts) == max(counts)
+                else f'Lot {min(counts)}~{max(counts)}개')
+        return True, f'✅ 회차 {len(rounds)}개 ({names[0]}~{names[-1]}) · {lots}'
     return True, '✅ ' + ', '.join(f"{r['name']} Lot {r['lot_count']}개" for r in rounds)
 
 
