@@ -24,6 +24,8 @@ EXIT_OK, EXIT_ERROR, EXIT_BAD_INPUT = 0, 1, 2
 # 실행 기록 폴더: %LOCALAPPDATA%\xy_stage_positioning\logs (PASS 빌드 이름과 같다)
 LOG_APP_NAME = 'xy_stage_positioning'
 LOG_FILE_NAME = 'cli.log'
+LOG_MAX_BYTES = 1024 * 1024
+LOG_KEEP_BYTES = 256 * 1024
 
 
 class BadInput(Exception):
@@ -53,10 +55,11 @@ def _parse(argv):
 
 
 def _select_run(results, run_name):
-    """회차가 여럿인 Workflow마다 run_name 회차를 고른다 (화면의 회차 콤보와 같다).
+    """회차가 여럿인 Workflow마다 run_name 회차를 고른다 (회차가 없는 Workflow 이름 목록을 돌려준다) (화면의 회차 콤보와 같다).
     회차가 하나뿐인 Workflow는 run_results 가 없고 자기 round 만 있다 — 이름이 같으면 찾은 것으로 친다."""
     from core.recipe_scanner import run_view
     found = False
+    missing = []
     for i, result in enumerate(results):
         names = [str(r.get('round', '')) for r in result.get('run_results') or []]
         if not names and str(result.get('round', '')) == run_name:
@@ -65,11 +68,14 @@ def _select_run(results, run_name):
             found = True
             if str(result.get('round', '')) != run_name:
                 results[i] = run_view(result, names.index(run_name))
+        else:
+            missing.append(str(result.get('recipe', i)))
     if not found:
         raise BadInput(f"회차 '{run_name}'이(가) 있는 Workflow가 없습니다.")
+    return missing
 
 
-def load_results(root, settings, run_name=None):
+def load_results(root, settings, run_name=None, warnings=None):
     """화면의 Scan과 같은 결과 목록. 입력 문제는 BadInput."""
     from core.checklist import summarize_runs
     from core.csv_loader import ScanSession
@@ -103,7 +109,10 @@ def load_results(root, settings, run_name=None):
     if not has_data:
         raise BadInput(f"읽은 측정 데이터가 없습니다: {root}")
     if run_name is not None:
-        _select_run(results, run_name)
+        missing = _select_run(results, run_name)
+        if missing and warnings is not None:
+            warnings.append(f"회차 '{run_name}'이(가) 없는 Workflow는 기본 회차를 그대로 썼습니다: "
+                            + ', '.join(missing))
     return results
 
 
@@ -115,7 +124,8 @@ def export_llm_report(root, out, settings, run_name=None, now=None):
 
     if os.path.isdir(out):
         raise BadInput(f"--out은 파일 경로여야 합니다 (폴더임): {out}")
-    results = load_results(root, settings, run_name)
+    warnings = []
+    results = load_results(root, settings, run_name, warnings)
     parent = os.path.dirname(out)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -131,7 +141,6 @@ def export_llm_report(root, out, settings, run_name=None, now=None):
     if state['error'] is not None:
         raise state['error']
     written = [out] + ([raw_csv_path(out)] if state['csv_written'] else [])
-    warnings = []
     if state['csv_error']:
         warnings.append(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {state['csv_error']}")
     return written, warnings
@@ -161,13 +170,30 @@ def log_dir():
     return os.path.join(base, LOG_APP_NAME, 'logs')
 
 
+def _trim_log(path):
+    """cli.log가 LOG_MAX_BYTES를 넘으면 마지막 LOG_KEEP_BYTES만 남긴다 (줄 경계, 원자적 교체)."""
+    if os.path.getsize(path) <= LOG_MAX_BYTES:
+        return
+    with open(path, 'rb') as f:
+        f.seek(-LOG_KEEP_BYTES, os.SEEK_END)
+        tail = f.read()
+    tail = tail[tail.find(b'\n') + 1:]
+    temp = path + '.tmp'
+    with open(temp, 'wb') as f:
+        f.write(tail)
+    os.replace(temp, path)
+
+
 def _log(text):
     """실행 기록 한 줄 (창 빌드는 콘솔이 없어 여기서만 결과를 확인할 수 있다). 실패는 무시한다."""
     try:
         folder = log_dir()
         os.makedirs(folder, exist_ok=True)
         stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        with open(os.path.join(folder, LOG_FILE_NAME), 'a', encoding='utf-8') as f:
+        path = os.path.join(folder, LOG_FILE_NAME)
+        if os.path.exists(path):
+            _trim_log(path)
+        with open(path, 'a', encoding='utf-8') as f:
             f.write(f"{stamp} {text}\n")
     except Exception:
         pass

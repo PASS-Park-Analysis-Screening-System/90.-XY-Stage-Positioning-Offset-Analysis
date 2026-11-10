@@ -134,6 +134,7 @@ def test_run_option_selects_run(tmp_path):
     workflows = _front(out.read_text(encoding='utf-8'))['workflows']
     assert workflows[0]['selected_run'] == '1'
     assert workflows[1]['selected_run'] == '(root)'      # 회차가 없는 Workflow는 그대로
+    assert "회차 '1'이(가) 없는 Workflow" in stderr and '4. Global Align' in stderr
     code, _, stderr = _run(['--llm-report', root, '--out', out, '--run', '9'])
     assert code == 2 and "회차 '9'" in stderr
 
@@ -255,3 +256,16 @@ def test_launch_status_ready_line(tmp_path, monkeypatch):
     main.report_launch_status('ready')                              # 예외 없이 지나간다
     monkeypatch.delenv('PASS_LAUNCH_STATUS_FILE')
     main.report_launch_status('ready')
+
+
+def test_log_is_trimmed_when_too_large(tmp_path):
+    folder = tmp_path / 'appdata' / cli.LOG_APP_NAME / 'logs'
+    folder.mkdir(parents=True)
+    log = folder / cli.LOG_FILE_NAME
+    log.write_text(''.join(f"old line {i:06d}\n" for i in range(100000)), encoding='utf-8')
+    assert log.stat().st_size > cli.LOG_MAX_BYTES
+    cli._log('new entry')
+    text = log.read_text(encoding='utf-8')
+    assert len(text.encode('utf-8')) <= cli.LOG_KEEP_BYTES + 200
+    assert text.startswith('old line') and text.rstrip().endswith('new entry')
+    assert 'old line 099999' in text and 'old line 000000' not in text

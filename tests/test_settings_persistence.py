@@ -224,3 +224,54 @@ def test_source_save_writes_only_user_settings_to_local_file(tmp_path, monkeypat
 
     assert json.loads(local.read_text(encoding='utf-8')) == {'wafer_size': 200}
     assert not bundled.exists()
+
+
+class _PathRecordingWinreg(_FakeWinreg):
+    """어떤 키 경로를 열었는지 기록한다 (경로 검증 없음)."""
+
+    def __init__(self):
+        super().__init__()
+        self.paths = []
+
+    def CreateKey(self, root, path):
+        self.paths.append(path)
+        return _FakeKey()
+
+    def OpenKey(self, root, path):
+        self.paths.append(path)
+        if not self.values:
+            raise FileNotFoundError(path)
+        return _FakeKey()
+
+
+def test_isolated_uses_separate_key_and_never_local_file(tmp_path, monkeypatch):
+    bundled = tmp_path / 'settings.json'
+    local = tmp_path / 'settings.local.json'
+    _write_json(bundled, {'spec_deviation': {'A': {}}, 'wafer_size': 300})
+    fake = _PathRecordingWinreg()
+    monkeypatch.setattr(settings, 'winreg', fake)
+    monkeypatch.setattr(settings, 'IS_FROZEN', False)
+    monkeypatch.setattr(settings, 'BUNDLED_SETTINGS_FILE', str(bundled))
+    monkeypatch.setattr(settings, 'LOCAL_SETTINGS_FILE', str(local))
+    monkeypatch.setenv('PASS_ISOLATED', '1')
+
+    assert settings.load_settings()['wafer_size'] == 300    # 격리 키가 비면 번들 기본값
+    settings.save_settings({'wafer_size': 200})
+
+    assert not local.exists()
+    assert set(fake.paths) == {r'Software\XYStageOffset_PASSIsolated'}
+    assert settings.load_settings()['wafer_size'] == 200
+
+
+def test_not_isolated_keeps_real_key_and_local_file(tmp_path, monkeypatch):
+    local = tmp_path / 'settings.local.json'
+    fake = _PathRecordingWinreg()
+    monkeypatch.setattr(settings, 'winreg', fake)
+    monkeypatch.setattr(settings, 'IS_FROZEN', True)
+    monkeypatch.delenv('PASS_ISOLATED', raising=False)
+    settings.save_settings({'wafer_size': 200})
+    assert fake.paths == [r'Software\XYStageOffset']
+    monkeypatch.setattr(settings, 'IS_FROZEN', False)
+    monkeypatch.setattr(settings, 'LOCAL_SETTINGS_FILE', str(local))
+    settings.save_settings({'wafer_size': 100})
+    assert local.exists()

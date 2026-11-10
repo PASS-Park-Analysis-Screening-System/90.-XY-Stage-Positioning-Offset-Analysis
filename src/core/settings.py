@@ -33,6 +33,8 @@ LOCAL_SETTINGS_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'settings.local.json')
 
 _REGISTRY_PATH = r'Software\XYStageOffset'
+# PASS가 개발용으로 띄우는 실행(PASS_ISOLATED=1)은 사용자의 실제 설정을 읽지도 쓰지도 않는다
+_ISOLATED_REGISTRY_PATH = r'Software\XYStageOffset_PASSIsolated'
 _USER_SETTING_KEYS = {
     'last_folder',
     'window_geometry',
@@ -81,6 +83,14 @@ def rotation_spec(settings: dict = None) -> dict:
     return out
 
 
+def _is_isolated() -> bool:
+    return os.environ.get('PASS_ISOLATED') == '1'
+
+
+def _registry_path() -> str:
+    return _ISOLATED_REGISTRY_PATH if _is_isolated() else _REGISTRY_PATH
+
+
 def _read_settings_file(file_path: str) -> dict:
     with open(file_path, 'r', encoding='utf-8-sig') as f:
         return json.load(f)
@@ -127,7 +137,7 @@ def _read_registry_settings() -> dict:
         return {}
 
     try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH)
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _registry_path())
     except OSError:
         return {}
 
@@ -161,7 +171,7 @@ def _write_registry_settings(settings: dict):
         return
 
     try:
-        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH)
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, _registry_path())
         with key:
             for name in _USER_SETTING_KEYS:
                 if name not in settings:
@@ -195,7 +205,9 @@ def load_settings() -> dict:
 
     # 규격은 다른 Spec 항목처럼 번들에서 온다 (사용자 설정으로 바꾸지 않는다). 빠진 항목은 코드 기본값
     bundled['rotation_spec'] = rotation_spec(bundled)
-    if not IS_FROZEN:
+    # 격리 실행은 소스 실행이어도 settings.local.json 대신 격리 레지스트리 키를 쓴다.
+    # 키가 없으면 번들 기본값 그대로이므로 --llm-report 결과가 사용자 환경과 무관하다
+    if not IS_FROZEN and not _is_isolated():
         return {**bundled, **_read_local_settings()}
 
     settings = {**bundled, **_MACHINE_SPECIFIC_DEFAULTS}
@@ -211,7 +223,7 @@ def save_settings(settings: dict):
         key: value for key, value in settings.items()
         if key in _USER_SETTING_KEYS
     }
-    if IS_FROZEN:
+    if IS_FROZEN or _is_isolated():
         _write_registry_settings(user_settings)
         return
 
