@@ -138,6 +138,15 @@ def test_run_option_selects_run(tmp_path):
     assert code == 2 and "회차 '9'" in stderr
 
 
+def test_run_option_accepts_single_run_workflow():
+    """회차가 하나뿐인 Workflow(run_results 없음)도 그 round 이름으로 찾는다 (실데이터 '2nd' 하나뿐)."""
+    from core.cli import _select_run
+    results = [{'recipe': 'A', 'round': '2nd', 'raw_data': [1]},
+               {'recipe': 'B', 'round': '2nd', 'raw_data': [1]}]
+    _select_run(results, '2nd')
+    assert [r['round'] for r in results] == ['2nd', '2nd']
+
+
 def test_missing_folder_is_bad_input(tmp_path):
     out = tmp_path / 'x.md'
     code, stdout, stderr = _run(['--llm-report', tmp_path / 'nope', '--out', out])

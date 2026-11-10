@@ -53,12 +53,15 @@ def _parse(argv):
 
 
 def _select_run(results, run_name):
-    """회차가 여럿인 Workflow마다 run_name 회차를 고른다 (화면의 회차 콤보와 같다)."""
+    """회차가 여럿인 Workflow마다 run_name 회차를 고른다 (화면의 회차 콤보와 같다).
+    회차가 하나뿐인 Workflow는 run_results 가 없고 자기 round 만 있다 — 이름이 같으면 찾은 것으로 친다."""
     from core.recipe_scanner import run_view
     found = False
     for i, result in enumerate(results):
         names = [str(r.get('round', '')) for r in result.get('run_results') or []]
-        if run_name in names:
+        if not names and str(result.get('round', '')) == run_name:
+            found = True
+        elif run_name in names:
             found = True
             if str(result.get('round', '')) != run_name:
                 results[i] = run_view(result, names.index(run_name))
