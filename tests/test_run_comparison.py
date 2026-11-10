@@ -59,6 +59,7 @@ def test_natural_sort_orders_numbers_and_dates():
     assert sorted(['2026-11-10', '2026-9-30', '2026-11-02'], key=natural_key) == [
         '2026-9-30', '2026-11-02', '2026-11-10']
     assert sorted(['run10', 'Run2', 'run1'], key=natural_key) == ['run1', 'Run2', 'run10']
+    assert sorted(['B', 'a'], key=natural_key) == ['a', 'B']
 
 
 def test_build_recipe_lists_runs_in_natural_order(tmp_path):
@@ -317,3 +318,147 @@ def test_pdf_step_title_states_run(tmp_path, monkeypatch):
     pdf_generator.generate_pdf_report(str(tmp_path / 'r.pdf'), str(vp), [run_view(result, 0)],
                                       [], SPEC_LIM, SPEC_DEV)
     assert 'Step: Vision Pattern — Run: 1 (2회차 중)' in titles
+
+
+# ── 리뷰 반영 ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize('names,expected', [
+    (['14_rerun', '14'], ['14', '14_rerun']),
+    (['2', '1-2', '1', '1-1'], ['1', '1-1', '1-2', '2']),
+    (['2026-11-01_2', '2026-11-01'], ['2026-11-01', '2026-11-01_2']),
+])
+def test_natural_sort_puts_prefix_first(names, expected):
+    assert sorted(names, key=natural_key) == expected
+
+
+@pytest.mark.parametrize('names,expected', [
+    (['10', '9', 'retry'], '10'),         # 회차 사이에 retry가 섞여도 회차 구조
+    (['1', '2', '14', 'ref', 'backup'], '14'),
+    (['2nd', '10th'], '10th'),            # 서수는 1.1.3처럼 단순 정렬의 첫 이름
+    (['b', 'B', 'a'], 'B'),
+])
+def test_default_round_rule_mixed_names(names, expected):
+    assert default_round_name(names) == expected
+
+
+def test_run_style_by_majority():
+    assert is_run_style(['1', '2', 'retry'])
+    assert not is_run_style(['1', 'retry'])
+    assert not is_run_style(['1st', '2nd', '3'])
+
+
+def _empty_lot(lot):
+    """Lot으로 인식되지만 측정 행이 없는 폴더 (측정 중단)."""
+    lot.mkdir(parents=True, exist_ok=True)
+    for axis in ('X', 'Y'):
+        (lot / f'Sample10_{axis}_UL.csv').write_text('Lot ID,Lot3\n\n' + HEADER, encoding='utf-8')
+
+
+def test_empty_last_run_is_not_the_default(tmp_path):
+    vp = _make_runs(tmp_path / 'vp', ['1', '2'], lots=10)
+    _empty_lot(vp / '3' / 'Lot01')
+    recipes, _ = recipes_from_mapping([('Vision Pattern', str(vp))], list(SPEC_DEV))
+
+    result = load_all_recipes('', recipes=recipes)[0]
+
+    assert [r['round'] for r in result['run_results']] == ['1', '2', '3']
+    assert result['run_results'][2]['error'] == 'No data loaded'
+    assert result['run_results'][2]['short_name'] == 'Vision Pattern'
+    assert result['default_run'] == '2' and result['round'] == '2'
+    assert result['default_skipped'] == ['3']
+    assert result['short_name'] == 'Vision Pattern'
+    runs = summarize_runs(result, SPEC_LIM, SPEC_DEV)
+    assert runs[0]['result'] is True and runs[0]['x']['cpk'] is not None
+    assert runs[2]['result'] is None and runs[2]['warnings'] == ['No data loaded']
+
+
+def test_all_runs_empty_falls_back_to_last_with_spec_name(tmp_path):
+    vp = tmp_path / 'vp'
+    _empty_lot(vp / '1' / 'Lot01')
+    _empty_lot(vp / '2' / 'Lot01')
+    recipes, _ = recipes_from_mapping([('Vision Pattern', str(vp))], list(SPEC_DEV))
+    result = load_all_recipes('', recipes=recipes)[0]
+    assert result['default_run'] == '2'
+    assert result['short_name'] == 'Vision Pattern'
+    assert 'default_skipped' not in result
+
+
+def test_pdf_keeps_113_title_for_1st_2nd(tmp_path, monkeypatch):
+    from core import pdf_generator
+    _make_runs(tmp_path / 'Vision Pattern', ['1st', '2nd'], lots=10)
+    result = load_all_recipes(str(tmp_path))[0]
+    titles = []
+    real = pdf_generator.Figure.suptitle
+    monkeypatch.setattr(pdf_generator.Figure, 'suptitle',
+                        lambda fig, t, *a, **k: titles.append(t) or real(fig, t, *a, **k))
+    pdf_generator.generate_pdf_report(str(tmp_path / 'r.pdf'), str(tmp_path), [result],
+                                      [], SPEC_LIM, SPEC_DEV)
+    assert 'Step: Vision Pattern (1st Round)' in titles
+
+
+def test_failed_other_run_is_logged_and_blocks_clean_message(window, tmp_path):
+    vp = _make_runs(tmp_path / 'vp', ['1', '2'], lots=10)
+    _empty_lot(vp / '3' / 'Lot01')
+    from core.recipe_scanner import compare_recipes
+    recipes, _ = recipes_from_mapping([('Vision Pattern', str(vp))], list(SPEC_DEV))
+    window.recipes = recipes
+    window._build_nav()
+    results = load_all_recipes('', recipes=recipes)
+    window._loader_thread = type('Done', (), {'folder': str(vp)})()
+    window._on_scan_complete(results, compare_recipes(results), 1.0)
+
+    logged = str(window.logger.export_rows())
+    assert '❌ Vision Pattern 회차 3: No data loaded' in logged
+    assert '데이터 품질 이상 없음' not in logged
+    assert '최신 회차 3에 데이터가 없어 기본 회차를 2(으)로 했습니다' in logged
+
+
+def test_run_switch_redraws_recipe_comparison_charts(window, tmp_path, monkeypatch):
+    from core.recipe_scanner import compare_recipes
+    import charts
+    vp = _make_runs(tmp_path / 'vp', ['1', '2'], lots=10)
+    ga = _make_runs(tmp_path / 'ga', ['Lots'], lots=10) / 'Lots'
+    recipes, _ = recipes_from_mapping([('Vision Pattern', str(vp)), ('Global Align', str(ga))],
+                                      ['Vision Pattern', 'Global Align'])
+    window.recipes = recipes
+    window._build_nav()
+    results = load_all_recipes('', recipes=recipes)
+    window._loader_thread = type('Done', (), {'folder': str(tmp_path)})()
+    window._on_scan_complete(results, compare_recipes(results), 1.0)
+    seen = []
+    real = charts.plot_recipe_comparison_boxplot
+    monkeypatch.setattr(charts, 'plot_recipe_comparison_boxplot',
+                        lambda rr: seen.append([r['round'] for r in rr]) or real(rr))
+
+    window.run_combo.setCurrentIndex(0)
+
+    assert seen == [['1', '(root)']]
+
+
+def test_pdf_export_uses_snapshot_taken_on_main_thread(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    import core.pdf_generator as pdf_generator
+    from ui.controllers import export_controller
+    _loaded(window, tmp_path, runs=('1', '2'))
+    started = []
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName',
+                        staticmethod(lambda *a, **k: (str(tmp_path / 'r.pdf'), '')))
+    monkeypatch.setattr(export_controller.threading, 'Thread',
+                        lambda target, daemon: type('T', (), {
+                            'start': lambda self: started.append(target)})())
+    from PySide6.QtWidgets import QMessageBox
+    # 완료 확인 타이머가 대화상자·파일 열기를 띄우지 않게 막는다 (모달이면 테스트가 멈춘다)
+    monkeypatch.setattr(QMessageBox, 'critical', staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(export_controller.os, 'startfile', lambda p: None, raising=False)
+    exported = []
+
+    def fake_generate(path, root, results, *a):
+        exported.append([r['round'] for r in results])
+        open(path, 'w').close()
+    monkeypatch.setattr(pdf_generator, 'generate_pdf_report', fake_generate)
+    window._export_pdf()
+
+    window.run_combo.setCurrentIndex(0)     # 내보내는 중에 회차를 바꾼다
+    started[0]()
+
+    assert exported == [['2']]

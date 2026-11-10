@@ -141,7 +141,7 @@ class ScanMixin:
             self.settings = add_recent_folder(self.settings, source_folder)
         self._save_settings()
 
-        self.logger.info("전체 Recipe 데이터 로드 시작 (1st round)...")
+        self.logger.info("전체 Recipe 데이터 로드 시작 (회차 폴더가 여럿이면 모든 회차)...")
         self._loader_thread = DataLoaderThread(source_folder, recipes=recipes)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
@@ -235,6 +235,10 @@ class ScanMixin:
             if r.get('error'):
                 self.logger.error(f"  ❌ {label}: {r['error']}")
                 clean = False
+            for run in r.get('run_results') or []:
+                if run.get('error') and run.get('round') != r.get('round'):
+                    self.logger.error(f"  ❌ {label} 회차 {run.get('round', '')}: {run['error']}")
+                    clean = False
 
             for msg in r.get('load_errors', []):
                 self.logger.error(f"  ❌ {label}: {msg}")
@@ -283,6 +287,21 @@ class ScanMixin:
                 "  ℹ 측정 실패 행은 분석·차트에서 제외되었습니다. "
                 "장비 원본 데이터 확인이 필요합니다.")
 
+    def _render_recipe_comparison_charts(self, announce=True):
+        """Recipe 간 비교 차트(Boxplot·Trend·Heatmap). 회차를 바꾸면 다시 그린다."""
+        if len(self.recipe_results) < 2:
+            return
+        for name, plot, done in (
+                ('Boxplot', viz.plot_recipe_comparison_boxplot, "📊 Recipe Boxplot 비교 차트 생성 완료"),
+                ('Trend', viz.plot_recipe_comparison_trend, "📈 Recipe Trend 비교 차트 생성 완료"),
+                ('Heatmap', viz.plot_recipe_comparison_heatmap, "🗺️ Recipe Heatmap 비교 차트 생성 완료")):
+            try:
+                self.chart_widgets[name].set_figure(plot(self.recipe_results))
+                if announce:
+                    self.logger.ok(done)
+            except Exception as e:
+                self.logger.error(f"{name} 비교 오류: {e}")
+
     def _log_runs(self, results):
         """회차를 모두 읽었다는 것과 기본 회차를 남긴다 (전에는 첫 회차만 조용히 분석했다)."""
         for r in results:
@@ -292,6 +311,9 @@ class ScanMixin:
             label = r.get('short_name') or r.get('recipe', '')
             self.logger.info(f"  ℹ {label}: 회차 {len(runs)}개 분석 — Step 상세 기본 회차 "
                              f"{r.get('default_run')} (회차 콤보·'회차 비교' 탭에서 변경)")
+            if r.get('default_skipped'):
+                self.logger.warn(f"  ⚠ {label}: 최신 회차 {', '.join(r['default_skipped'])}에 "
+                                 f"데이터가 없어 기본 회차를 {r.get('default_run')}(으)로 했습니다")
             warned = [str(run['run']) for run in runs if run['warnings']]
             if warned:
                 self.logger.warn(f"  ⚠ {label}: 경고가 있는 회차 {', '.join(warned)} "
@@ -352,27 +374,7 @@ class ScanMixin:
             self._select_step(0)
 
         # ─── Recipe 비교 차트 렌더링 ───
-        if len(self.recipe_results) >= 2:
-            try:
-                self.chart_widgets['Boxplot'].set_figure(
-                    viz.plot_recipe_comparison_boxplot(self.recipe_results))
-                self.logger.ok("📊 Recipe Boxplot 비교 차트 생성 완료")
-            except Exception as e:
-                self.logger.error(f"Boxplot 비교 오류: {e}")
-
-            try:
-                self.chart_widgets['Trend'].set_figure(
-                    viz.plot_recipe_comparison_trend(self.recipe_results))
-                self.logger.ok("📈 Recipe Trend 비교 차트 생성 완료")
-            except Exception as e:
-                self.logger.error(f"Trend 비교 오류: {e}")
-
-            try:
-                self.chart_widgets['Heatmap'].set_figure(
-                    viz.plot_recipe_comparison_heatmap(self.recipe_results))
-                self.logger.ok("🗺️ Recipe Heatmap 비교 차트 생성 완료")
-            except Exception as e:
-                self.logger.error(f"Heatmap 비교 오류: {e}")
+        self._render_recipe_comparison_charts()
 
         self.statusBar().showMessage(
             f"✅ {len(self.recipes)}개 Recipe | {total}개 데이터 | Step 클릭 → 상세 분석")

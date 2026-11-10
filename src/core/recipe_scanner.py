@@ -26,19 +26,31 @@ from core import (compute_statistics, compute_trend,
 
 
 def natural_key(name: str) -> tuple:
-    """숫자를 값으로 비교하는 정렬 키. '2' < '10', '2026-11-01' < '2026-11-02'."""
-    parts = re.split(r'(\d+)', name or '')
-    return tuple((0, int(p), '') if p.isdigit() else (1, 0, p.lower())
-                 for p in parts if p) + ((2, 0, name or ''),)
+    """숫자를 값으로 비교하는 정렬 키.
+
+    '2' < '10', '2026-11-01' < '2026-11-02'. 앞부분이 같으면 짧은 이름이 먼저다
+    ('14' < '14_rerun', '1' < '1-1' < '2').
+    """
+    parts = tuple((0, int(p)) if p.isdigit() else (1, p.lower())
+                  for p in re.split(r'(\d+)', name or '') if p)
+    return parts, name or ''
 
 
 _ORDINAL = re.compile(r'^\d+(st|nd|rd|th)$', re.IGNORECASE)
 
 
+def _is_run_name(name: str) -> bool:
+    """숫자가 든 회차 이름 (1, 14_rerun, 2026-11-01). 1st/2nd 같은 서수는 아니다."""
+    return bool(re.search(r'\d', name)) and not _ORDINAL.match(name)
+
+
 def is_run_style(round_names) -> bool:
-    """회차 폴더(1, 2, … 14 또는 날짜 이름)인지. 1st/2nd 같은 서수 이름은 아니다."""
+    """회차 폴더 구조인지: 이름의 과반이 숫자가 든 회차 이름이다.
+
+    retry, ref, backup 같은 폴더가 몇 개 섞여도 회차 구조로 본다.
+    """
     names = list(round_names)
-    return bool(names) and all(re.search(r'\d', n) and not _ORDINAL.match(n) for n in names)
+    return bool(names) and sum(_is_run_name(n) for n in names) * 2 > len(names)
 
 
 def default_round_name(round_names, preferred: str = '1st'):
@@ -46,10 +58,10 @@ def default_round_name(round_names, preferred: str = '1st'):
 
     - preferred('1st')가 있으면 그것 (기존 1st/2nd 구조는 1.1.3과 결과가 같아야 한다)
     - 라운드가 하나면 그것 ('(root)' 포함)
-    - 회차 폴더(숫자·날짜 이름)면 자연 정렬의 마지막 회차 (가장 최근 시험)
-    - 그 밖에는 자연 정렬의 첫 라운드 (1.1.3의 rounds[0]과 같다)
+    - 회차 폴더 구조면 숫자가 든 회차 중 자연 정렬의 마지막 (가장 최근 시험)
+    - 그 밖에는 단순 문자열 정렬의 첫 라운드 (1.1.3의 rounds[0]과 같다)
     """
-    names = sorted(round_names, key=natural_key)
+    names = list(round_names)
     if not names:
         return None
     if preferred in names:
@@ -57,8 +69,8 @@ def default_round_name(round_names, preferred: str = '1st'):
     if len(names) == 1:
         return names[0]
     if is_run_style(names):
-        return names[-1]
-    return names[0]
+        return sorted((n for n in names if _is_run_name(n)), key=natural_key)[-1]
+    return sorted(names)[0]
 
 
 def build_recipe(path: str, name: str = None):
@@ -288,7 +300,9 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
         round_info = recipe['rounds'][0] if recipe.get('rounds') else None
 
     if not round_info:
-        return {'recipe': recipe['name'], 'round': round_name,
+        return {'recipe': recipe['name'],
+                'short_name': recipe.get('short_name', recipe['name']),
+                'round': round_name,
                 'raw_data': [], 'error': 'No data found', 'load_errors': []}
 
     load_errors = []
@@ -298,7 +312,9 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
                       errors=load_errors, warnings=data_warnings,
                       info=load_info)
     if not data:
-        return {'recipe': recipe['name'], 'round': round_info['name'],
+        return {'recipe': recipe['name'],
+                'short_name': recipe.get('short_name', recipe['name']),
+                'round': round_info['name'],
                 'raw_data': [], 'error': 'No data loaded',
                 'load_errors': load_errors, 'data_warnings': data_warnings,
                 'failed_measurements': {'count': 0}}
@@ -399,10 +415,27 @@ def _load_all_runs(recipe: dict, round_name: str, axis: str, progress=None) -> d
         if progress:
             progress(k, len(names))
         run_results.append(_load_isolated(recipe, name, axis))
+
+    # 회차 구조에서 최신 회차가 비었거나 중단됐으면 데이터가 있는 마지막 회차를 기본으로 한다.
+    # 1st/2nd 구조는 1.1.3과 같게 1st를 그대로 쓴다.
+    skipped = []
+    if default != round_name and is_run_style(names):
+        loaded = {r['round'] for r in run_results if r.get('raw_data')}
+        candidates = [n for n in sorted(names, key=natural_key)
+                      if _is_run_name(n) and n in loaded]
+        if candidates and default not in loaded:
+            later = sorted(names, key=natural_key)
+            skipped = [n for n in later[later.index(candidates[-1]) + 1:] if _is_run_name(n)]
+            default = candidates[-1]
+
     # 기본 회차 결과를 복사해 쓴다 (자기 자신을 run_results에 넣으면 순환 참조가 된다)
     result = dict(run_results[names.index(default)])
+    # 판정·Cpk는 Spec 키(short_name)로 찾는다. 회차가 실패해도 Recipe의 이름을 쓴다
+    result['short_name'] = recipe.get('short_name', recipe['name'])
     result['run_results'] = run_results
     result['default_run'] = default
+    if skipped:
+        result['default_skipped'] = skipped
     return result
 
 
@@ -410,7 +443,10 @@ def run_view(result: dict, run_index: int) -> dict:
     """회차를 바꿔 볼 때의 Recipe 결과: 그 회차의 결과에 회차 목록 정보를 붙인 것."""
     runs = result.get('run_results') or []
     view = dict(runs[run_index])
-    for key in ('run_results', 'default_run', 'runs', 'source_path'):
+    # Recipe 단위 정보만 옮긴다: Spec 키(short_name), 회차 목록·요약, 기본 회차,
+    # Workflow별 선택의 출처. 측정값·통계는 고른 회차의 것을 그대로 쓴다
+    for key in ('short_name', 'run_results', 'default_run', 'default_skipped', 'runs',
+                'source_path'):
         if key in result:
             view[key] = result[key]
     return view

@@ -40,7 +40,7 @@ class ExportMixin:
                 # Raw Data/통계는 선택된 Step, 체크리스트·품질·로그 시트는 전체 Recipe 기준
                 export_excel_report(
                     self.raw_data, stats, trend, path,
-                    recipe_results=getattr(self, 'recipe_results', None),
+                    recipe_results=list(getattr(self, 'recipe_results', None) or []),
                     spec_limits=self.settings.get('spec_limits', {}),
                     log_rows=self.logger.export_rows(),
                     spec_deviation=self.settings.get('spec_deviation', {}))
@@ -52,7 +52,8 @@ class ExportMixin:
 
     def _export_quality_report(self):
         """측정 실패·이상치·Spec 초과 + System Log 전용 리포트 (전체 Recipe)."""
-        results = getattr(self, 'recipe_results', None)
+        # 내보내는 동안 회차를 바꿔도 섞이지 않게 지금 목록을 복사해 쓴다
+        results = list(getattr(self, 'recipe_results', None) or [])
         if not results:
             QMessageBox.warning(self, "경고", "먼저 분석을 실행해주세요.")
             return
@@ -75,7 +76,8 @@ class ExportMixin:
 
 
     def _export_pdf(self):
-        results = getattr(self, 'recipe_results', None)
+        # 작업 스레드가 쓰는 동안 회차 전환이 목록을 바꾸지 않게 메인 스레드에서 복사한다
+        results = list(getattr(self, 'recipe_results', None) or [])
         if not results:
             QMessageBox.warning(self, "경고", "스캔된 데이터가 없습니다.")
             return

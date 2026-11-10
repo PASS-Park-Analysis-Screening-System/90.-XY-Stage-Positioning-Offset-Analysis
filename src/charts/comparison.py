@@ -192,11 +192,15 @@ def plot_run_comparison_metrics(runs: list, spec_range=None, spec_stddev=None,
             if spec is not None:
                 ax.axhline(spec, color=color, linestyle='--', linewidth=1,
                            label=f"Spec {'Range' if key == 'range' else 'StdDev'} {spec}")
-        # FAIL 회차는 빨간 표시로 바로 보이게 한다
+        # FAIL 회차는 Spec을 넘은 지표(Range 또는 StdDev)에 빨간 원을 그린다
         for x, r in zip(xs, runs):
-            if r[axis]['result'] is False and r[axis]['range'] is not None:
-                ax.plot(x, r[axis]['range'], 'o', markersize=10, markerfacecolor='none',
-                        markeredgecolor='#D32F2F', markeredgewidth=2)
+            if r[axis]['result'] is not False:
+                continue
+            for key, spec in (('range', spec_range), ('stddev', spec_stddev)):
+                value = r[axis][key]
+                if value is not None and spec is not None and value > spec:
+                    ax.plot(x, value, 'o', markersize=10, markerfacecolor='none',
+                            markeredgecolor='#D32F2F', markeredgewidth=2)
         ax.set_ylabel(f'{axis.upper()} Deviation (µm)')
         ax.set_title(f'{axis.upper()} — Dev Range / StdDev per run', fontsize=10)
         ax.grid(True, alpha=0.3)

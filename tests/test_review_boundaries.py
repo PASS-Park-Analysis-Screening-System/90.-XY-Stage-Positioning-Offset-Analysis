@@ -333,7 +333,10 @@ def test_pdf_export_uses_screen_results_not_a_second_load(monkeypatch, tmp_path)
         app.processEvents()
         time.sleep(0.01)
 
-    assert seen['results'] is host.recipe_results
+    # 화면 결과를 그대로 쓴다. 회차 전환과 섞이지 않게 메인 스레드에서 복사한 목록이다
+    assert seen['results'] == host.recipe_results
+    assert seen['results'] is not host.recipe_results
+    assert seen['results'][0] is host.recipe_results[0]
     assert seen['root'] == 'scanned-root'
     assert (tmp_path / 'r.pdf').exists()
     assert not (tmp_path / 'r.pdf.part').exists()

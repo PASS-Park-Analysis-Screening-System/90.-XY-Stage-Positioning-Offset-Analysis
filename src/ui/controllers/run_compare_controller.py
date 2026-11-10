@@ -40,16 +40,19 @@ class RunCompareMixin:
         runs = self._current_run_results()
         combo = self.run_combo
         combo.blockSignals(True)
-        combo.clear()
         if len(runs) >= 2:
             result = self.recipe_results[self.current_recipe_idx]
             default = result.get('default_run')
-            for run in runs:
-                name = str(run.get('round', ''))
-                combo.addItem(f"{name} (기본)" if name == default else name)
             names = [str(r.get('round', '')) for r in runs]
+            items = [f"{n} (기본)" if n == default else n for n in names]
+            # 목록이 같으면(같은 Step에서 회차만 바꾼 경우) 다시 채우지 않고 위치만 맞춘다
+            if [combo.itemText(i) for i in range(combo.count())] != items:
+                combo.clear()
+                combo.addItems(items)
             current = str(result.get('round', ''))
             combo.setCurrentIndex(names.index(current) if current in names else len(names) - 1)
+        else:
+            combo.clear()
         combo.blockSignals(False)
         visible = len(runs) >= 2
         combo.setVisible(visible)
@@ -73,6 +76,7 @@ class RunCompareMixin:
         # Step 버튼 색, Summary 표, 카드·차트를 이 회차로 다시 그린다
         self._compute_all_step_pass_states()
         self._update_summary_table(compare_recipes(self.recipe_results), self.recipe_results)
+        self._render_recipe_comparison_charts(announce=False)
         self._select_step(idx)
 
     # ── 회차 비교 탭 ─────────────────────────────────────
