@@ -10,8 +10,110 @@ import os
 import re
 import csv
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional, Union
+
+
+# ──────────────────────────────────────────────
+# Scan Session (네트워크 폴더 — 같은 폴더를 한 번만 읽는다)
+# ──────────────────────────────────────────────
+
+class ScanCancelled(Exception):
+    """사용자가 폴더 확인·데이터 로드를 중지했다."""
+
+
+class ScanSession:
+    """사용자 동작 한 번(Scan·Open·Workflow별 선택) 동안의 폴더 확인 결과.
+
+    네트워크 폴더는 목록 조회·파일 열기 한 번이 수십 ms라, 같은 폴더를 스캔·대화상자·
+    로드에서 거듭 읽으면 수십 초가 된다. 결과를 정규화한 경로 키로 담아 두고 재사용한다.
+    새 동작(Scan 버튼을 다시 누름)은 새 세션을 만든다. 오래된 결과를 쓰지 않기 위함이다.
+
+    fork()는 캐시를 공유하고 진행 표시·중지만 따로 갖는 사본이다
+    (스캔 스레드, 대화상자의 행 확인, 로드 스레드가 서로의 중지에 영향을 주지 않는다).
+    """
+
+    def __init__(self, progress=None, _shared=None):
+        if _shared is None:
+            self.status = {}     # workflow_map.describe_folder 결과
+            self.dirs = {}       # isdir 결과
+            self.listings = {}   # 폴더 목록 [(이름, 폴더 여부), ...]
+            self.lots = {}       # scan_lot_folders 결과
+            self.rounds = {}     # build_recipe의 라운드 목록 (Lot이 없으면 None)
+        else:
+            for name in ('status', 'dirs', 'listings', 'lots', 'rounds'):
+                setattr(self, name, getattr(_shared, name))
+        self.progress = progress     # callback(확인한 폴더 수, 지금까지 찾은 폴더 수, 경로)
+        self.done = 0
+        self.total = 0
+        self._cancel = threading.Event()
+
+    def fork(self, progress=None):
+        return ScanSession(progress, _shared=self)
+
+    def cancel(self):
+        self._cancel.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    def check_cancelled(self):
+        if self._cancel.is_set():
+            raise ScanCancelled()
+
+    def found(self, count: int):
+        self.total += count
+
+    def checked(self, path: str):
+        self.done += 1
+        if self.progress is not None:
+            self.progress(self.done, max(self.total, self.done), path)
+
+
+def session_key(path: str) -> str:
+    """캐시 키 — 대소문자·구분자 차이를 무시한다."""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def is_dir(path: str, session: Optional[ScanSession] = None) -> bool:
+    """os.path.isdir — 세션이 있으면 같은 경로를 한 번만 묻는다."""
+    if not path:
+        return False
+    if session is None:
+        return os.path.isdir(path)
+    key = session_key(path)
+    if key not in session.dirs:
+        session.dirs[key] = os.path.isdir(path)
+    return session.dirs[key]
+
+
+def list_dir(path: str, session: Optional[ScanSession] = None) -> list:
+    """폴더 목록 [(이름, 폴더 여부), ...] (이름순). 실패하면 OSError를 그대로 올린다.
+
+    os.scandir은 목록과 함께 폴더 여부를 돌려준다(Windows). 항목마다 isdir을
+    따로 물으면 네트워크 폴더에서 왕복이 항목 수만큼 늘어난다.
+    """
+    key = session_key(path) if session is not None else None
+    if key is not None and key in session.listings:
+        return list(session.listings[key])
+    entries = []
+    with os.scandir(path) as it:
+        for entry in it:
+            try:
+                folder = entry.is_dir()
+            except OSError:
+                folder = False
+            entries.append((entry.name, folder))
+    entries.sort()
+    if key is not None:
+        session.listings[key] = entries
+        session.dirs[key] = True
+        for name, folder in entries:    # 하위 항목의 폴더 여부도 다시 묻지 않는다
+            session.dirs.setdefault(session_key(os.path.join(path, name)), folder)
+    return list(entries)
 
 
 # ──────────────────────────────────────────────
@@ -109,9 +211,27 @@ def _open_csv_rows(csv_path: str) -> list:
         return []
 
 
+def _read_head_bytes(file_path: str, max_lines: int) -> bytes:
+    """파일 앞 max_lines줄만 읽는다 (네트워크 폴더에서 파일 전체를 받지 않는다).
+
+    DLP 차단(PermissionError)이면 _read_file_bytes의 xcopy 폴백으로 전체를 읽는다.
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            lines = []
+            for _ in range(max_lines):
+                line = f.readline()
+                if not line:
+                    break
+                lines.append(line)
+            return b''.join(lines)
+    except PermissionError:
+        return _read_file_bytes(file_path)
+
+
 def _open_csv_text(csv_path: str, max_lines: int = 20) -> list:
     """인코딩 자동 감지 텍스트 읽기 (처음 N줄)."""
-    raw = _read_file_bytes(csv_path)
+    raw = _read_head_bytes(csv_path, max_lines)
     if not raw:
         return []
 
@@ -304,14 +424,17 @@ def parse_summary_csv(csv_path: str) -> dict:
 # Folder Scanning
 # ──────────────────────────────────────────────
 
-def _is_smartscan_csv(csv_path: str) -> bool:
+def _is_smartscan_csv(csv_path: str, lines: Optional[list] = None) -> bool:
     """CSV 파일이 SmartScan 결과인지 구조로 판별
 
     판별 기준:
         - 메타헤더 (Lot ID, Recipe ID 등)가 존재하거나
         - 데이터 헤더에 'Site ID' 컬럼이 있음
+
+    lines: 이미 읽은 앞 20줄 (주면 파일을 다시 열지 않는다)
     """
-    lines = _open_csv_text(csv_path, max_lines=20)
+    if lines is None:
+        lines = _open_csv_text(csv_path, max_lines=20)
     if not lines:
         return False
 
@@ -337,12 +460,12 @@ def _is_data_folder(folder_path: str) -> dict:
 
     Returns:
         None if not a data folder, otherwise dict with file info
+        ('head'는 측정 순서를 정할 때 다시 쓰는 X/Y CSV 앞 20줄이다)
     """
-    if not os.path.isdir(folder_path):
-        return None
-
     try:
         files = os.listdir(folder_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
     except OSError as e:
         # 네트워크 드라이브 / DLP 권한 문제 — 폴더 하나 때문에 스캔 전체가 죽지 않게 한다.
         logging.warning("폴더 목록 조회 실패 (%s): %s", e, folder_path)
@@ -356,7 +479,8 @@ def _is_data_folder(folder_path: str) -> dict:
     # X/Y UL CSV가 있는 경우 — 구조 확인
     if x_csvs or y_csvs:
         check_csv = x_csvs[0] if x_csvs else y_csvs[0]
-        if _is_smartscan_csv(os.path.join(folder_path, check_csv)):
+        head = _open_csv_text(os.path.join(folder_path, check_csv), max_lines=20)
+        if _is_smartscan_csv(os.path.join(folder_path, check_csv), head):
             summary_csvs = [f for f in all_csvs
                             if not f.upper().endswith('_X_UL.CSV')
                             and not f.upper().endswith('_Y_UL.CSV')]
@@ -365,6 +489,7 @@ def _is_data_folder(folder_path: str) -> dict:
                 'y_csv': y_csvs[0] if y_csvs else None,
                 'summary_csv': summary_csvs[0] if summary_csvs else None,
                 'tiff_files': sorted(tiffs),
+                'head': head,
             }
 
     # X/Y UL이 없어도 CSV에 SmartScan 데이터가 있는 경우
@@ -402,15 +527,51 @@ def _folder_sort_key(name: str) -> tuple:
     return (numbers or (999999,), name)
 
 
+_ORDER_META_LINES = 20     # 메타 머리글은 10줄 안팎이다. 예전처럼 앞 20줄까지만 본다
+
+
+def _iter_csv_head(csv_path: str, max_lines: int = _ORDER_META_LINES):
+    """CSV 앞 max_lines줄을 한 줄씩 읽는다. 그만 읽으면 파일도 거기서 멈춘다.
+
+    메타 키(Start Time, Repeat No)는 ASCII라 줄마다 디코드해도 결과가 같다.
+    DLP 차단(PermissionError)이면 xcopy 폴백으로 읽은 앞부분을 쓴다.
+    """
+    try:
+        f = open(csv_path, 'rb')
+    except PermissionError:
+        yield from _open_csv_text(csv_path, max_lines)
+        return
+    with f:
+        for _ in range(max_lines):
+            raw = f.readline()
+            if not raw:
+                return
+            for enc in _ENCODINGS:     # 마지막 latin-1은 실패하지 않는다
+                try:
+                    yield raw.decode(enc)
+                    break
+                except (UnicodeDecodeError, ValueError):
+                    continue
+
+
 def _read_order_meta(folder: dict) -> tuple:
-    """Lot 폴더 CSV 메타의 (Start Time, Repeat No). 없거나 형식이 다르면 None."""
+    """Lot 폴더 CSV 메타의 (Start Time, Repeat No). 없거나 형식이 다르면 None.
+
+    메타 머리글만 읽는다: 둘 다 찾았거나 데이터 머리글(Site ID)에 닿으면 멈춘다.
+    폴더를 판별할 때 읽어 둔 앞부분('head')이 있으면 파일을 다시 열지 않는다.
+    """
     start_time = repeat_no = None
     csv_name = folder.get('x_csv') or folder.get('y_csv')
     if not csv_name:
         return start_time, repeat_no
-    for line in _open_csv_text(os.path.join(folder['path'], csv_name)):
+    lines = folder.get('head')
+    if lines is None:
+        lines = _iter_csv_head(os.path.join(folder['path'], csv_name))
+    for line in lines:
         key, _, value = line.partition(',')
         key = key.strip().lower()
+        if key == 'site id':
+            break
         value = value.split(',')[0].strip()
         try:
             if key == 'start time':
@@ -419,6 +580,8 @@ def _read_order_meta(folder: dict) -> tuple:
                 repeat_no = int(float(value))
         except ValueError:
             pass
+        if start_time is not None and repeat_no is not None:
+            break
     return start_time, repeat_no
 
 
@@ -445,7 +608,12 @@ def _sort_by_measurement_order(folders: list) -> None:
     folders[:] = measured + others
 
 
-def scan_lot_folders(root_path: str) -> list:
+def _copy_lots(lots: list) -> list:
+    """캐시한 Lot 목록의 사본 (로드가 index를 다시 매겨도 캐시는 그대로다)."""
+    return [dict(lot, tiff_files=list(lot['tiff_files'])) for lot in lots]
+
+
+def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> list:
     """데이터 폴더 자동 탐지 + 정렬
 
     폴더 이름이 아닌 **내부 CSV 구조**를 기반으로 SmartScan 결과 폴더를 판별합니다.
@@ -454,29 +622,44 @@ def scan_lot_folders(root_path: str) -> list:
 
     Args:
         root_path: Recipe 결과 폴더 (예: "1. Vision Pattern Recognize/1st")
+        session: ScanSession — 같은 폴더를 다시 읽지 않고, 진행 표시와 중지를 받는다
 
     Returns:
         [{'lot_name': 'Lot401', 'path': '...', 'index': 1,
           'lot_number': 401, 'has_x_csv': True, 'has_y_csv': True,
           'has_summary': True, 'tiff_count': 44, 'tiff_files': [...]}, ...]
     """
-    if not os.path.isdir(root_path):
+    if not root_path:
         return []
-
-    folders = []
+    key = session_key(root_path) if session is not None else None
+    if key is not None and key in session.lots:
+        return _copy_lots(session.lots[key])
+    if session is not None:
+        session.check_cancelled()
 
     try:
-        names = sorted(os.listdir(root_path))
+        entries = list_dir(root_path, session)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
     except OSError as e:
+        if not os.path.isdir(root_path):
+            return []
         logging.warning("폴더 목록 조회 실패 (%s): %s", e, root_path)
         return []
 
-    for name in names:
+    folders = []
+    subdirs = [name for name, folder in entries if folder]
+    if session is not None:
+        session.found(len(subdirs))
+
+    for name in subdirs:
         full_path = os.path.join(root_path, name)
-        if not os.path.isdir(full_path):
-            continue
+        if session is not None:
+            session.check_cancelled()
 
         file_info = _is_data_folder(full_path)
+        if session is not None:
+            session.checked(full_path)
         if file_info is None:
             continue
 
@@ -494,13 +677,17 @@ def scan_lot_folders(root_path: str) -> list:
             'summary_csv': file_info['summary_csv'],
             'tiff_count': len(file_info['tiff_files']),
             'tiff_files': file_info['tiff_files'],
+            'head': file_info.get('head'),    # 측정 순서 정렬에만 쓰고 지운다
         })
 
     # 측정 순서 정렬 + 인덱스 부여
     _sort_by_measurement_order(folders)
     for i, f in enumerate(folders):
         f['index'] = i + 1  # 1-based
+        f.pop('head', None)
 
+    if key is not None:
+        session.lots[key] = _copy_lots(folders)
     return folders
 
 
@@ -641,13 +828,38 @@ def _exclude_first_repeat(lots: list, info: Optional[dict]) -> list:
     return lots
 
 
+LOT_LOAD_WORKERS = 8   # 네트워크 지연을 겹친다. 결과 순서는 Lot 순서 그대로다
+
+
+def _load_lots_parallel(lots: list, session: Optional[ScanSession] = None) -> list:
+    """Lot마다 load_lot_data를 작은 스레드 풀로 읽는다. [(lot_data, 예외), ...] (Lot 순서).
+
+    네트워크 폴더는 파일 하나를 여는 데 수십 ms가 걸려 순서대로 읽으면 대부분 기다리는
+    시간이다. 결과 처리는 호출하는 쪽에서 Lot 순서대로 하므로 순차 로드와 결과가 같다.
+    """
+    def load(lot):
+        if session is not None and session.cancelled:
+            return None, ScanCancelled()
+        try:
+            return load_lot_data(lot['path']), None
+        except Exception as e:
+            return None, e
+
+    if len(lots) <= 1:
+        return [load(lot) for lot in lots]
+    with ThreadPoolExecutor(max_workers=min(LOT_LOAD_WORKERS, len(lots)),
+                            thread_name_prefix='lot-load') as pool:
+        return list(pool.map(load, lots))
+
+
 def batch_load(root_path: str,
                lot_range: Optional[Union[tuple, list]] = None,
                axis: str = 'both',
                metric_col: str = 'HZ1_O (nm)',
                errors: Optional[list] = None,
                warnings: Optional[list] = None,
-               info: Optional[dict] = None) -> list:
+               info: Optional[dict] = None,
+               session: Optional[ScanSession] = None) -> list:
     """유연한 범위 지정 배치 로드 — Analysis csv combine.exe 완전 대체
 
     Args:
@@ -663,6 +875,7 @@ def batch_load(root_path: str,
               'first_repeat_excluded' = 제외한 첫 리핏 폴더 이름,
               'first_repeat_unverified' = 폴더가 11개 이상인데 첫 리핏을 확인하지 못한 폴더 수,
               'no_measurement_folders' = X/Y 측정 CSV가 없어 건너뛴 폴더 이름 목록).
+        session: ScanSession — 이미 확인한 Lot 목록을 다시 읽지 않는다. 중지하면 ScanCancelled
 
     Returns:
         [{'lot_name': 'Lot401', 'lot_index': 1, 'filename': 'Lot4_X_UL.csv',
@@ -671,7 +884,7 @@ def batch_load(root_path: str,
           'method': 'X', 'state': 'COMPLETED', 'valid': True,
           'value': 2976.074, 'value_valid': True}, ...]
     """
-    lots = scan_lot_folders(root_path)
+    lots = scan_lot_folders(root_path, session)
     if not lots:
         return []
 
@@ -692,11 +905,12 @@ def batch_load(root_path: str,
             [l for l in lots if l.get('x_csv') or l.get('y_csv')], info)
 
     results = []
-    for lot in lots:
+    loaded = _load_lots_parallel(lots, session)
+    if session is not None:
+        session.check_cancelled()
+    for lot, (lot_data, e) in zip(lots, loaded):
         # Lot 단위 격리 — 한 폴더의 문제가 나머지 Lot 전체를 무효화하지 않게 한다.
-        try:
-            lot_data = load_lot_data(lot['path'])
-        except Exception as e:
+        if e is not None:
             msg = (f"Lot '{lot['lot_name']}' 로드 실패 "
                    f"({type(e).__name__}: {e}) — 건너뜁니다")
             logging.warning('%s [%s]', msg, lot['path'])

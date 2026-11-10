@@ -5,12 +5,14 @@ workflow_map.py — Workflow(Spec 이름)별 데이터 폴더 지정의 화면 �
 대화상자(ui/dialogs/workflow_folder_dialog.py)는 이 함수들로 상태 문구와
 초기값, 확인 가능 여부를 정한다. 화면 없이 테스트할 수 있게 Qt를 쓰지 않는다.
 
-폴더 확인은 CSV 머리글을 읽어 느리다(네트워크 폴더). 대화상자가 열려 있는 동안
-같은 폴더를 다시 읽지 않도록 cache(dict)를 넘겨 결과를 재사용한다.
+폴더 확인은 CSV 머리글을 읽어 느리다(네트워크 폴더). 같은 폴더를 다시 읽지 않도록
+cache를 넘겨 결과를 재사용한다. cache는 dict이거나 ScanSession이다. ScanSession이면
+스캔·대화상자·로드가 Lot 목록까지 함께 쓴다 (대화상자는 화면 스레드 밖에서 부른다).
 """
 
 import os
 
+from core.csv_loader import ScanSession, is_dir, list_dir
 from core.recipe_scanner import build_recipe, is_run_style, match_spec_key
 
 NOTE_REMEMBERED = '지난번 선택'
@@ -43,19 +45,36 @@ def describe_folder(path: str, cache: dict = None):
     if not os.path.isabs(path):
         return False, '❌ 전체 경로를 입력하세요'
     key = path_key(path)
-    if cache is not None and key in cache:
-        return cache[key]
-    status = _read_folder_status(path)
-    if cache is not None:
-        cache[key] = status
+    store = cache.status if isinstance(cache, ScanSession) else cache
+    if store is not None and key in store:
+        return store[key]
+    session = cache if isinstance(cache, ScanSession) else None
+    status = _read_folder_status(path, session)
+    if store is not None:
+        store[key] = status
     return status
 
 
-def _read_folder_status(path: str):
-    if not os.path.isdir(path):
+def cached_status(path: str, cache):
+    """화면 스레드용: 파일을 읽지 않고 알 수 있는 상태. 폴더를 읽어야 하면 None.
+
+    빈 경로·상대 경로는 바로 답하고, 이미 확인한 폴더는 cache에서 돌려준다.
+    """
+    text = clean_path(path)
+    if not text or not os.path.isabs(text):
+        return describe_folder(text)
+    store = cache.status if isinstance(cache, ScanSession) else cache
+    if store is not None:
+        return store.get(path_key(text))
+    return None
+
+
+def _read_folder_status(path: str, session=None):
+    if not is_dir(path, session):
         return False, '❌ 폴더 없음'
     try:
-        recipe = build_recipe(path)
+        recipe = (build_recipe(path) if session is None
+                  else build_recipe(path, session=session))
     except OSError:
         return False, '❌ 폴더를 읽을 수 없음'
     if recipe is None:
@@ -98,7 +117,8 @@ def compute_prefill(spec_keys, root: str = '', remembered: dict = None,
     spec_keys = list(spec_keys)
     remembered = remembered if isinstance(remembered, dict) else {}
     root = clean_path(root)
-    has_root = bool(root) and os.path.isdir(root)
+    session = cache if isinstance(cache, ScanSession) else None
+    has_root = bool(root) and is_dir(root, session)
 
     def usable(path):
         return describe_folder(path, cache)[0]
@@ -106,13 +126,13 @@ def compute_prefill(spec_keys, root: str = '', remembered: dict = None,
     matched = {}
     if has_root:
         try:
-            names = sorted(os.listdir(root))
+            entries = list_dir(root, session)
         except OSError:
-            names = []
-        for name in names:
-            full = os.path.join(root, name)
-            if not os.path.isdir(full):
+            entries = []
+        for name, folder in entries:
+            if not folder:
                 continue
+            full = os.path.join(root, name)
             key = match_spec_key(name, spec_keys)
             if key is not None and key not in matched:
                 matched[key] = full

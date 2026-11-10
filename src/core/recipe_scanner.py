@@ -18,7 +18,8 @@ import math
 import logging
 import traceback
 import collections
-from core.csv_loader import scan_lot_folders, batch_load, get_scan_summary
+from core.csv_loader import (scan_lot_folders, batch_load, get_scan_summary, is_dir, list_dir,
+                             session_key, ScanCancelled)
 from core import (compute_statistics, compute_trend,
                       detect_outliers_by_axis, compute_repeatability,
                       compute_group_statistics, filter_by_method,
@@ -73,21 +74,14 @@ def default_round_name(round_names, preferred: str = '1st'):
     return sorted(names)[0]
 
 
-def build_recipe(path: str, name: str = None):
-    """폴더 하나를 Recipe dict로 만든다. Lot 데이터가 없으면 None.
-
-    폴더 바로 아래에 Lot이 있으면 라운드 '(root)' 하나, 아니면 하위 폴더(1st/2nd 등)
-    중 Lot이 있는 것을 라운드로 삼는다. index는 폴더명 앞 숫자(없으면 0)이며,
-    여러 Recipe를 묶는 쪽에서 1..N으로 다시 매긴다.
-    """
-    if not path or not os.path.isdir(path):
-        return None
-    name = name if name is not None else os.path.basename(os.path.normpath(path))
-
+def _find_rounds(path: str, session=None) -> list:
+    """폴더의 라운드 목록. 폴더가 아니거나 Lot이 없으면 빈 목록."""
+    if not is_dir(path, session):
+        return []
     # 1차: Recipe 폴더 바로 아래에 Lot 폴더가 있는지 확인 (플랫 구조)
     #      서버 데이터: Recipe/Lot102, Recipe/Lot103, ...
     rounds = []
-    direct_lots = scan_lot_folders(path)
+    direct_lots = scan_lot_folders(path, session)
     if direct_lots:
         rounds.append({
             'name': '(root)',
@@ -96,18 +90,38 @@ def build_recipe(path: str, name: str = None):
         })
     else:
         # 2차: 하위에 1st/2nd 라운드(또는 1..14 회차) 폴더가 있는지 확인. 숫자는 값 순서로
-        sub_items = sorted(os.listdir(path), key=natural_key)
-        for sub in sub_items:
+        subs = sorted((name for name, folder in list_dir(path, session) if folder),
+                      key=natural_key)
+        for sub in subs:
             sub_path = os.path.join(path, sub)
-            if not os.path.isdir(sub_path):
-                continue
-            lots = scan_lot_folders(sub_path)
+            lots = scan_lot_folders(sub_path, session)
             if lots:
                 rounds.append({
                     'name': sub,
                     'path': sub_path,
                     'lot_count': len(lots),
                 })
+    return rounds
+
+
+def build_recipe(path: str, name: str = None, session=None):
+    """폴더 하나를 Recipe dict로 만든다. Lot 데이터가 없으면 None.
+
+    폴더 바로 아래에 Lot이 있으면 라운드 '(root)' 하나, 아니면 하위 폴더(1st/2nd 등)
+    중 Lot이 있는 것을 라운드로 삼는다. index는 폴더명 앞 숫자(없으면 0)이며,
+    여러 Recipe를 묶는 쪽에서 1..N으로 다시 매긴다.
+    session(ScanSession)을 주면 같은 폴더는 한 번만 읽는다.
+    """
+    if not path:
+        return None
+    key = session_key(path) if session is not None else None
+    if key is not None and key in session.rounds:
+        rounds = [dict(r) for r in session.rounds[key]]
+    else:
+        rounds = _find_rounds(path, session)
+        if key is not None:
+            session.rounds[key] = [dict(r) for r in rounds]
+    name = name if name is not None else os.path.basename(os.path.normpath(path))
 
     if not rounds:
         return None
@@ -128,11 +142,12 @@ def build_recipe(path: str, name: str = None):
     }
 
 
-def scan_recipes(root_path: str) -> list:
+def scan_recipes(root_path: str, session=None) -> list:
     """루트 폴더에서 Recipe 하위 구조 자동 탐지
 
     Args:
         root_path: 최상위 데이터 폴더 (예: ".../data")
+        session: ScanSession — 읽은 결과를 대화상자·로드가 다시 쓴다
 
     Returns:
         [{'name': '1. Vision Pattern Recognize', 'path': '...',
@@ -140,17 +155,17 @@ def scan_recipes(root_path: str) -> list:
           'rounds': [{'name': '1st', 'path': '...', 'lot_count': 11},
                      {'name': '2nd', ...}]}, ...]
     """
-    if not os.path.isdir(root_path):
+    if not is_dir(root_path, session):
         return []
 
     recipes = []
 
-    for name in sorted(os.listdir(root_path)):
-        recipe_path = os.path.join(root_path, name)
-        if not os.path.isdir(recipe_path):
+    for name, folder in list_dir(root_path, session):
+        if not folder:
             continue
+        recipe_path = os.path.join(root_path, name)
 
-        recipe = build_recipe(recipe_path, name)
+        recipe = build_recipe(recipe_path, name, session=session)
         if recipe:
             # 인덱스 추출 (폴더명 앞의 숫자). 번호 없는 폴더는 큰 센티넬로 뒤에 배치
             # (발견 순서 유지). 최종 index는 정렬 후 1..N으로 재부여하므로 여기서의
@@ -198,12 +213,13 @@ def normalize_spec_names(recipes: list, spec_keys) -> list:
     return mismatched
 
 
-def recipes_from_mapping(mapping, spec_order=None):
+def recipes_from_mapping(mapping, spec_order=None, session=None):
     """Workflow(Spec 이름)별로 고른 폴더로 Recipe 목록을 만든다.
 
     Args:
         mapping: [(spec_name, path), ...]
         spec_order: Spec 키 순서 (spec_deviation 키 순서). 없으면 mapping 순서
+        session: ScanSession — 대화상자에서 이미 확인한 폴더는 다시 읽지 않는다
 
     Returns:
         (recipes, problems) — problems는 [(spec_name, path, 이유), ...]
@@ -214,11 +230,11 @@ def recipes_from_mapping(mapping, spec_order=None):
         if spec_name in seen:
             continue
         seen.add(spec_name)
-        if not path or not os.path.isdir(path):
+        if not path or not is_dir(path, session):
             problems.append((spec_name, path, '폴더 없음'))
             continue
         try:
-            recipe = build_recipe(path, spec_name)
+            recipe = build_recipe(path, spec_name, session=session)
         except OSError as e:
             problems.append((spec_name, path, f'폴더를 읽을 수 없음 ({e.strerror or e})'))
             continue
@@ -279,7 +295,7 @@ def summarize_failed_measurements(data: list) -> dict:
 
 
 def load_recipe_data(recipe: dict, round_name: str = '1st',
-                     lot_range=None, axis='both') -> dict:
+                     lot_range=None, axis='both', session=None) -> dict:
     """단일 Recipe의 데이터 로드 + 분석
 
     Returns:
@@ -310,7 +326,7 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
     load_info = {}
     data = batch_load(round_info['path'], lot_range=lot_range, axis=axis,
                       errors=load_errors, warnings=data_warnings,
-                      info=load_info)
+                      info=load_info, session=session)
     if not data:
         return {'recipe': recipe['name'],
                 'short_name': recipe.get('short_name', recipe['name']),
@@ -351,18 +367,20 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
 
 def load_all_recipes(root_path: str, round_name: str = '1st',
                      axis: str = 'both',
-                     progress_cb=None, recipes=None) -> list:
+                     progress_cb=None, recipes=None, session=None) -> list:
     """모든 Recipe 일괄 로드
 
     Args:
         progress_cb: callback(recipe_index, total, recipe_name)
         recipes: 이미 정한 Recipe 목록 (Workflow별 폴더 선택). 주면 root_path를 스캔하지 않는다
+        session: ScanSession — 폴더 확인 때 찾은 Lot 목록을 다시 읽지 않는다.
+                 중지하면 ScanCancelled를 올린다 (Recipe 실패로 삼키지 않는다)
 
     Returns:
         [load_recipe_data() 결과, ...]
     """
     if recipes is None:
-        recipes = scan_recipes(root_path)
+        recipes = scan_recipes(root_path, session=session)
     results = []
 
     for i, recipe in enumerate(recipes):
@@ -372,9 +390,10 @@ def load_all_recipes(root_path: str, round_name: str = '1st',
         if len(rounds) >= 2:
             result = _load_all_runs(recipe, round_name, axis,
                                     lambda k, n: progress_cb and progress_cb(
-                                        i + 1, len(recipes), f"{recipe['name']} 회차 {k}/{n}"))
+                                        i + 1, len(recipes), f"{recipe['name']} 회차 {k}/{n}"),
+                                    session=session)
         else:
-            result = _load_isolated(recipe, round_name, axis)
+            result = _load_isolated(recipe, round_name, axis, session=session)
         # Workflow별로 고른 폴더는 Recipe마다 출처가 달라 내보내기에 따로 적는다
         if recipe.get('source_path'):
             result['source_path'] = recipe['source_path']
@@ -383,10 +402,14 @@ def load_all_recipes(root_path: str, round_name: str = '1st',
     return results
 
 
-def _load_isolated(recipe: dict, round_name: str, axis: str) -> dict:
+def _load_isolated(recipe: dict, round_name: str, axis: str, session=None) -> dict:
     """Recipe(회차) 단위 격리 — 하나의 실패가 나머지 분석까지 무효화하지 않게 한다."""
     try:
-        return load_recipe_data(recipe, round_name=round_name, axis=axis)
+        if session is None:
+            return load_recipe_data(recipe, round_name=round_name, axis=axis)
+        return load_recipe_data(recipe, round_name=round_name, axis=axis, session=session)
+    except ScanCancelled:
+        raise
     except Exception as e:
         logging.warning("Recipe '%s' (%s) 로드 실패:\n%s",
                         recipe['name'], round_name, traceback.format_exc())
@@ -402,7 +425,8 @@ def _load_isolated(recipe: dict, round_name: str, axis: str) -> dict:
         }
 
 
-def _load_all_runs(recipe: dict, round_name: str, axis: str, progress=None) -> dict:
+def _load_all_runs(recipe: dict, round_name: str, axis: str, progress=None,
+                   session=None) -> dict:
     """라운드(회차)가 둘 이상이면 모두 읽는다. 회차마다 기존 분석 기준을 그대로 쓴다.
 
     돌려주는 값은 기본 회차의 결과(기존 화면·내보내기가 그대로 쓴다)에
@@ -414,7 +438,7 @@ def _load_all_runs(recipe: dict, round_name: str, axis: str, progress=None) -> d
     for k, name in enumerate(names, 1):
         if progress:
             progress(k, len(names))
-        run_results.append(_load_isolated(recipe, name, axis))
+        run_results.append(_load_isolated(recipe, name, axis, session=session))
 
     # 회차 구조에서 최신 회차가 비었거나 중단됐으면 데이터가 있는 마지막 회차를 기본으로 한다.
     # 1st/2nd 구조는 1.1.3과 같게 1st를 그대로 쓴다.
