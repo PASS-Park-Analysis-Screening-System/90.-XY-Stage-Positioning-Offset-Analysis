@@ -11,6 +11,7 @@ import re
 import csv
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional, Union
@@ -35,15 +36,19 @@ class ScanSession:
     (스캔 스레드, 대화상자의 행 확인, 로드 스레드가 서로의 중지에 영향을 주지 않는다).
     """
 
+    _SHARED = ('status', 'dirs', 'listings', 'lots', 'rounds', 'errors')
+
     def __init__(self, progress=None, _shared=None):
         if _shared is None:
-            self.status = {}     # workflow_map.describe_folder 결과
-            self.dirs = {}       # isdir 결과
+            # 실패(폴더 없음, 읽기 오류)는 담지 않는다. 다시 확인하면 다시 읽는다
+            self.status = {}     # workflow_map.describe_folder 결과 (사용 가능한 것만)
+            self.dirs = {}       # isdir 결과 (폴더인 것만)
             self.listings = {}   # 폴더 목록 [(이름, 폴더 여부), ...]
-            self.lots = {}       # scan_lot_folders 결과
-            self.rounds = {}     # build_recipe의 라운드 목록 (Lot이 없으면 None)
+            self.lots = {}       # scan_lot_folders 결과 (모든 하위 폴더를 확인한 것만)
+            self.rounds = {}     # build_recipe의 라운드 목록
+            self.errors = {}     # 확인하지 못한 폴더 경로 → 오류 문구 (다시 확인해 성공하면 지운다)
         else:
-            for name in ('status', 'dirs', 'listings', 'lots', 'rounds'):
+            for name in self._SHARED:
                 setattr(self, name, getattr(_shared, name))
         self.progress = progress     # callback(확인한 폴더 수, 지금까지 찾은 폴더 수, 경로)
         self.done = 0
@@ -72,10 +77,36 @@ class ScanSession:
         if self.progress is not None:
             self.progress(self.done, max(self.total, self.done), path)
 
+    def failed_under(self, path: str) -> list:
+        """path(또는 그 아래)에서 확인하지 못한 폴더 [(경로, 오류 문구), ...]."""
+        prefix = session_key(path)
+        return [(p, msg) for p, msg in list(self.errors.items())
+                if _is_under(session_key(p), prefix)]
+
+    def forget(self, path: str):
+        """path와 그 아래의 확인 결과를 모두 지운다 ('다시 확인')."""
+        prefix = session_key(path)
+        for name in self._SHARED:
+            store = getattr(self, name)
+            for key in [k for k in list(store) if _is_under(session_key(k), prefix)]:
+                store.pop(key, None)
+
 
 def session_key(path: str) -> str:
     """캐시 키 — 대소문자·구분자 차이를 무시한다."""
     return os.path.normcase(os.path.normpath(path))
+
+
+def _is_under(key: str, prefix: str) -> bool:
+    return key == prefix or key.startswith(prefix.rstrip(os.sep) + os.sep)
+
+
+FOLDER_RETRY_DELAY = 0.5    # 네트워크 일시 오류는 잠깐 뒤 한 번 더 읽는다 (초)
+
+
+def folder_check_warning(path: str, message: str) -> str:
+    """확인하지 못한 Lot 폴더 문구 — System Log·카드·내보내기에 그대로 쓴다."""
+    return f"Lot 폴더 확인 실패: {path} — 결과에서 빠졌을 수 있음 ({message})"
 
 
 def is_dir(path: str, session: Optional[ScanSession] = None) -> bool:
@@ -85,9 +116,12 @@ def is_dir(path: str, session: Optional[ScanSession] = None) -> bool:
     if session is None:
         return os.path.isdir(path)
     key = session_key(path)
-    if key not in session.dirs:
-        session.dirs[key] = os.path.isdir(path)
-    return session.dirs[key]
+    if key in session.dirs:
+        return session.dirs[key]
+    result = os.path.isdir(path)
+    if result:      # '없음'은 담지 않는다 (일시 오류일 수 있어 다음에 다시 묻는다)
+        session.dirs[key] = True
+    return result
 
 
 def list_dir(path: str, session: Optional[ScanSession] = None) -> list:
@@ -111,8 +145,9 @@ def list_dir(path: str, session: Optional[ScanSession] = None) -> list:
     if key is not None:
         session.listings[key] = entries
         session.dirs[key] = True
-        for name, folder in entries:    # 하위 항목의 폴더 여부도 다시 묻지 않는다
-            session.dirs.setdefault(session_key(os.path.join(path, name)), folder)
+        for name, folder in entries:    # 하위 폴더는 isdir을 다시 묻지 않는다
+            if folder:
+                session.dirs.setdefault(session_key(os.path.join(path, name)), True)
     return list(entries)
 
 
@@ -451,24 +486,24 @@ def _is_smartscan_csv(csv_path: str, lines: Optional[list] = None) -> bool:
     return has_meta or has_site_id
 
 
-def _is_data_folder(folder_path: str) -> dict:
+def _is_data_folder(folder_path: str, session: Optional[ScanSession] = None) -> dict:
     """폴더가 SmartScan 데이터 폴더인지 내부 구조로 판별
 
     판별 기준 (하나 이상 충족):
         1. *_X_UL.csv 또는 *_Y_UL.csv가 존재하고 SmartScan 구조
         2. TIFF 파일이 존재하고 CSV 파일이 SmartScan 구조
 
+    폴더가 없으면 None. 그 밖의 OSError(네트워크 일시 오류, 권한)는 그대로 올린다.
+    조용히 None으로 바꾸면 Lot이 하나 빠진 채 정상처럼 보인다 (11개 → 10개면 첫 리핏
+    제외도 꺼진다). 다시 시도와 기록은 scan_lot_folders가 한다.
+
     Returns:
         None if not a data folder, otherwise dict with file info
         ('head'는 측정 순서를 정할 때 다시 쓰는 X/Y CSV 앞 20줄이다)
     """
     try:
-        files = os.listdir(folder_path)
+        files = [name for name, _folder in list_dir(folder_path, session)]
     except (FileNotFoundError, NotADirectoryError):
-        return None
-    except OSError as e:
-        # 네트워크 드라이브 / DLP 권한 문제 — 폴더 하나 때문에 스캔 전체가 죽지 않게 한다.
-        logging.warning("폴더 목록 조회 실패 (%s): %s", e, folder_path)
         return None
 
     x_csvs = [f for f in files if f.upper().endswith('_X_UL.CSV')]
@@ -613,7 +648,8 @@ def _copy_lots(lots: list) -> list:
     return [dict(lot, tiff_files=list(lot['tiff_files'])) for lot in lots]
 
 
-def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> list:
+def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None,
+                     failures: Optional[list] = None) -> list:
     """데이터 폴더 자동 탐지 + 정렬
 
     폴더 이름이 아닌 **내부 CSV 구조**를 기반으로 SmartScan 결과 폴더를 판별합니다.
@@ -623,6 +659,9 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
     Args:
         root_path: Recipe 결과 폴더 (예: "1. Vision Pattern Recognize/1st")
         session: ScanSession — 같은 폴더를 다시 읽지 않고, 진행 표시와 중지를 받는다
+        failures: 주면 확인하지 못한 폴더 [(경로, 오류 문구), ...]가 쌓인다.
+                  네트워크 일시 오류는 한 번 더 읽고, 그래도 실패하면 그 폴더 없이 돌려주되
+                  세션에 이 목록을 담지 않는다 (다음에 다시 확인한다)
 
     Returns:
         [{'lot_name': 'Lot401', 'path': '...', 'index': 1,
@@ -637,17 +676,24 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
     if session is not None:
         session.check_cancelled()
 
-    try:
-        entries = list_dir(root_path, session)
-    except (FileNotFoundError, NotADirectoryError):
+    def report(path, error):
+        message = f'{type(error).__name__}: {error}'
+        logging.warning("폴더 확인 실패 (%s): %s", message, path)
+        if failures is not None:
+            failures.append((path, message))
+        if session is not None:
+            session.errors[path] = message
+
+    entries = _with_retry(lambda: list_dir(root_path, session), session)
+    if isinstance(entries, OSError):
+        if not isinstance(entries, (FileNotFoundError, NotADirectoryError)):
+            report(root_path, entries)
         return []
-    except OSError as e:
-        if not os.path.isdir(root_path):
-            return []
-        logging.warning("폴더 목록 조회 실패 (%s): %s", e, root_path)
-        return []
+    if session is not None:
+        session.errors.pop(root_path, None)
 
     folders = []
+    failed = False
     subdirs = [name for name, folder in entries if folder]
     if session is not None:
         session.found(len(subdirs))
@@ -656,7 +702,8 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
     def check(name):
         if session is not None and session.cancelled:
             return None
-        return _is_data_folder(os.path.join(root_path, name))
+        return _with_retry(lambda: _is_data_folder(os.path.join(root_path, name), session),
+                           session)
 
     pool = (ThreadPoolExecutor(max_workers=min(LOT_LOAD_WORKERS, len(subdirs)),
                                thread_name_prefix='lot-scan')
@@ -668,6 +715,14 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
             if session is not None:
                 session.check_cancelled()
                 session.checked(full_path)
+            if isinstance(file_info, OSError):
+                if isinstance(file_info, (FileNotFoundError, NotADirectoryError)):
+                    continue    # 그사이 지워졌다
+                failed = True   # 이 폴더 목록은 담지 않는다 (다음에 다시 확인한다)
+                report(full_path, file_info)
+                continue
+            if session is not None:
+                session.errors.pop(full_path, None)
             if file_info is None:
                 continue
 
@@ -697,9 +752,22 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
         f['index'] = i + 1  # 1-based
         f.pop('head', None)
 
-    if key is not None:
+    if key is not None and not failed:
         session.lots[key] = _copy_lots(folders)
     return folders
+
+
+def _with_retry(read, session=None):
+    """read()를 부른다. 폴더 없음이 아닌 OSError면 잠깐 뒤 한 번 더. 그래도 실패하면 예외를 돌려준다."""
+    for attempt in (0, 1):
+        try:
+            return read()
+        except (FileNotFoundError, NotADirectoryError) as e:
+            return e
+        except OSError as e:
+            if attempt or (session is not None and session.cancelled):
+                return e
+            time.sleep(FOLDER_RETRY_DELAY)
 
 
 # ──────────────────────────────────────────────
@@ -895,7 +963,12 @@ def batch_load(root_path: str,
           'method': 'X', 'state': 'COMPLETED', 'valid': True,
           'value': 2976.074, 'value_valid': True}, ...]
     """
-    lots = scan_lot_folders(root_path, session)
+    scan_failures = []
+    lots = scan_lot_folders(root_path, session, scan_failures)
+    # 확인하지 못한 Lot 폴더는 결과에서 빠졌을 수 있다. 조용히 넘기면 정상처럼 보인다
+    for path, message in scan_failures:
+        if errors is not None:
+            errors.append(folder_check_warning(path, message))
     if not lots:
         return []
 

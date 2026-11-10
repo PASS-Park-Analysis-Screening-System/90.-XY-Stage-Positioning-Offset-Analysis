@@ -18,7 +18,7 @@ import math
 import logging
 import traceback
 import collections
-from core.csv_loader import (scan_lot_folders, batch_load, get_scan_summary, is_dir, list_dir,
+from core.csv_loader import (scan_lot_folders, batch_load, is_dir, list_dir,
                              session_key, ScanCancelled)
 from core import (compute_statistics, compute_trend,
                       detect_outliers_by_axis, compute_repeatability,
@@ -119,7 +119,8 @@ def build_recipe(path: str, name: str = None, session=None):
         rounds = [dict(r) for r in session.rounds[key]]
     else:
         rounds = _find_rounds(path, session)
-        if key is not None:
+        # 확인하지 못한 Lot 폴더가 있으면 담지 않는다 (로드할 때 다시 확인한다)
+        if key is not None and not session.failed_under(path):
             session.rounds[key] = [dict(r) for r in rounds]
     name = name if name is not None else os.path.basename(os.path.normpath(path))
 

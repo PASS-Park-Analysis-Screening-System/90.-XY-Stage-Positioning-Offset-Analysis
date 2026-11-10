@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core import csv_loader, recipe_scanner  # noqa: E402
 from core.csv_loader import ScanSession  # noqa: E402
-from core.workflow_map import compute_prefill, describe_folder  # noqa: E402
+from core.workflow_map import describe_folder  # noqa: E402
 
 SPEC_DEV = {'Vision Pattern': {'spec_range': 2.0, 'spec_stddev': 1.0}}
 SPECS = ['Vision Pattern', 'In-Die Align', 'LLC Translation', 'Global Align']
@@ -149,9 +149,9 @@ def count_folder_checks(monkeypatch):
     calls = []
     real = csv_loader._is_data_folder
 
-    def counting(path):
+    def counting(path, *args):
         calls.append(os.path.normcase(os.path.normpath(path)))
-        return real(path)
+        return real(path, *args)
 
     monkeypatch.setattr(csv_loader, '_is_data_folder', counting)
     return calls
@@ -322,10 +322,10 @@ def window(app, monkeypatch):
     monkeypatch.setattr(win, '_save_settings', lambda: None)
     monkeypatch.setattr(controller, 'add_recent_folder', lambda s, _f: s)
     yield win
-    for thread in (win._scan_thread, win._loader_thread):
-        if thread is not None and hasattr(thread, 'cancel') and thread.isRunning():
+    for thread in win._background_threads():     # 중지했지만 아직 끝나지 않은 스레드 포함
+        if hasattr(thread, 'cancel'):
             thread.cancel()
-            thread.wait(10000)
+        thread.wait(10000)
     win._loader_thread = None
     win.deleteLater()
     app.processEvents()
@@ -444,6 +444,8 @@ def test_cancel_during_load_restores_previous_results(app, window, tmp_path, mon
     _wait_for(app, lambda: window._loader_thread is None)
 
     assert window.recipe_results is results and window.recipes is recipes
+    assert window.folder_path != str(new_root)     # 중지한 로드는 다음 자동 스캔 대상을 바꾸지 않는다
+    assert window.settings.get('recent_folders', []) == []
     assert [b.text() for b in window.step_buttons] == ['Step 1: Vision Pattern']
     assert window.card_x.badge.text() == badge
     assert window.btn_scan.isEnabled()
@@ -504,6 +506,8 @@ def test_workflow_dialog_opens_immediately_and_checks_in_background(app, window,
     assert seen['status'].startswith('✅ 회차 2개')
     assert slow_fs['main_calls'] == []
     assert seen['reads_after_ok'] == seen['reads_before_ok']     # 확인 버튼은 다시 읽지 않는다
+    _wait_for(app, lambda: bool(fake_loader))      # Recipe 만들기도 스캔 스레드에서 한다
+    assert slow_fs['main_calls'] == []
     recipes = fake_loader[-1].recipes
     assert [r['lot_count'] for r in recipes[0]['rounds']] == [3, 3]
     assert len(reads) == len(seen['reads_before_ok']) + 1        # Recipe는 세션에서 꺼낸다
@@ -587,3 +591,263 @@ def test_find_tiffs_for_row_matches_site_then_number(tmp_path):
     assert message == '' and folder == str(lot)
     assert matched == [os.path.normpath(str(lot / 'Sample22_0001_X001_Y000.tiff'))]
     assert find_tiffs_for_row('', 'x', 'y') == ([], '', 'TIFF 탐색 실패: round_path 없음')
+
+
+# ── 리뷰 반영: 네트워크 일시 오류, 대화상자 확인 순서, 실패 재확인, 닫기, 늦은 결과 ────────
+
+def _flaky_folder_check(monkeypatch, target, failures):
+    """target Lot 폴더 판별이 처음 failures번 OSError를 낸다 (SMB 일시 오류 흉내)."""
+    real = csv_loader._is_data_folder
+    calls = {'n': 0}
+
+    def flaky(path, *args):
+        if os.path.basename(path) == target:
+            calls['n'] += 1
+            if calls['n'] <= failures:
+                raise OSError(64, '지정된 네트워크 이름을 더 이상 사용할 수 없습니다')
+        return real(path, *args)
+
+    monkeypatch.setattr(csv_loader, '_is_data_folder', flaky)
+    monkeypatch.setattr(csv_loader, 'FOLDER_RETRY_DELAY', 0)
+    return calls
+
+
+def _eleven_lots(root):
+    for k in range(11):
+        _write_lot(root / f'Sample{k:02d}', repeat=k + 1, start=f'{10 + k:02d}:00:00')
+    return root
+
+
+def test_transient_network_error_is_retried_and_keeps_every_lot(tmp_path, monkeypatch):
+    root = _eleven_lots(tmp_path / 'run')
+    calls = _flaky_folder_check(monkeypatch, 'Sample05', failures=1)
+    session = ScanSession()
+
+    lots = csv_loader.scan_lot_folders(str(root), session)
+
+    assert calls['n'] == 2 and len(lots) == 11
+    assert session.errors == {}
+    assert csv_loader.session_key(str(root)) in session.lots      # 성공했으니 담는다
+    info = {}
+    csv_loader.batch_load(str(root), info=info, session=session)
+    assert info['first_repeat_excluded'] == 'Sample00'           # 11개라 첫 리핏 제외가 켜진다
+
+
+def test_persistent_network_error_is_reported_and_not_cached(tmp_path, monkeypatch):
+    from core.checklist import analysis_warnings
+    root = _eleven_lots(tmp_path / 'vp')
+    _flaky_folder_check(monkeypatch, 'Sample05', failures=99)
+    session = ScanSession()
+
+    lots = csv_loader.scan_lot_folders(str(root), session)
+    assert len(lots) == 10
+    failed_path = os.path.join(str(root), 'Sample05')
+    assert list(session.errors) == [failed_path]
+    assert csv_loader.session_key(str(root)) not in session.lots   # 다음에 다시 확인한다
+    ok, text = describe_folder(str(root), session)
+    assert ok and '⚠ Lot 폴더 1개 확인 실패' in text
+    assert session.status == {} and session.rounds == {}
+
+    errors = []
+    csv_loader.batch_load(str(root), errors=errors, session=session)
+    assert errors == [csv_loader.folder_check_warning(failed_path, errors[0].split('(', 1)[1][:-1])]
+    assert 'Lot 폴더 확인 실패' in errors[0] and '결과에서 빠졌을 수 있음' in errors[0]
+    result = recipe_scanner.load_all_recipes(
+        '', recipes=[recipe_scanner.build_recipe(str(root), 'Vision Pattern', session=session)],
+        session=session)[0]
+    assert any('Lot 폴더 확인 실패' in w for w in analysis_warnings(result))   # 카드·내보내기로 간다
+
+
+def test_failed_folder_check_is_retried_by_the_next_check(tmp_path):
+    session = ScanSession()
+    folder = tmp_path / 'later'
+    assert describe_folder(str(folder), session) == (False, '❌ 폴더 없음')
+    assert session.status == {} and session.dirs == {}         # 실패는 담지 않는다
+    _write_lot(folder / 'Sample1', repeat=2)
+    assert describe_folder(str(folder), session) == (True, '✅ Lot 1개 · (root)')
+
+
+def _dialog(app, session, monkeypatch, describe=None):
+    import ui.dialogs.workflow_folder_dialog as module
+    from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
+    if describe is not None:
+        monkeypatch.setattr(module, 'describe_folder', describe)
+    empty = {key: {'path': '', 'enabled': False, 'note': ''} for key in SPECS}
+    return WorkflowFolderDialog(None, SPECS, '', {}, '', session=session, prefill=empty)
+
+
+def test_dialog_skips_and_cancels_stale_checks(app, tmp_path, monkeypatch):
+    from core.csv_loader import ScanCancelled
+    seen, release, started = [], threading.Event(), threading.Event()
+    blocker, typed, final = str(tmp_path / 'C'), str(tmp_path / 'A'), str(tmp_path / 'B')
+
+    def describe(path, session):
+        seen.append(path)
+        if path == blocker:          # 작업 스레드를 잡아 둔다 (느린 공유 폴더 루트)
+            started.set()
+            release.wait(5)
+        if path == typed:
+            raise AssertionError('바뀐 경로를 확인했다')
+        if path == final + '_slow':
+            started.set()
+            while not session.cancelled:     # 확인 중에 사용자가 경로를 바꾼다
+                time.sleep(0.01)
+            raise ScanCancelled()
+        return True, f'✅ {os.path.basename(path)}'
+
+    dlg = _dialog(app, ScanSession(), monkeypatch, describe)
+    try:
+        ida = dlg._rows['In-Die Align'][1]
+        ida.setText(blocker)
+        dlg._update_status('In-Die Align')
+        assert started.wait(5)
+        vp = dlg._rows['Vision Pattern'][1]
+        vp.setText(typed)
+        dlg._update_status('Vision Pattern')     # 대기열에 들어갔지만 아직 돌지 않았다
+        vp.setText(final)
+        dlg._update_status('Vision Pattern')
+        release.set()
+        _wait_for(app, lambda: not dlg._pending)
+        assert typed not in seen                 # 바뀐 경로의 확인은 건너뛴다
+        assert dlg._rows['Vision Pattern'][2].text() == '✅ B'
+
+        # 진행 중인 확인은 경로를 바꾸면 멈춘다 (다음 확인을 막지 않는다)
+        started.clear()
+        vp.setText(final + '_slow')
+        dlg._update_status('Vision Pattern')
+        assert started.wait(5)
+        vp.setText(final + '_next')
+        dlg._update_status('Vision Pattern')
+        _wait_for(app, lambda: not dlg._pending)
+        assert dlg._rows['Vision Pattern'][2].text() == '✅ B_next'
+    finally:
+        release.set()
+        dlg.done(0)
+        dlg.deleteLater()
+
+
+def test_dialog_rechecks_a_failed_path_when_reentered_or_on_recheck(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialogButtonBox
+    session = ScanSession()
+    dlg = _dialog(app, session, monkeypatch)
+    folder = tmp_path / 'vp'
+    try:
+        check, edit, status, _timer = dlg._rows['Vision Pattern']
+        edit.setText(str(folder))
+        dlg._update_status('Vision Pattern')
+        _wait_for(app, lambda: not dlg._pending)
+        assert status.text() == '❌ 폴더 없음'
+        check.setChecked(True)
+        assert not dlg.buttons.button(QDialogButtonBox.Ok).isEnabled()
+
+        _write_lot(folder / 'Sample1', repeat=2)
+        edit.setText('')                     # 같은 경로를 다시 입력한다
+        edit.setText(str(folder))
+        dlg._update_status('Vision Pattern')
+        _wait_for(app, lambda: not dlg._pending)
+        assert status.text() == '✅ Lot 1개 · (root)'
+        assert dlg.buttons.button(QDialogButtonBox.Ok).isEnabled()
+
+        # '다시 확인'은 세션 결과를 지우고 다시 읽는다
+        _write_lot(folder / 'Sample2', repeat=3)
+        dlg.recheck_btn.click()
+        _wait_for(app, lambda: not dlg._pending)
+        assert status.text() == '✅ Lot 2개 · (root)'
+    finally:
+        dlg.done(0)
+        dlg.deleteLater()
+
+
+class _StuckThread:
+    """네트워크 읽기에 묶여 끝나지 않는 스레드."""
+
+    def __init__(self):
+        self.cancelled = False
+        self.waits = []
+
+    def isRunning(self):
+        return True
+
+    def cancel(self):
+        self.cancelled = True
+
+    def wait(self, ms=None):
+        self.waits.append(ms)
+        return False
+
+    def terminate(self):
+        raise AssertionError('terminate()를 부르면 안 된다')
+
+
+def test_close_cancels_and_waits_briefly_without_terminate(app, window):
+    from PySide6.QtGui import QCloseEvent
+    scan, loader = _StuckThread(), _StuckThread()
+    window._scan_thread, window._loader_thread = scan, loader
+    try:
+        t0 = time.perf_counter()
+        window.closeEvent(QCloseEvent())
+        assert time.perf_counter() - t0 < 3
+        assert scan.cancelled and loader.cancelled
+        assert all(ms is not None and ms <= 1500 for ms in scan.waits + loader.waits)
+        assert window.background_busy()          # main()이 프로세스를 끝낸다
+    finally:
+        window._scan_thread = window._loader_thread = None
+
+
+def test_late_folder_check_result_after_cancel_is_ignored(app, window, fake_loader, tmp_path,
+                                                         monkeypatch):
+    import ui.controllers.scan_controller as controller
+    release = threading.Event()
+
+    def slow_detect(folder, spec_keys, remembered, session):
+        release.wait(5)              # 중지에도 끝까지 읽어 결과를 낸다
+        return {'action': 'load', 'recipes': [{'name': 'R', 'short_name': 'R', 'index': 1,
+                                               'rounds': []}]}
+
+    monkeypatch.setattr(controller, 'detect_scan_target', slow_detect)
+    window.path_edit.setText(str(tmp_path))
+    window._scan_folder()
+    thread = window._scan_thread
+    assert window._cancel_shortcut.isEnabled()
+
+    window._cancel_scan()
+    assert window.btn_scan.isEnabled() and window._scan_thread is None     # 바로 되살린다
+    assert not window._cancel_shortcut.isEnabled()
+    release.set()
+    _wait_for(app, lambda: not thread.isRunning())
+    _wait_for(app, lambda: thread not in window._retired())
+
+    assert fake_loader == []                     # 늦은 결과로 로드를 시작하지 않는다
+    assert window.recipes == []
+
+
+def test_done_signal_of_a_cancelled_session_takes_the_cancelled_path(app, window, fake_loader,
+                                                                    tmp_path, monkeypatch):
+    import ui.controllers.scan_controller as controller
+    monkeypatch.setattr(controller.FolderScanThread, 'start', lambda self: self.run())
+
+    def detect_then_cancelled(folder, spec_keys, remembered, session):
+        session.cancel()             # 다 읽은 뒤 중지 요청이 들어왔다
+        return {'action': 'load', 'recipes': [{'name': 'R', 'short_name': 'R', 'index': 1,
+                                               'rounds': []}]}
+
+    monkeypatch.setattr(controller, 'detect_scan_target', detect_then_cancelled)
+    window.path_edit.setText(str(tmp_path))
+    window._scan_folder()
+
+    assert fake_loader == []
+    assert '중지' in window.statusBar().currentMessage()
+
+
+def test_late_tiff_result_from_a_previous_scan_is_dropped(app, window, tmp_path):
+    from ui.controllers.tiff_controller import TiffLoadThread
+    window.last_tiff_folder = ''
+    thread = TiffLoadThread('', 'Lot', 'Site')
+    thread.generation = window._scan_generation
+    window._tiff_thread = thread
+    window._next_generation()            # 그사이 다시 스캔했다
+    window._on_tiff_loaded({'lot_name': 'Lot', 'site_id': 'Site', 'matched': ['x.tiff'],
+                            'lot_folder': str(tmp_path), 'message': '', 'error': '',
+                            'results': [], 'failures': [], 'no_pspylib': False})
+    assert window.last_tiff_folder == ''
+    assert 'TIFF 결과를 버립니다' in _logged(window)

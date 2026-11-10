@@ -95,6 +95,7 @@ class UIBuilderMixin:
         top.addWidget(self.btn_cancel_scan)
         self._cancel_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._cancel_shortcut.activated.connect(self._cancel_scan)
+        self._cancel_shortcut.setEnabled(False)    # 진행 중일 때만 켠다
 
         # Wafer 크기 선택 (200mm / 300mm)
         top.addSpacing(16)

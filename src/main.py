@@ -12,6 +12,7 @@ import sys
 import math
 import subprocess
 import threading
+import time
 from datetime import datetime
 from functools import partial
 
@@ -133,35 +134,34 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
     # ──────────────────────────────────────────────
     def closeEvent(self, event):
         self._save_settings()
-        # 실행 중인 폴더 확인 스레드는 중지시키고 기다린다 (다음 폴더에서 멈춘다)
-        scan = getattr(self, '_scan_thread', None)
-        if scan is not None and scan.isRunning():
-            scan.cancel()
-            if not scan.wait(3000):
-                scan.terminate()
-                scan.wait()
-        tiff = getattr(self, '_tiff_thread', None)
-        if tiff is not None and tiff.isRunning() and not tiff.wait(3000):
-            tiff.terminate()
-            tiff.wait()
-        # 실행 중인 백그라운드 로드 스레드 정리 —
-        # 'QThread: Destroyed while thread is still running' 크래시 방지.
-        thread = getattr(self, '_loader_thread', None)
-        if thread is not None and thread.isRunning():
+        # 진행 중인 폴더 확인·로드·TIFF 읽기를 모두 중지시키고 잠깐만 기다린다.
+        # 네트워크 읽기 하나가 끝나야 멈추므로 오래 기다리지 않는다. 강제 종료(terminate)는
+        # 하지 않는다 — 파일 핸들을 쥔 채 죽을 수 있다. 남은 스레드는 main()이 정리한다.
+        threads = self._background_threads()
+        for thread in threads:
             if hasattr(thread, 'cancel'):
-                thread.cancel()     # Lot 사이에서 멈춘다
-            thread.quit()
-            if not thread.wait(3000):
-                # run()이 이벤트 루프 없이 CPU/IO 작업 중이라 quit()에 반응하지 않으면
-                # 종료 시점이므로 강제 종료로 destroy-while-running을 막는다.
-                thread.terminate()
-                thread.wait()
+                thread.cancel()
+        deadline = time.monotonic() + 1.5
+        for thread in threads:
+            thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))
         import matplotlib.pyplot as plt
         plt.close('all')
         event.accept()
 
+    def _background_threads(self):
+        """실행 중인 작업 스레드 (폴더 확인, 로드, TIFF, 중지했지만 아직 끝나지 않은 것)."""
+        candidates = [getattr(self, name, None)
+                      for name in ('_scan_thread', '_loader_thread', '_tiff_thread')]
+        candidates += list(self.__dict__.get('_retired_threads') or [])
+        return [t for t in candidates
+                if t is not None and hasattr(t, 'isRunning') and t.isRunning()]
+
+    def background_busy(self) -> bool:
+        return bool(self._background_threads())
+
     def _save_settings(self):
-        self.settings['last_folder'] = self.path_edit.text()
+        # 지난 폴더는 마지막으로 로드를 마친 폴더다 (중지한 로드나 입력만 한 경로가 아니다)
+        self.settings['last_folder'] = self.folder_path
         geom = self.geometry()
         self.settings['window_geometry'] = f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
         save_settings(self.settings)
@@ -236,7 +236,18 @@ def main():
     app.setStyleSheet(DARK_STYLE)
     window = DataAnalyzerApp()
     window.show()
-    sys.exit(app.exec())
+    code = app.exec()
+    # 네트워크 읽기에 묶인 작업 스레드가 남으면 창 없이 프로세스가 남는다 (설정은 저장했다)
+    if window.background_busy() or _worker_threads_alive():
+        os._exit(code)
+    sys.exit(code)
+
+
+def _worker_threads_alive() -> bool:
+    """끝나지 않은 Python 작업 스레드 (대화상자 확인·Lot 병렬 읽기). 있으면 종료가 기다린다."""
+    main_thread = threading.main_thread()
+    return any(t is not main_thread and not t.daemon and t.is_alive()
+               for t in threading.enumerate())
 
 
 if __name__ == '__main__':

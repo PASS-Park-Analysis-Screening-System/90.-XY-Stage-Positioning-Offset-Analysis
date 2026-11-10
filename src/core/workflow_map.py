@@ -50,7 +50,11 @@ def describe_folder(path: str, cache: dict = None):
         return store[key]
     session = cache if isinstance(cache, ScanSession) else None
     status = _read_folder_status(path, session)
-    if store is not None:
+    failed = session.failed_under(path) if session is not None else []
+    if failed and status[0]:
+        status = (True, f'{status[1]} · ⚠ Lot 폴더 {len(failed)}개 확인 실패')
+    # 실패·일부 실패는 담지 않는다. 일시 오류일 수 있어 다시 입력하거나 확인하면 다시 읽는다
+    if store is not None and status[0] and not failed:
         store[key] = status
     return status
 
@@ -58,7 +62,8 @@ def describe_folder(path: str, cache: dict = None):
 def cached_status(path: str, cache):
     """화면 스레드용: 파일을 읽지 않고 알 수 있는 상태. 폴더를 읽어야 하면 None.
 
-    빈 경로·상대 경로는 바로 답하고, 이미 확인한 폴더는 cache에서 돌려준다.
+    빈 경로·상대 경로는 바로 답하고, 이미 확인한 폴더는 cache에서 돌려준다
+    (cache에는 사용 가능한 결과만 있다. 실패는 다시 확인한다).
     """
     text = clean_path(path)
     if not text or not os.path.isabs(text):

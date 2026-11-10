@@ -593,6 +593,11 @@ def flow(window, monkeypatch):
     return state
 
 
+def _finish_load(window):
+    """가짜 로더가 끝난 것처럼 완료 슬롯을 부른다 (설정은 이때 저장된다)."""
+    window._on_scan_complete([], [], 0.0)
+
+
 def test_mismatch_opens_dialog_and_loads_mapping(window, flow, tmp_path):
     root = tmp_path / 'root'
     lots = _make_lots(root / '20261101', range(1, 15))
@@ -610,6 +615,8 @@ def test_mismatch_opens_dialog_and_loads_mapping(window, flow, tmp_path):
     assert [(r['short_name'], r['source_path']) for r in thread.recipes] == [
         ('Vision Pattern', str(lots))]
     assert window.recipes == thread.recipes
+    assert 'workflow_folder_map' not in window.settings     # 로드가 끝나야 저장한다
+    _finish_load(window)
     assert window.settings['workflow_folder_map'] == {
         'Vision Pattern': {'path': str(lots), 'enabled': True}}
     assert flow['recent'] == []     # 공통 상위 폴더는 다시 스캔할 루트가 아니다
@@ -652,7 +659,10 @@ def test_matching_lowercase_folder_loads_with_exact_key(window, flow, tmp_path):
     thread = flow['threads'][-1]
     assert thread.folder == str(tmp_path)
     assert [r['short_name'] for r in thread.recipes] == ['Vision Pattern']
+    assert flow['recent'] == []          # 로드가 끝나야 최근 폴더에 넣는다
+    _finish_load(window)
     assert flow['recent'] == [str(tmp_path)]
+    assert window.folder_path == str(tmp_path)
 
 
 def test_workflow_button_opens_dialog_and_is_disabled_while_loading(window, flow, tmp_path):
@@ -776,6 +786,7 @@ def test_saved_map_merges_and_drops_unknown_specs(window, flow, tmp_path):
     window._open_workflow_dialog()
 
     assert flow['dialogs'][0]['remembered']['Vision Pattern']['path'] == 'D:/old_vp'
+    _finish_load(window)
     assert window.settings['workflow_folder_map'] == {
         'Vision Pattern': {'path': str(vp), 'enabled': True}}
 
@@ -829,6 +840,7 @@ def test_scan_with_real_dialog_logic(window, flow, tmp_path, monkeypatch):
     assert thread.folder == str(root)
     assert [(r['short_name'], r['rounds'][0]['lot_count']) for r in thread.recipes] == [
         ('Vision Pattern', 14)]
+    _finish_load(window)
     assert window.settings['workflow_folder_map'] == {
         'Vision Pattern': {'path': str(root), 'enabled': True}}
 

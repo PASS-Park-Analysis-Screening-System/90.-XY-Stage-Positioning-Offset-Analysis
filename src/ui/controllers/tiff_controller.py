@@ -1,11 +1,9 @@
-from PySide6.QtWidgets import QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QThread, Signal
 import os
 import re
 import traceback
 from core.tiff_loader import load_tiff
-from charts import MultiTiffViewerWidget
-from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
 def find_tiffs_for_row(round_path, lot_name, site_id):
@@ -107,6 +105,8 @@ class TiffMixin:
         # 폴더 목록과 TIFF 읽기는 작업 스레드가 한다 (네트워크 폴더에서 화면이 멈추지 않게)
         self.statusBar().showMessage(f"TIFF 찾는 중... {lot_name}/{site_id}")
         thread = TiffLoadThread(round_path, lot_name, site_id)
+        # 읽는 사이 다시 스캔하면 결과가 바뀐다. 그때의 세대를 붙여 늦은 결과를 버린다
+        thread.generation = getattr(self, '_scan_generation', 0)
         thread.done.connect(self._on_tiff_loaded)
         self._tiff_thread = thread
         thread.start()
@@ -115,6 +115,11 @@ class TiffMixin:
         thread, self._tiff_thread = self._tiff_thread, None
         if thread is not None:
             thread.wait(2000)
+            if thread.generation != getattr(self, '_scan_generation', 0):
+                self.logger.info(f"TIFF 결과를 버립니다 (그사이 다시 스캔함): "
+                                 f"{out['lot_name']}/{out['site_id']}")
+                self.statusBar().showMessage("TIFF 결과를 버렸습니다 — 다시 스캔했습니다")
+                return
         lot_name, site_id = out['lot_name'], out['site_id']
         if out['message']:
             self.logger.warn(out['message'])

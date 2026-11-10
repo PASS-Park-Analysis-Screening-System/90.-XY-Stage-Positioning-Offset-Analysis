@@ -6,9 +6,13 @@ workflow_folder_dialog.py — Workflow(Spec 이름)별 데이터 폴더 지정 �
 
 폴더 확인(네트워크 폴더는 수십 초)은 화면 스레드 밖의 작업 스레드 하나가 순서대로 한다.
 대화상자는 바로 열리고, 확인 중인 행은 '확인 중…'으로 보였다가 결과가 오면 바뀐다.
-결과는 ScanSession에 남아 확인 버튼과 이후 로드가 다시 읽지 않는다.
+사용 가능한 결과는 ScanSession에 남아 확인 버튼과 이후 로드가 다시 읽지 않는다.
+실패(폴더 없음, 읽기 오류)는 세션에 담지 않고 행에만 둔다. 경로를 다시 입력하거나
+'다시 확인'을 누르면 작업 스레드에서 다시 읽는다. 확인 가능 여부는 행의 결과로만 정한다
+(화면 스레드는 폴더를 읽지 않는다).
 """
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -19,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from core.csv_loader import ScanCancelled, ScanSession
 from core.workflow_map import (NOTE_REMEMBERED, cached_status, clean_path, compute_prefill,
-                               describe_folder, duplicate_folders, validate_rows)
+                               describe_folder, duplicate_folders, path_key, validate_rows)
 from ui.theme import ACCENT, BG, BG3, FG, FG2, GREEN, ORANGE, RED
 
 CHECKING = '확인 중…'
@@ -44,7 +48,7 @@ class WorkflowFolderDialog(QDialog):
         self.setStyleSheet(f"background: {BG}; color: {FG};")
         # 폴더 확인 결과는 세션에 남는다 (확인 버튼과 이후 로드가 다시 읽지 않는다)
         self._session = session if session is not None else ScanSession()
-        self._checker = self._session.fork()     # 대화상자를 닫으면 이 확인만 멈춘다
+        self._prefill_fork = self._session.fork()   # 대화상자를 닫으면 이 확인만 멈춘다
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='workflow-check')
         self._bridge = _CheckBridge(self)
         self._bridge.checked.connect(self._on_checked)
@@ -53,9 +57,11 @@ class WorkflowFolderDialog(QDialog):
         self._rows = {}     # spec_key → (checkbox, path_edit, status_label, timer)
         self._notes = {}    # spec_key → 초기값 안내 문구 (경로를 바꾸면 지운다)
         self._pending = {}  # spec_key → 결과를 기다리는 경로
-        self._queued = set()            # 작업 스레드에 넘긴 (spec_key, 경로)
+        self._row_status = {}   # spec_key → (경로, (ok, text)) — 행의 마지막 확인 결과
+        self._row_checks = {}   # spec_key → (경로, 세션 사본) — 작업 스레드에 넘긴 확인
         self._touched = set()           # 사용자가 바꾼 행 (늦게 온 초기값이 덮지 않는다)
         self._accept_requested = False  # 확인을 눌렀는데 확인 중인 행이 있다
+        self._closed = False            # 닫힌 뒤 늦게 온 결과는 버린다
         self._prefill_pending = prefill is None
         if prefill is None:
             prefill = self._provisional_prefill(remembered)
@@ -81,26 +87,30 @@ class WorkflowFolderDialog(QDialog):
 
     def _run_prefill(self, remembered):
         try:
-            prefill = compute_prefill(self.spec_keys, self.root, remembered, self._checker)
+            prefill = compute_prefill(self.spec_keys, self.root, remembered, self._prefill_fork)
         except ScanCancelled:
             return
         except Exception:
             prefill = None
         self._emit(self._bridge.prefilled, prefill)
 
-    def _run_check(self, key, path):
-        session = self._checker
-        session.done = session.total = 0
+    def _run_check(self, key, path, session):
+        """[작업 스레드] 행 하나를 확인한다. 그사이 경로가 바뀌었거나 중지했으면 건너뛴다.
+
+        결과 None은 '확인하지 않음'이다 (화면 스레드가 대기 목록에서 지운다).
+        """
+        if self._pending.get(key) != path or session.cancelled:
+            self._emit(self._bridge.checked, key, path, None)
+            return
         session.progress = lambda done, total, _p: self._emit(
             self._bridge.progress, key, path, f'{CHECKING} {done}/{total}')
         try:
             status = describe_folder(path, session)
         except ScanCancelled:
-            return
+            status = None
         except Exception as e:
+            # 행의 결과로 남긴다. 확인 가능 여부는 이 결과로 정하므로 화면 스레드가 다시 읽지 않는다
             status = (False, f'❌ 확인 실패 ({type(e).__name__})')
-        finally:
-            session.progress = None
         self._emit(self._bridge.checked, key, path, status)
 
     @staticmethod
@@ -111,8 +121,29 @@ class WorkflowFolderDialog(QDialog):
             pass    # 대화상자가 이미 닫혀 지워졌다
 
     def _stop_checks(self, *_args):
-        self._checker.cancel()
+        self._closed = True
+        self._prefill_fork.cancel()
+        for _path, fork in self._row_checks.values():
+            fork.cancel()
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def _cancel_row_check(self, key, keep_path=None):
+        """행의 진행 중인 확인을 멈춘다 (경로를 바꾸면 이전 경로 확인이 작업 스레드를 막지 않게)."""
+        entry = self._row_checks.get(key)
+        if entry is not None and entry[0] != keep_path:
+            entry[1].cancel()
+            del self._row_checks[key]
+
+    def _submit_check(self, key, path):
+        if self._closed:
+            return
+        entry = self._row_checks.get(key)
+        if entry is not None and entry[0] == path and not entry[1].cancelled:
+            return      # 이미 이 경로를 확인하고 있다
+        self._cancel_row_check(key)
+        fork = self._session.fork()
+        self._row_checks[key] = (path, fork)
+        self._pool.submit(self._run_check, key, path, fork)
 
     # ── 화면 ────────────────────────────────────────────
 
@@ -188,6 +219,10 @@ class WorkflowFolderDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.button(QDialogButtonBox.Ok).setText("분석 시작")
         self.buttons.button(QDialogButtonBox.Cancel).setText("취소")
+        # 실패한 행(네트워크 일시 오류 등)이나 그사이 바뀐 폴더를 다시 읽는다
+        self.recheck_btn = self.buttons.addButton("다시 확인", QDialogButtonBox.ActionRole)
+        self.recheck_btn.setToolTip("모든 행의 폴더를 다시 읽습니다 (이전 확인 결과를 지웁니다)")
+        self.recheck_btn.clicked.connect(self._recheck_all)
         self.buttons.accepted.connect(self._accept_if_valid)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
@@ -218,6 +253,8 @@ class WorkflowFolderDialog(QDialog):
         self._notes[key] = ''
         self._touched.add(key)
         path = clean_path(self._rows[key][1].text())
+        self._row_status.pop(key, None)
+        self._cancel_row_check(key, keep_path=path)    # 입력 중 경로의 확인이 줄을 막지 않게
         if cached_status(path, self._session) is not None:
             timer.stop()
             self._update_status(key)
@@ -250,32 +287,54 @@ class WorkflowFolderDialog(QDialog):
             f"color: {GREEN if ok else (RED if clean_path(edit.text()) else FG2)};")
 
     def _update_status(self, key, refresh=True):
-        """행 상태를 보인다. 아직 확인하지 않은 폴더는 작업 스레드에 넘기고 '확인 중…'."""
+        """행 상태를 보인다. 확인한 적 없거나 실패했던 폴더는 작업 스레드에 넘기고 '확인 중…'."""
         path = clean_path(self._rows[key][1].text())
         known = cached_status(path, self._session)
         if known is None:
+            self._row_status.pop(key, None)
             self._pending[key] = path
             self._show_checking(key)
-            if (key, path) not in self._queued:
-                self._queued.add((key, path))
-                self._pool.submit(self._run_check, key, path)
+            self._submit_check(key, path)
         else:
             self._pending.pop(key, None)
+            self._row_status[key] = (path, known)
             self._show_status(key, *known)
         if refresh:
             self._refresh_ok()
+
+    def _recheck_all(self):
+        """'다시 확인' — 행의 폴더에 대한 세션 결과를 지우고 작업 스레드에서 다시 읽는다."""
+        if self._prefill_pending:
+            return
+        for key, (_check, edit, _status, timer) in self._rows.items():
+            timer.stop()
+            path = clean_path(edit.text())
+            if path and os.path.isabs(path):
+                self._cancel_row_check(key)
+                self._session.forget(path)
+            self._update_status(key, refresh=False)
+        self._refresh_ok()
 
     def _on_check_progress(self, key, path, text):
         if self._pending.get(key) == path:
             self._show_checking(key, text)
 
     def _on_checked(self, key, path, status):
-        self._queued.discard((key, path))
+        if self._closed:
+            return
+        entry = self._row_checks.get(key)
+        if entry is not None and entry[0] == path:
+            del self._row_checks[key]
         if self._pending.get(key) != path:
-            return      # 그사이 경로를 바꿨다. 결과는 세션에 남아 다음에 쓴다
+            return      # 그사이 경로를 바꿨다. 사용 가능한 결과는 세션에 남아 다음에 쓴다
         if self._rows[key][3].isActive():
-            return      # 같은 경로를 다시 입력하는 중이다. 입력이 멈추면 세션에서 바로 읽는다
+            return      # 같은 경로를 다시 입력하는 중이다. 입력이 멈추면 다시 본다
+        if status is None:
+            # 건너뛰었거나 중지됐는데 아직 이 경로를 기다린다 (경쟁) — 다시 넘긴다
+            self._update_status(key)
+            return
         self._pending.pop(key, None)
+        self._row_status[key] = (path, status)
         self._show_status(key, *status)
         self._refresh_ok()
         self._accept_if_requested()
@@ -302,18 +361,28 @@ class WorkflowFolderDialog(QDialog):
                 f"⚠ 같은 폴더를 여러 Workflow에 지정했습니다: {', '.join(keys)}"
                 for keys in duplicate_folders(rows)))
             return
-        # 체크한 행은 모두 확인했으므로 세션에서 읽기만 한다 (파일을 다시 읽지 않는다)
-        ok, reasons, warnings = validate_rows(rows, self._session)
+        # 체크한 행은 모두 결과가 있으므로 그 결과로만 정한다 (파일을 다시 읽지 않는다)
+        ok, reasons, warnings = validate_rows(rows, self._known_statuses())
         ok_btn.setEnabled(ok)
         self.block_label.setText('' if ok else '확인할 수 없습니다: ' + ' / '.join(reasons))
         self.warn_label.setText(' / '.join(f'⚠ {w}' for w in warnings))
 
-    def _accept_if_valid(self):
-        """확인한 결과를 그대로 쓴다. 입력 대기 중이거나 확인 중인 행만 마저 확인한다."""
-        for key, (_check, _edit, _status, timer) in self._rows.items():
+    def _known_statuses(self):
+        """행 결과 {경로 키: (ok, text)} — validate_rows가 폴더를 읽지 않게 넘긴다."""
+        return {path_key(path): status for path, status in self._row_status.values() if path}
+
+    def _accept_if_valid(self, recheck=True):
+        """확인한 결과를 그대로 쓴다. 입력 대기 중·확인 중인 행과, 체크했는데 실패했던 행만
+        작업 스레드에서 다시 확인한다 (일시 오류였을 수 있다). 끝나면 다시 판단한다."""
+        for key, (check, edit, _status, timer) in self._rows.items():
             if timer.isActive():
                 timer.stop()
                 self._update_status(key, refresh=False)
+            elif recheck and check.isChecked() and key not in self._pending:
+                path = clean_path(edit.text())
+                known = self._row_status.get(key)
+                if path and os.path.isabs(path) and known and not known[1][0]:
+                    self._update_status(key, refresh=False)
         self._refresh_ok()
         if self._prefill_pending or self._waiting_rows():
             self._accept_requested = True
@@ -324,11 +393,11 @@ class WorkflowFolderDialog(QDialog):
 
     def _accept_if_requested(self):
         if self._accept_requested and not (self._prefill_pending or self._waiting_rows()):
-            self._accept_if_valid()
+            self._accept_if_valid(recheck=False)
 
     def warnings(self):
         """막지 않는 경고 (예: 같은 폴더를 두 Workflow에 지정)."""
-        return validate_rows(self._rows_state(), self._session)[2]
+        return validate_rows(self._rows_state(), self._known_statuses())[2]
 
     def selected_mapping(self):
         """사용에 체크한 Workflow의 [(spec_key, path), ...] (Spec 순서)."""
