@@ -20,9 +20,9 @@ def _build_config():
     return mod
 
 
-def test_version_is_1_1_3():
-    assert APP_VERSION == '1.1.3'
-    assert APP_VERSION_LABEL == 'v1.1.3'
+def test_version_is_1_1_4():
+    assert APP_VERSION == '1.1.4'
+    assert APP_VERSION_LABEL == 'v1.1.4'
 
 
 def test_build_config_reads_the_same_version():

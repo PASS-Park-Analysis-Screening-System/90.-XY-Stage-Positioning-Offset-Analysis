@@ -185,6 +185,26 @@ def test_verify_build_fails_exe_with_private_settings(tmp_path, monkeypatch):
     assert verify_build.verify(str(exe)) == 0
 
 
+def test_verify_build_reads_onedir_internal_folder(tmp_path):
+    verify_build = _tool('verify_build')
+    exe = tmp_path / 'app.exe'
+    exe.write_bytes(b'')
+    internal = tmp_path / '_internal'
+    (internal / 'assets').mkdir(parents=True)
+    (internal / 'assets' / 'checklist_guide.png').write_bytes(b'png')
+    (internal / 'core').mkdir()
+    settings_file = internal / 'core' / 'settings.json'
+
+    settings_file.write_text(json.dumps({'last_folder': ''}), encoding='utf-8')
+    assert verify_build.verify(str(exe)) == 0
+
+    settings_file.write_text(json.dumps({'last_folder': 'Z:/x'}), encoding='utf-8')
+    assert verify_build.verify(str(exe)) == 1
+
+    (internal / 'assets' / 'checklist_guide.png').unlink()
+    assert verify_build.verify(str(exe)) == 1
+
+
 def test_migrate_preserves_values_without_touching_source(tmp_path):
     migrate = _tool('migrate_local_settings').migrate
     source = tmp_path / 'settings.json'
