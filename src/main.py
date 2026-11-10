@@ -9,6 +9,16 @@ Layout:
 
 import os
 import sys
+
+# 명령줄 모드(--llm-report)는 Qt를 불러오기 전에 처리한다. 창을 만들지 않고 끝난다
+if __name__ == '__main__':
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from core.cli import wants_cli as _wants_cli
+    if _wants_cli(sys.argv[1:]):
+        from core.cli import main as _cli_main
+        sys.exit(_cli_main())
+
+import json
 import math
 import subprocess
 import threading
@@ -262,6 +272,7 @@ def main():
     app.setStyleSheet(DARK_STYLE)
     window = DataAnalyzerApp()
     window.show()
+    report_launch_status('ready')
     code = app.exec()
     # 네트워크 읽기에 묶인 작업 스레드가 남으면 창 없이 프로세스가 남는다 (설정은 저장했다)
     # 이미지 이동량·스캐너 회전 분석 창의 QThread가 남은 채 Python이 끝나면 'Destroyed while thread is still running'으로 죽는다
@@ -269,6 +280,21 @@ def main():
             or rotation_threads_alive()):
         os._exit(code)
     sys.exit(code)
+
+
+def report_launch_status(event, **fields):
+    """PASS 런처 진행 표시: PASS_LAUNCH_STATUS_FILE이 있으면 JSONL 한 줄을 덧붙인다.
+
+    예: {"event": "ready"}. 런처가 없거나 쓰지 못해도 앱 실행에는 영향이 없다.
+    """
+    path = os.environ.get('PASS_LAUNCH_STATUS_FILE')
+    if not path:
+        return
+    try:
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'event': event, **fields}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
 
 
 def _worker_threads_alive() -> bool:
