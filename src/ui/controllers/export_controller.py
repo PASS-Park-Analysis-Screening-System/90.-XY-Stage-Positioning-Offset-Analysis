@@ -9,12 +9,14 @@ from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
 class ExportMixin:
+    # QFileDialog.getSaveFileName(parent, caption, dir, filter): 기본 파일 이름은 dir 자리에 준다.
+    # 5번째 인자는 선택 필터라 거기 이름을 넣으면 무시된다.
     def _export_csv(self):
         if not self.raw_data:
             QMessageBox.warning(self, "경고", "먼저 분석을 실행해주세요.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "CSV", "", "Text (*.txt);;CSV (*.csv)", "Analysis.txt")
+            self, "CSV", "Analysis.txt", "Text (*.txt);;CSV (*.csv)")
         if path:
             try:
                 export_combined_csv(self.raw_data, path)
@@ -29,7 +31,7 @@ class ExportMixin:
             QMessageBox.warning(self, "경고", "먼저 분석을 실행해주세요.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Excel", "", "Excel (*.xlsx)", "Report.xlsx")
+            self, "Excel", "Report.xlsx", "Excel (*.xlsx)")
         if path:
             try:
                 # 통계·트렌드는 분석 기준(21 Die)으로 고정한다. 화면의 Die 필터 선택과는
@@ -59,7 +61,7 @@ class ExportMixin:
             return
 
         path, _ = QFileDialog.getSaveFileName(
-            self, "Quality Report", "", "Excel (*.xlsx)", "QualityReport.xlsx")
+            self, "Quality Report", "QualityReport.xlsx", "Excel (*.xlsx)")
         if not path:
             return
 
@@ -82,7 +84,7 @@ class ExportMixin:
             QMessageBox.warning(self, "경고", "스캔된 데이터가 없습니다.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "PDF", "", "PDF (*.pdf)", "Report.pdf")
+            self, "PDF", "Report.pdf", "PDF (*.pdf)")
         if not path:
             return
         self.logger.info("PDF 리포트 생성 중...")
@@ -147,8 +149,8 @@ class ExportMixin:
         # 파일 이름에 쓸 수 없는 문자와 공백은 _로 바꾼다
         label = re.sub(r'[\\/:*?"<>|\s]+', '_', label).strip('_') or 'root'
         path, _ = QFileDialog.getSaveFileName(
-            self, "AI 분석용 Markdown", "", "Markdown (*.md)",
-            f"XY_LLM_{label}_{now:%Y%m%d_%H%M}.md")
+            self, "AI 분석용 Markdown", f"XY_LLM_{label}_{now:%Y%m%d_%H%M}.md",
+            "Markdown (*.md)")
         if not path:
             return
         self.logger.info("AI 분석용 Markdown 생성 중...")

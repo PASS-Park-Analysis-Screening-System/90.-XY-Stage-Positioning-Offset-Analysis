@@ -355,6 +355,7 @@ def compute_affine_transform(x_die_stats: list, y_die_stats: list,
     positions = []
     dx_vals = []
     dy_vals = []
+    used = []
     for d in common:
         if die_positions:
             pos = die_positions.get(int(d[3:]) - 1)   # 'Die5' → die_idx 4
@@ -366,6 +367,7 @@ def compute_affine_transform(x_die_stats: list, y_die_stats: list,
         positions.append(pos)
         dx_vals.append(x_map[d])
         dy_vals.append(y_map[d])
+        used.append(d)
 
     n = len(positions)
     if n < 3:
@@ -417,6 +419,19 @@ def compute_affine_transform(x_die_stats: list, y_die_stats: list,
         'residual_y': round(res_rms_y, 4),
         'n_dies': n,
         'degenerate': False,
+        # 축별 평면 피팅 계수 (화면 표시는 위 값을 그대로 쓴다). 좌표 mm, 편차 µm.
+        # dx = fit_x[0] + fit_x[1]·x + fit_x[2]·y,  dy = fit_y[0] + fit_y[1]·x + fit_y[2]·y
+        # 기울기(µm/mm) × 1000 = ppm(같은 축) 또는 µrad(다른 축)
+        'fit_x': (float(tx), float(sx) * 1e3, float(-neg_theta_x)),
+        'fit_y': (float(ty), float(theta_y), float(sy) * 1e3),
+        'dx_dx_ppm': float(sx) * 1e6,
+        'dx_dy_urad': float(-neg_theta_x) * 1e3,
+        'dy_dx_urad': float(theta_y) * 1e3,
+        'dy_dy_ppm': float(sy) * 1e6,
+        # Die별 피팅 잔차 (Die 평균 편차 − 평면, µm)
+        'die_residuals': {d: (float(rx), float(ry)) for d, rx, ry
+                          in zip(used, dx - dx_fit, dy - dy_fit)},
+        'die_positions_mm': dict(zip(used, positions)),
     }
 
 

@@ -96,7 +96,7 @@ def test_all_sections_present_in_order(tmp_path):
     for sub in ('#### 계통(Systematic) vs 랜덤', '#### 공간(Die)', '#### 시간(Repeat 순서)',
                 '#### 이상치·측정 실패·제외'):
         assert sub in clues
-    assert 'Scaling Sx' in clues and '피팅 불가' not in clues    # 2D 좌표라 Affine이 풀린다
+    assert 'Sx = ∂dx/∂x' in clues and '피팅 불가' not in clues    # 2D 좌표라 평면 피팅이 풀린다
     assert 'Die 간 비율 (%)' in clues
     assert '지어내지 마세요' in _section(md, 'LLM 분석 요청')
 
@@ -110,7 +110,8 @@ def test_front_matter_parses(tmp_path):
     assert front['data_source'] == {'mode': 'per-workflow', 'root': 'D:/data'}
     assert front['workflows'] == [{'name': 'Vision Pattern',
                                    'path': str(tmp_path / 'Vision_Pattern'),
-                                   'selected_run': '3', 'run_count': 3}]
+                                   'selected_run': '3', 'run_count': 3,
+                                   'run_status': {'1': 'ok', '2': 'ok', '3': 'ok'}}]
 
 
 def test_auto_source_text(tmp_path):
@@ -138,9 +139,10 @@ def test_spec_out_items_first_and_margins(tmp_path):
     m = compute_axis_metrics(filter_stabilization_die(ga['raw_data']), 'X', 'Global Align',
                              SPEC_LIM, SPEC_DEV)
     diff, pct = m['range'] - 2.0, m['range'] / 2.0 * 100
-    assert f'{diff:+.3f} ({pct:.1f}%)' in rows[0]
+    assert f'{diff:+.3f} (Spec 대비 {pct:.1f}%)' in rows[0]
     over = summary[summary.index('### Spec 초과 항목'):summary.index('### Workflow·축별')]
-    assert f"- Global Align X Range: {m['range']:.3f} µm (Spec 2.000 µm, {diff:+.3f} µm, {pct:.1f}%)" in over
+    assert (f"- Global Align X Range: {m['range']:.3f} µm (Spec 2.000 µm, {diff:+.3f} µm, "
+            f"Spec 대비 {pct:.1f}%)") in over
     assert 'Vision Pattern' not in over
 
 
@@ -208,7 +210,7 @@ def test_export_writes_utf8_file_and_logs(tmp_path, monkeypatch):
         out = tmp_path / 'out.md'
         names = []
         monkeypatch.setattr(QFileDialog, 'getSaveFileName', staticmethod(
-            lambda *a, **k: names.append(a[4]) or (str(out), '')))
+            lambda *a, **k: names.append(a[2]) or (str(out), '')))
         started = []
         monkeypatch.setattr(export_controller.threading, 'Thread',
                             lambda target, daemon: type('T', (), {
@@ -231,3 +233,33 @@ def test_export_writes_utf8_file_and_logs(tmp_path, monkeypatch):
     finally:
         win.deleteLater()
         app.processEvents()
+
+
+def test_every_export_passes_default_name_as_dir_argument(monkeypatch):
+    """getSaveFileName(parent, caption, dir, filter): 기본 이름이 5번째(선택 필터)에 가면 무시된다."""
+    from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
+    from ui.controllers.export_controller import ExportMixin
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName',
+                        staticmethod(lambda *a, **k: calls.append(a) or ('', '')))
+
+    class Host(QWidget, ExportMixin):
+        pass
+
+    host = Host()
+    host.raw_data = [{'value': 1.0}]
+    host.recipe_results = [{'short_name': 'Vision Pattern', 'raw_data': []}]
+    host.settings = {}
+    host._scanned_folder = 'D:/data'
+    host.path_edit = type('E', (), {'text': lambda self: 'D:/data'})()
+    host.logger = type('L', (), {'info': lambda *a: None})()
+    for export in (host._export_csv, host._export_excel, host._export_quality_report,
+                   host._export_pdf, host._export_llm_markdown):
+        export()
+    names = [call[2] for call in calls]
+    assert names[:4] == ['Analysis.txt', 'Report.xlsx', 'QualityReport.xlsx', 'Report.pdf']
+    assert re.fullmatch(r'XY_LLM_Vision_Pattern_\d{8}_\d{4}\.md', names[4])
+    assert all(len(call) == 4 for call in calls)
+    host.deleteLater()
+    app.processEvents()
