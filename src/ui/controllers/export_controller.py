@@ -171,24 +171,36 @@ class ExportMixin:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
 
+        # 결과: error(.md 실패), csv_error, csv_written(CSV를 썼는가), csv_replaced(기존 CSV를 덮어씀)
         def run():
+            state = {'error': None, 'csv_error': None, 'csv_written': False, 'csv_replaced': False}
             try:
                 from core.llm_report import build_llm_report, build_raw_csv
                 from core.version import APP_VERSION
                 raw_csv = {'name': os.path.basename(csv_path)}
                 try:
+                    # .md 덮어쓰기를 확인했으므로 같은 이름의 CSV도 덮어쓴다 (System Log에 남긴다)
+                    state['csv_replaced'] = os.path.exists(csv_path)
                     # Excel에서 바로 열리게 BOM을 붙인다
                     write_atomic(csv_path, build_raw_csv(results), 'utf-8-sig', '')
+                    state['csv_written'] = True
                 except Exception as e:     # CSV가 실패해도 .md는 쓴다
                     raw_csv['error'] = f'{type(e).__name__}: {e}'
+                    state['csv_error'] = raw_csv['error']
                 text = build_llm_report(results, spec_limits, spec_deviation,
                                         app_version=APP_VERSION,
                                         exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
                                         source_root=root, raw_csv=raw_csv)
                 write_atomic(path, text, 'utf-8', '\n')
-                outcome.append((None, raw_csv.get('error')))
             except Exception as e:
-                outcome.append((e, None))
+                state['error'] = e
+            outcome.append(state)
+
+        def size_text(target):
+            try:
+                return f"{os.path.getsize(target) / 1024:.1f} KB"
+            except OSError:
+                return "크기 확인 실패"
 
         poll = QTimer(self)
 
@@ -197,18 +209,21 @@ class ExportMixin:
                 return
             poll.stop()
             poll.deleteLater()
-            error, csv_error = outcome[0]
+            state = outcome[0]
+            error = state['error']
+            if state['csv_written']:
+                if state['csv_replaced']:
+                    self.logger.warn(f"같은 이름의 셀 값 CSV를 덮어썼습니다: {csv_path}")
+                self.logger.ok(f"셀 값 CSV 저장: {csv_path} ({size_text(csv_path)})")
             if error is None:
-                size_kb = os.path.getsize(path) / 1024
-                self.logger.ok(f"AI 분석용 Markdown 저장: {path} ({size_kb:.1f} KB)")
-                if csv_error:
-                    self.logger.error(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {csv_error}")
-                else:
-                    csv_kb = os.path.getsize(csv_path) / 1024
-                    self.logger.ok(f"셀 값 CSV 저장: {csv_path} ({csv_kb:.1f} KB)")
+                self.logger.ok(f"AI 분석용 Markdown 저장: {path} ({size_text(path)})")
+                if state['csv_error']:
+                    self.logger.error(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {state['csv_error']}")
             else:
-                self.logger.error(f"AI 분석용 Markdown 오류: {error}")
-                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{error}")
+                written = (f"\n셀 값 CSV는 저장됐습니다: {csv_path}" if state['csv_written'] else '')
+                self.logger.error(f"AI 분석용 Markdown 오류: {error}"
+                                  + (f" (셀 값 CSV는 저장됨: {csv_path})" if state['csv_written'] else ''))
+                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{error}{written}")
 
         poll.timeout.connect(check)
         poll.start(200)

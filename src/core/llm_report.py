@@ -196,7 +196,10 @@ class _Analysis:
         """평면 계수의 값·표준오차·t (표시 단위 ppm, µrad). 계산할 수 없으면 None.
 
         SE = sqrt(s² · diag((AᵀA)⁻¹)), s² = SSE/(k−3), A = [1, x, y] (Die 좌표).
-        직교도·회전은 두 축 피팅이 독립이라 보고 분산을 더한다.
+        회전·직교도는 X 피팅의 θx와 Y 피팅의 θy를 섞는다. 두 피팅은 같은 Die 좌표를 쓰고
+        잔차가 Die마다 함께 움직일 수 있으므로 공분산 Cov(θy, θx) = s_xy·inv12를 넣는다
+        (s_xy = Σ eₓ·e_y /(k−3), inv12 = (AᵀA)⁻¹의 x·y 칸).
+          Var(회전) = (Var θy + Var θx − 2·s_xy·inv12)/4, Var(직교도) = Var θx + Var θy + 2·s_xy·inv12
         """
         if self._coef is not None or not self.fitted():
             return self._coef
@@ -224,15 +227,20 @@ class _Analysis:
                 t = value / err
             return {'value': value, 'se': err, 't': t}
 
-        se_cross = math.sqrt(se['X'][2] ** 2 + se['Y'][1] ** 2)
+        s_xy = sum(self.af['die_residuals'][d][0] * self.af['die_residuals'][d][1]
+                   for d in used) / (k - 3)
+        cov = s_xy * float(inv[1][2])
+        var_sum = float(se['X'][2]) ** 2 + float(se['Y'][1]) ** 2
+        se_rot = math.sqrt(max(var_sum - 2 * cov, 0.0)) / 2
+        se_shear = math.sqrt(max(var_sum + 2 * cov, 0.0))
         self._coef = {
             'k': k,
             'sx': entry(fx[1], se['X'][1]),
             'tx': entry(fx[2], se['X'][2]),
             'ty': entry(fy[1], se['Y'][1]),
             'sy': entry(fy[2], se['Y'][2]),
-            'rot': entry((fy[1] - fx[2]) / 2, se_cross / 2),
-            'shear': entry(fx[2] + fy[1], se_cross),
+            'rot': entry((fy[1] - fx[2]) / 2, se_rot),
+            'shear': entry(fx[2] + fy[1], se_shear),
         }
         return self._coef
 
@@ -415,8 +423,11 @@ def _decompose(a: _Analysis, axis):
         ssr = max(sst - ssd - ssl, 0.0)
         dof = (k - 1) * (n_lots - 1)
         msr = ssr / dof if dof else 0.0
-        f_die = (ssd / (k - 1)) / msr if msr > 0 else math.inf
-        f_lot = (ssl / (n_lots - 1)) / msr if msr > 0 else math.inf
+        # 분자 SS가 0이면(그 요인의 차이가 전혀 없으면) F를 정할 수 없다. 0/0을 ∞로 적지 않는다
+        # (같은 값의 평균도 부동소수 합에서 1e-30쯤 남으므로 전체 SS 대비로 본다)
+        tiny = sst * 1e-12
+        f_die = None if ssd <= tiny else ((ssd / (k - 1)) / msr if msr > 0 else math.inf)
+        f_lot = None if ssl <= tiny else ((ssl / (n_lots - 1)) / msr if msr > 0 else math.inf)
         out.update(mode='2원', lot_share=ssl / sst, rest_share=ssr / sst,
                    die_f=f_die, die_p=_f_pvalue(f_die, k - 1, dof),
                    lot_f=f_lot, lot_p=_f_pvalue(f_lot, n_lots - 1, dof))
@@ -913,7 +924,9 @@ def _appendix(results, raw_csv=None) -> str:
                     f"({raw_csv['error']}).")
     elif raw_csv.get('name'):
         csv_text = (f"모든 Workflow·회차의 셀 값은 같이 저장한 CSV `{raw_csv['name']}`에 있다 "
-                    '(긴 형식: ' + ', '.join(RAW_CSV_COLUMNS) + '). 필요하면 LLM에 함께 첨부한다.')
+                    '(긴 형식: ' + ', '.join(RAW_CSV_COLUMNS) + '). deviation_um은 행마다 '
+                    '(측정값 − 그 회차·축의 분석 대상 평균)/1000이다. 같은 Lot·Die에 행이 둘 이상이면 '
+                    '이 표에 쓴 행(마지막 행) 말고는 flags에 dup이 붙는다. 필요하면 LLM에 함께 첨부한다.')
     else:
         csv_text = '다른 회차의 셀 값은 이 파일에 없다.'
     lines = ['## 부록: Die×Repeat 편차 표 (선택 회차)',
@@ -935,8 +948,10 @@ def _appendix(results, raw_csv=None) -> str:
 def build_raw_csv(recipe_results: list) -> str:
     """모든 Workflow·회차의 측정 행을 긴 형식 CSV 문자열로 (BOM 없음. 쓰는 쪽이 utf-8-sig로 쓴다).
 
-    deviation_um은 그 회차·축의 분석 대상 평균을 뺀 편차(부록 표와 같은 값, 0.1 nm까지).
-    flags: excluded(안정화 Die), failed(측정 실패), outlier(IQR × 1.5, 판정에 포함), unreadable(Site ID).
+    deviation_um은 행마다 (측정값 − 그 회차·축의 분석 대상 평균)/1000 (0.1 nm까지).
+    부록 표의 칸은 같은 Lot·Die의 마지막 행이라, 칸에 쓴 행은 표와 같은 값이다.
+    flags: excluded(안정화 Die), failed(측정 실패), outlier(IQR × 1.5, 판정에 포함),
+    unreadable(Site ID), dup(같은 Lot·Die의 다른 행 — 표·판정 칸에 쓰지 않은 행).
     """
     out = io.StringIO()
     writer = csv.writer(out, lineterminator='\n')
@@ -948,7 +963,15 @@ def build_raw_csv(recipe_results: list) -> str:
                 continue
             excluded = stabilization_die(raw)
             analysis = filter_stabilization_die(raw)
-            matrices = {axis: compute_deviation_matrix(analysis, axis)['matrix'] for axis in AXES}
+            averages = {axis: compute_deviation_matrix(analysis, axis)['average_nm']
+                        for axis in AXES}
+            # 편차 행렬 칸에 들어간 행: 같은 Lot·Die에 행이 여럿이면 마지막 행 (compute_deviation_matrix와 같다)
+            cell_rows = {}
+            for row in analysis:
+                axis = (row.get('method') or '').upper()
+                die = extract_die_number(row.get('site_id', ''))
+                if axis in AXES and die is not None and is_usable(row):
+                    cell_rows[(axis, row.get('lot_name', ''), die)] = id(row)
 
             def key(row):
                 die = extract_die_number(row.get('site_id', ''))
@@ -971,7 +994,10 @@ def build_raw_csv(recipe_results: list) -> str:
                     flags.append('outlier')
                 value = None
                 if die is not None and die != excluded and is_usable(row):
-                    value = matrices[axis].get(row.get('lot_name', ''), {}).get(f'Die{die + 1}')
+                    # 행렬 칸과 같은 계산 (nm → µm, 6자리 반올림)
+                    value = round((row['value'] - averages[axis]) / 1000.0, 6)
+                    if cell_rows.get((axis, row.get('lot_name', ''), die)) != id(row):
+                        flags.append('dup')
                 x_um, y_um = row.get('x_um'), row.get('y_um')
                 writer.writerow([
                     _name(r), run.get('round', ''), row.get('lot_index', ''), row.get('lot_name', ''),

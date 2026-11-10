@@ -322,10 +322,14 @@ def test_export_writes_md_and_bom_csv_and_survives_csv_failure(tmp_path, monkeyp
                                 staticmethod(lambda *a, **k: (str(out), '')))
             win._export_llm_markdown()
             started.pop()()
-            for _ in range(50):
+            # 결과는 200 ms 타이머가 가져간다. 시간으로 기다린다 (횟수로 돌면 타이머 전에 끝난다)
+            import time
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
                 app.processEvents()
                 if any(str(out) in row['message'] for row in win.logger.export_rows()):
                     break
+                time.sleep(0.01)
             return out
 
         out = export('ok.md')

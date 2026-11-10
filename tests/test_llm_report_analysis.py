@@ -412,3 +412,90 @@ def test_missing_scipy_reports_no_p_values_and_warns_once(monkeypatch, caplog):
         report([make_result(orthogonality)])
     assert 'p값 없음: scipy를 불러오지 못했다' in md and '(p 없음)' in md
     assert sum('scipy' in r.getMessage() for r in caplog.records) == 1
+
+
+# ── 리뷰 반영: 회전·직교도 SE의 공분산 항, 분자 SS 0의 F, 셀 값 CSV의 행별 편차 ──
+
+def correlated_axes(axis, die, x, y, lot):
+    """X·Y가 Die마다 같은 방향으로 움직인다 (두 축 피팅 잔차가 상관)."""
+    shared = 0.05 * math.sin(die * 2.3) + 0.03 * math.cos(die * 5.1)
+    if axis == 'X':
+        return 0.002 * y + shared + noise(axis, die, lot, 0.005)
+    return 0.0005 * x + 0.8 * shared + noise(axis, die, lot, 0.005)
+
+
+# 비대칭 배치: 오른쪽 위에 몰린 Die (x·y 교차 합이 0이 아니어서 inv12 ≠ 0)
+ASYMMETRIC = {d: COORDS[d] for d in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 21, 22)}
+
+
+def test_rotation_and_orthogonality_se_include_axis_covariance():
+    import numpy as np
+    a = _analysis(make_result(correlated_axes, coords=ASYMMETRIC))
+    dies = list(a.af['die_positions_mm'])
+    design = np.array([[1.0, *a.af['die_positions_mm'][d]] for d in dies])
+    k = len(dies)
+    fits, resid = {}, {}
+    for axis in ('X', 'Y'):
+        means = {d['die']: d['avg'] for d in a.devs[axis]['die_stats']}
+        y = np.array([means[d] for d in dies])
+        fits[axis], *_ = np.linalg.lstsq(design, y, rcond=None)
+        resid[axis] = y - design @ fits[axis]
+    inv = np.linalg.inv(design.T @ design)
+    s = np.array([[resid[p] @ resid[q] for q in ('X', 'Y')] for p in ('X', 'Y')]) / (k - 3)
+    joint = np.kron(s, inv)                 # [bx0, bx1, bx2, by0, by1, by2]의 공분산 (같은 설계)
+    w_rot = np.zeros(6)
+    w_rot[4], w_rot[2] = 0.5, -0.5          # (θy − θx)/2
+    w_shear = np.zeros(6)
+    w_shear[4], w_shear[2] = 1.0, 1.0       # θx + θy
+    coef = a.coefficients()
+    assert abs(s[0, 1] * inv[1, 2]) > 1e-12                       # 공분산 항이 실제로 있다
+    assert coef['rot']['se'] == pytest.approx(math.sqrt(w_rot @ joint @ w_rot) * 1e3, rel=1e-3)
+    assert coef['shear']['se'] == pytest.approx(
+        math.sqrt(w_shear @ joint @ w_shear) * 1e3, rel=1e-3)
+    independent = math.sqrt(joint[2, 2] + joint[4, 4]) * 1e3
+    assert coef['shear']['se'] != pytest.approx(independent, rel=1e-3)
+
+
+def test_two_way_f_is_none_when_a_factor_has_no_variation():
+    from core.llm_report import _decompose
+
+    def lots_only(axis, die, x, y, lot):
+        return 0.3 if lot % 2 else -0.3
+
+    def dies_only(axis, die, x, y, lot):
+        return 0.01 * die
+
+    lot_case = _decompose(_analysis(make_result(lots_only)), 'X')
+    assert lot_case['mode'] == '2원' and lot_case['die_f'] is None and lot_case['die_p'] is None
+    die_case = _decompose(_analysis(make_result(dies_only)), 'X')
+    assert die_case['lot_f'] is None and die_case['lot_p'] is None
+    md = report([make_result(lots_only)])
+    row = next(l for l in md.splitlines() if l.startswith('| X | 2원 |'))
+    assert row.strip('| ').split(' | ')[6] == '— (p 없음)'     # Die 간 F: ∞로 적지 않는다
+
+
+def test_raw_csv_deviation_is_per_row_and_duplicates_are_flagged():
+    import csv as csv_module
+    import io
+    from core.die_analysis import compute_deviation_matrix
+    from core.llm_report import build_raw_csv
+    result = make_result(orthogonality, lots=3)
+    original = next(r for r in result['raw_data'] if (r['lot_name'], r['site_id'][:4],
+                                                       r['method']) == ('Lot02', '0005', 'X'))
+    extra = dict(original, value=original['value'] + 400.0, point_no=2)
+    result['raw_data'].insert(result['raw_data'].index(original), extra)   # 표에는 뒤 행이 들어간다
+    analysis = filter_stabilization_die(result['raw_data'])
+    dev = compute_deviation_matrix(analysis, 'X')
+    rows = list(csv_module.DictReader(io.StringIO(build_raw_csv([result]))))
+
+    both = [r for r in rows if (r['lot'], r['die'], r['axis']) == ('Lot02', 'Die5', 'X')]
+    assert len(both) == 2
+    by_flag = {('dup' in r['flags'].split('|')): r for r in both}
+    for row, source in ((by_flag[True], extra), (by_flag[False], original)):
+        assert float(row['deviation_um']) == pytest.approx(
+            (source['value'] - dev['average_nm']) / 1000, abs=1e-4)
+    assert float(by_flag[False]['deviation_um']) == pytest.approx(
+        dev['matrix']['Lot02']['Die5'], abs=1e-4)
+    assert sum('dup' in r['flags'] for r in rows) == 1
+    assert 'dup' in build_llm_report([result], SPEC_LIM, SPEC_DEV, raw_csv={'name': 'r.csv'},
+                                     **FIXED)
