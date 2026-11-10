@@ -158,23 +158,37 @@ class ExportMixin:
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
 
-        def run():
-            temp_path = path + '.part'
+        # 모든 회차의 셀 값은 .md 옆 CSV에 둔다 (.md 부록은 선택 회차만)
+        csv_path = os.path.splitext(path)[0] + '_raw.csv'
+
+        def write_atomic(target, text, encoding, newline):
+            temp_path = target + '.part'
             try:
-                from core.llm_report import build_llm_report
+                with open(temp_path, 'w', encoding=encoding, newline=newline) as f:
+                    f.write(text)
+                os.replace(temp_path, target)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+        def run():
+            try:
+                from core.llm_report import build_llm_report, build_raw_csv
                 from core.version import APP_VERSION
+                raw_csv = {'name': os.path.basename(csv_path)}
+                try:
+                    # Excel에서 바로 열리게 BOM을 붙인다
+                    write_atomic(csv_path, build_raw_csv(results), 'utf-8-sig', '')
+                except Exception as e:     # CSV가 실패해도 .md는 쓴다
+                    raw_csv['error'] = f'{type(e).__name__}: {e}'
                 text = build_llm_report(results, spec_limits, spec_deviation,
                                         app_version=APP_VERSION,
                                         exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
-                                        source_root=root)
-                with open(temp_path, 'w', encoding='utf-8', newline='\n') as f:
-                    f.write(text)
-                os.replace(temp_path, path)
-                outcome.append(None)
+                                        source_root=root, raw_csv=raw_csv)
+                write_atomic(path, text, 'utf-8', '\n')
+                outcome.append((None, raw_csv.get('error')))
             except Exception as e:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                outcome.append(e)
+                outcome.append((e, None))
 
         poll = QTimer(self)
 
@@ -183,12 +197,18 @@ class ExportMixin:
                 return
             poll.stop()
             poll.deleteLater()
-            if outcome[0] is None:
+            error, csv_error = outcome[0]
+            if error is None:
                 size_kb = os.path.getsize(path) / 1024
                 self.logger.ok(f"AI 분석용 Markdown 저장: {path} ({size_kb:.1f} KB)")
+                if csv_error:
+                    self.logger.error(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {csv_error}")
+                else:
+                    csv_kb = os.path.getsize(csv_path) / 1024
+                    self.logger.ok(f"셀 값 CSV 저장: {csv_path} ({csv_kb:.1f} KB)")
             else:
-                self.logger.error(f"AI 분석용 Markdown 오류: {outcome[0]}")
-                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{outcome[0]}")
+                self.logger.error(f"AI 분석용 Markdown 오류: {error}")
+                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{error}")
 
         poll.timeout.connect(check)
         poll.start(200)

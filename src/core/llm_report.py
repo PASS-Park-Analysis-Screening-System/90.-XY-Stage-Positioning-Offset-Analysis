@@ -11,7 +11,10 @@ compute_deviation_matrix, compute_affine_transform)로 계산한다. 그 값들�
 같은 입력이면 같은 문자열이 나온다(시각은 인자로 받는다).
 """
 
+import csv
+import io
 import json
+import logging
 import math
 
 from core.checklist import (EXPECTED_DIES, EXPECTED_REPEATS, analysis_warnings,
@@ -22,16 +25,30 @@ from core.die_analysis import (compute_affine_transform, compute_deviation_matri
                                filter_stabilization_die, stabilization_die)
 from core.statistics import filter_by_method, is_usable
 
+try:   # p값만 쓴다. 없으면 F만 적는다
+    from scipy.stats import f as _F_DIST
+except ImportError:
+    _F_DIST = None
+
 REPORT_SCHEMA = 'xy-stage-llm-report/1'
 TOOL_NAME = 'XY Stage Positioning Offset Analyzer'
 TOP_N = 3
 EDGE_RATIO = 2 / 3      # 중심에서 가장 먼 Die 거리의 이 비율 이상이면 Edge
-EDGE_TOLERANCE = 1e-6   # 경계에 걸친 Die가 부동소수점 오차로 갈리지 않게 (최대 거리 대비)
+EDGE_TOLERANCE = 1e-3   # 경계에 걸친 Die(좌표 반올림 차)가 갈리지 않게 (최대 거리 대비)
 MAX_OUTLIER_LINES = 10
-SIGNIFICANT_EFFECT = 2.0   # 선형 성분의 끝단 크기가 잔차 RMS의 이 배수 이상이면 '의미 있는 크기'
+HINT_MIN_DIES = 8          # 해석 힌트를 내는 최소 Die 수
+HINT_MIN_T = 3.0           # 해석 힌트를 내는 최소 |t|
+RAW_CSV_COLUMNS = ['workflow', 'run', 'lot_order', 'lot', 'die', 'x_mm', 'y_mm', 'axis',
+                   'deviation_um', 'flags']
 AXES = ('X', 'Y')
 DERIVED = '(파생)'
 _NO_DATA_ERRORS = ('No data loaded', 'No data found')
+_SCIPY_WARNED = []
+
+
+def _zero(value, digits):
+    """반올림하면 0인 값의 '-0' 표시를 없앤다."""
+    return 0.0 if value is not None and round(value, digits) == 0 else value
 
 
 # ──────────────────────────────────────────────
@@ -137,6 +154,7 @@ class _Analysis:
         self.positions = extract_die_positions(self.data)
         self.af = compute_affine_transform(self.devs['X']['die_stats'],
                                            self.devs['Y']['die_stats'], self.positions)
+        self._coef = None
 
     def cells(self, axis):
         return [(lot, die, v) for lot, row in self.devs[axis]['matrix'].items()
@@ -145,25 +163,27 @@ class _Analysis:
     def fitted(self) -> bool:
         return not self.af.get('degenerate') and 'fit_x' in self.af
 
-    def plane(self, axis, die):
-        """평면 피팅값 (µm). 좌표가 없어 피팅에서 빠진 Die는 None."""
+    def plane(self, axis, die, cross_only=False):
+        """평면 피팅값 (µm). cross_only면 교차 항(θx·y 또는 θy·x)만. 피팅에서 빠진 Die는 None."""
         pos = self.af.get('die_positions_mm', {}).get(die)
         if pos is None:
             return None
         c0, c1, c2 = self.af['fit_x' if axis == 'X' else 'fit_y']
+        if cross_only:
+            return c2 * pos[1] if axis == 'X' else c1 * pos[0]
         return c0 + c1 * pos[0] + c2 * pos[1]
 
     def residual(self, axis, die):
         r = self.af.get('die_residuals', {}).get(die)
         return None if r is None else r[0 if axis == 'X' else 1]
 
-    def whatif_plane(self, axis):
-        """계통(평면) 성분을 뺀 셀들의 (Range, StdDev, 피팅에서 빠진 Die 수)."""
+    def whatif_plane(self, axis, cross_only=False):
+        """평면(또는 교차 항) 성분을 뺀 셀들의 (Range, StdDev, 평면 피팅에서 빠진 Die 수)."""
         if not self.fitted():
             return None, None, None
         values, missing = [], set()
         for _, die, v in self.cells(axis):
-            fit = self.plane(axis, die)
+            fit = self.plane(axis, die, cross_only)
             if fit is None:
                 missing.add(die)
                 values.append(v)
@@ -171,6 +191,50 @@ class _Analysis:
                 values.append(v - fit)
         rng, std = _range_std(values)
         return rng, std, len(missing)
+
+    def coefficients(self):
+        """평면 계수의 값·표준오차·t (표시 단위 ppm, µrad). 계산할 수 없으면 None.
+
+        SE = sqrt(s² · diag((AᵀA)⁻¹)), s² = SSE/(k−3), A = [1, x, y] (Die 좌표).
+        직교도·회전은 두 축 피팅이 독립이라 보고 분산을 더한다.
+        """
+        if self._coef is not None or not self.fitted():
+            return self._coef
+        import numpy as np
+        used = list(self.af['die_positions_mm'])
+        k = len(used)
+        if k <= 3:
+            return None
+        design = np.array([[1.0, *self.af['die_positions_mm'][d]] for d in used])
+        try:
+            inv = np.linalg.inv(design.T @ design)
+        except np.linalg.LinAlgError:
+            return None
+        se = {}
+        for axis, index in (('X', 0), ('Y', 1)):
+            sse = sum(self.af['die_residuals'][d][index] ** 2 for d in used)
+            se[axis] = np.sqrt(np.diag(inv) * sse / (k - 3))
+        fx, fy = self.af['fit_x'], self.af['fit_y']
+
+        def entry(value, err):
+            value, err = value * 1e3, float(err) * 1e3     # µm/mm → ppm 또는 µrad
+            if err == 0:
+                t = None if value == 0 else math.copysign(math.inf, value)
+            else:
+                t = value / err
+            return {'value': value, 'se': err, 't': t}
+
+        se_cross = math.sqrt(se['X'][2] ** 2 + se['Y'][1] ** 2)
+        self._coef = {
+            'k': k,
+            'sx': entry(fx[1], se['X'][1]),
+            'tx': entry(fx[2], se['X'][2]),
+            'ty': entry(fy[1], se['Y'][1]),
+            'sy': entry(fy[2], se['Y'][2]),
+            'rot': entry((fy[1] - fx[2]) / 2, se_cross / 2),
+            'shear': entry(fx[2] + fy[1], se_cross),
+        }
+        return self._coef
 
     def outlier_keys(self, axis):
         keys = set()
@@ -191,7 +255,7 @@ class _Analysis:
 # 1. Front matter
 # ──────────────────────────────────────────────
 
-def _front_matter(results, app_version, exported_at, source_root) -> str:
+def _front_matter(results, app_version, exported_at, source_root, raw_csv=None) -> str:
     mapping = any(r.get('source_path') for r in results)
     lines = ['---',
              f'report_schema: {REPORT_SCHEMA}',
@@ -201,6 +265,7 @@ def _front_matter(results, app_version, exported_at, source_root) -> str:
              'data_source:',
              f'  mode: {"per-workflow" if mapping else "auto"}',
              f'  root: {_q(source_root)}',
+             f"raw_csv: {_q((raw_csv or {}).get('name', '') if not (raw_csv or {}).get('error') else '')}",
              'workflows:']
     for r in results:
         runs = _runs_of(r) or [r]
@@ -311,30 +376,58 @@ def _summary(results, spec_limits, spec_deviation) -> str:
 # ──────────────────────────────────────────────
 
 def _f_pvalue(f_stat, d1, d2):
-    try:
-        from scipy.stats import f as f_dist
-        return float(f_dist.sf(f_stat, d1, d2))
-    except Exception:
+    if _F_DIST is None:
+        if not _SCIPY_WARNED:
+            _SCIPY_WARNED.append(True)
+            logging.warning('scipy를 불러오지 못해 AI 분석용 리포트에 p값을 적지 않습니다')
         return None
+    if f_stat is None or d1 <= 0 or d2 <= 0:
+        return None
+    return float(_F_DIST.sf(f_stat, d1, d2))
 
 
-def _between_die(a: _Analysis, axis):
-    """일원 분산분석: (Die 간 비율, 잡음만일 때 기대 비율, F, p, k, N)."""
+def _decompose(a: _Analysis, axis):
+    """편차 행렬의 분산 분해.
+
+    모든 Die×Lot 칸에 값이 있으면 2원(Die + Lot + 잔여), 결측이 있으면 1원(Die + Die 안 잔여).
+    """
+    dev = a.devs[axis]
+    dies, lots = dev['die_labels'], dev['repeat_labels']
     cells = a.cells(axis)
-    by_die = {}
-    for _, die, v in cells:
-        by_die.setdefault(die, []).append(v)
-    k, n = len(by_die), len(cells)
+    n = len(cells)
+    k, n_lots = len(dies), len(lots)
     if k < 2 or n <= k:
         return None
     grand = sum(v for _, _, v in cells) / n
     sst = sum((v - grand) ** 2 for _, _, v in cells)
-    ssb = sum(len(vs) * (sum(vs) / len(vs) - grand) ** 2 for vs in by_die.values())
-    ssw = sst - ssb
     if sst <= 0:
         return None
-    f_stat = (ssb / (k - 1)) / (ssw / (n - k)) if ssw > 0 else float('inf')
-    return ssb / sst, (k - 1) / (n - 1), f_stat, _f_pvalue(f_stat, k - 1, n - k), k, n
+    by_die, by_lot = {}, {}
+    for lot, die, v in cells:
+        by_die.setdefault(die, []).append(v)
+        by_lot.setdefault(lot, []).append(v)
+    ssd = sum(len(vs) * (sum(vs) / len(vs) - grand) ** 2 for vs in by_die.values())
+    out = {'k': len(by_die), 'lots': n_lots, 'n': n, 'die_share': ssd / sst,
+           'die_expect': (len(by_die) - 1) / (n - 1)}
+    balanced = n_lots >= 2 and n == k * n_lots
+    if balanced:
+        ssl = sum(len(vs) * (sum(vs) / len(vs) - grand) ** 2 for vs in by_lot.values())
+        ssr = max(sst - ssd - ssl, 0.0)
+        dof = (k - 1) * (n_lots - 1)
+        msr = ssr / dof if dof else 0.0
+        f_die = (ssd / (k - 1)) / msr if msr > 0 else math.inf
+        f_lot = (ssl / (n_lots - 1)) / msr if msr > 0 else math.inf
+        out.update(mode='2원', lot_share=ssl / sst, rest_share=ssr / sst,
+                   die_f=f_die, die_p=_f_pvalue(f_die, k - 1, dof),
+                   lot_f=f_lot, lot_p=_f_pvalue(f_lot, n_lots - 1, dof))
+    else:
+        ssw = sst - ssd
+        dof = n - len(by_die)
+        f_die = (ssd / (len(by_die) - 1)) / (ssw / dof) if ssw > 0 else math.inf
+        out.update(mode='1원 (결측 칸이 있어 2원 분해 불가)', lot_share=None,
+                   rest_share=ssw / sst, die_f=f_die,
+                   die_p=_f_pvalue(f_die, len(by_die) - 1, dof), lot_f=None, lot_p=None)
+    return out
 
 
 def _plane_r2(a: _Analysis, axis):
@@ -353,43 +446,53 @@ def _plane_r2(a: _Analysis, axis):
         return None
     r2 = max(0.0, 1 - sse / sst)
     adj = 1 - (1 - r2) * (k - 1) / (k - 3)
-    f_stat = (r2 / 2) / ((1 - r2) / (k - 3)) if r2 < 1 else float('inf')
+    f_stat = (r2 / 2) / ((1 - r2) / (k - 3)) if r2 < 1 else math.inf
     return r2, 2 / (k - 1), adj, f_stat, _f_pvalue(f_stat, 2, k - 3), k
 
 
-def _span(a: _Analysis, index):
-    coords = [p[index] for p in a.af.get('die_positions_mm', {}).values()]
-    if not coords:
-        return 0.0
-    mid = sum(coords) / len(coords)
-    return max(abs(c - mid) for c in coords)
+def _t_text(entry):
+    t = entry['t']
+    if t is None:
+        return '—'
+    if math.isinf(t):
+        return '∞' if t > 0 else '−∞'
+    return f'{t:+.1f}'
 
 
 def _pattern_hint(a: _Analysis) -> str:
-    """평면 피팅의 교차 항으로 회전형/직교도형을 가리는 경험 규칙 (파생)."""
-    af = a.af
-    tx, ty = af['dx_dy_urad'], af['dy_dx_urad']
-    rotation = (ty - tx) / 2
-    shear = tx + ty
-    # 교차 항이 만드는 끝단 크기(µm) = θ(µrad) × 반폭(mm) × 1e-3
-    eff_x = abs(tx) * _span(a, 1) * 1e-3
-    eff_y = abs(ty) * _span(a, 0) * 1e-3
-    sig_x = eff_x >= SIGNIFICANT_EFFECT * max(af['residual_x'], 1e-9)
-    sig_y = eff_y >= SIGNIFICANT_EFFECT * max(af['residual_y'], 1e-9)
-    rule = (f'규칙: 교차 항의 끝단 크기(|θ|×좌표 반폭)가 그 축 잔차 RMS의 {SIGNIFICANT_EFFECT:g}배 이상이면 '
-            '의미 있는 크기, |직교도| ≥ |회전|이면 직교도형, |직교도| < 0.5×|회전|이면 회전형, 그 사이는 혼합')
-    if not (sig_x or sig_y):
-        kind = '교차 항(회전·직교도)이 잔차보다 작아 해석하지 않음'
-    elif abs(shear) >= abs(rotation):
-        axis_text = ('X 편차가 Y 위치에 비례 (θx 우세)' if eff_x >= eff_y
-                     else 'Y 편차가 X 위치에 비례 (θy 우세)')
-        kind = f'직교도(직각도)형 또는 한 축 이동에 따른 다른 축 오차 — {axis_text}'
-    elif abs(shear) < 0.5 * abs(rotation):
-        kind = '회전형 (θx ≈ −θy)'
+    """교차 항으로 회전형/직교도형을 가리는 경험 규칙 (파생). t가 충분할 때만 이름을 붙인다."""
+    coef = a.coefficients()
+    rule = (f'규칙: Die {HINT_MIN_DIES}개 이상이고, 직교도형은 |t(직교도)| ≥ {HINT_MIN_T:g} 이면서 '
+            f'|직교도| ≥ |회전|, 회전형은 |t(회전)| ≥ {HINT_MIN_T:g} 이면서 |직교도| < 0.5×|회전|. '
+            '둘 중 하나만 |t| 기준을 넘고 크기 조건이 맞지 않으면 혼합, 둘 다 못 넘으면 구분 안 됨')
+    if coef is None or coef['k'] < HINT_MIN_DIES:
+        kind = (f"Die {coef['k'] if coef else a.af.get('n_dies', 0)}개라 통계적으로 구분 안 됨 "
+                f'(Die {HINT_MIN_DIES}개 이상 필요)')
     else:
-        kind = '회전과 직교도가 섞인 형태'
-    return (f'- 해석 힌트 {DERIVED}: {kind}. 교차 항 끝단 크기 X {eff_x:.3f} µm, Y {eff_y:.3f} µm. '
-            f'{rule}.')
+        shear, rot = coef['shear'], coef['rot']
+        t_shear = abs(shear['t'] or 0.0)
+        t_rot = abs(rot['t'] or 0.0)
+        if t_shear >= HINT_MIN_T and abs(shear['value']) >= abs(rot['value']):
+            tx, ty = abs(coef['tx']['t'] or 0.0), abs(coef['ty']['t'] or 0.0)
+            axis_text = ('θx 우세: Y 이동 시 X 오차' if tx >= ty else 'θy 우세: X 이동 시 Y 오차')
+            kind = f'직교도(직각도)형 또는 한 축 이동에 따른 다른 축 오차 — {axis_text}'
+        elif t_rot >= HINT_MIN_T and abs(shear['value']) < 0.5 * abs(rot['value']):
+            kind = '회전형 (θx ≈ −θy)'
+        elif t_shear >= HINT_MIN_T or t_rot >= HINT_MIN_T:
+            kind = '회전과 직교도가 섞인 형태'
+        else:
+            kind = '통계적으로 구분 안 됨 (교차 항의 |t|가 기준 미만)'
+    return f'- 해석 힌트 {DERIVED}: {kind}. {rule}.'
+
+
+_COEF_ROWS = (
+    ('sx', 'Sx = ∂dx/∂x', 'ppm', 'X 이동 시 X 배율 오차'),
+    ('tx', 'θx = ∂dx/∂y', 'µrad', 'Y 이동 시 X 오차'),
+    ('ty', 'θy = ∂dy/∂x', 'µrad', 'X 이동 시 Y 오차'),
+    ('sy', 'Sy = ∂dy/∂y', 'ppm', 'Y 이동 시 Y 배율 오차'),
+    ('rot', '회전 = (θy − θx)/2', 'µrad', '모델 dx=−θ·y, dy=+θ·x 기준 +. 화면의 Rotation θ와 같은 값'),
+    ('shear', '직교도 = θx + θy', 'µrad', '비직각. 순수 회전이면 ≈ 0, 한 축 교차 항만 있으면 그 항과 같음'),
+)
 
 
 def _systematic(a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
@@ -402,53 +505,78 @@ def _systematic(a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
         lines.append(f"- 피팅 불가: 유효 Die {af.get('n_dies', 0)}개 또는 좌표가 공선. "
                      '계통 성분을 판단할 수 없음.')
         return lines
-    tx, ty = af['dx_dy_urad'], af['dy_dx_urad']
-    lines += [
-        f"- 평면 계수 {DERIVED}: Sx = ∂dx/∂x {af['dx_dx_ppm']:+.2f} ppm, "
-        f"θx = ∂dx/∂y {tx:+.2f} µrad, θy = ∂dy/∂x {ty:+.2f} µrad, "
-        f"Sy = ∂dy/∂y {af['dy_dy_ppm']:+.2f} ppm (Die {af['n_dies']}개)",
-        f"- 회전 = (θy − θx)/2 = {(ty - tx) / 2:+.2f} µrad (반시계 +, 화면의 Rotation θ와 같은 값), "
-        f"직교도(비직각) = θx + θy = {tx + ty:+.2f} µrad {DERIVED}. "
-        '순수 회전이면 θx ≈ −θy라 직교도 ≈ 0, X 편차만 Y 위치에 비례하면 θy ≈ 0이다.',
-        f"- 평면 잔차 RMS (Die 평균 기준): X {af['residual_x']:.4f} µm, Y {af['residual_y']:.4f} µm",
-        _pattern_hint(a)]
-    for axis in AXES:
-        rng, std, missing = a.whatif_plane(axis)
-        if rng is None:
-            continue
-        verdict = _would_pass(rng, std, spec_range, spec_stddev)
-        change = ('' if verdict is None or verdicts.get(axis) is None
-                  else f" (현재 {result_text(verdicts[axis])} → {result_text(verdict)})")
-        extra = f', 좌표 없어 그대로 둔 Die {missing}개' if missing else ''
-        lines.append(f'- 계통 성분 제거 후 {axis} (what-if 추정) {DERIVED}: 셀마다 그 Die의 평면값을 빼면 '
-                     f'Range {rng:.3f} µm, StdDev {std:.3f} µm{change}{extra}')
-
+    coef = a.coefficients()
     rows = []
+    for key, label, unit, meaning in _COEF_ROWS:
+        if coef:
+            e = coef[key]
+            rows.append([label, f"{_zero(e['value'], 2):+.2f}", unit, f"{e['se']:.2f}",
+                         _t_text(e), meaning])
+        else:
+            rows.append([label, '—', unit, '—', '—', meaning])
+    lines += [f"평면 계수 {DERIVED} (Die {af['n_dies']}개). SE = sqrt(s²·diag((AᵀA)⁻¹)), "
+              's² = 잔차 제곱합/(k−3), t = 값/SE. 회전·직교도의 SE는 두 축 피팅을 독립으로 보고 합친 값.',
+              _table(['항', '값', '단위', 'SE', f't {DERIVED}', '의미'], rows),
+              f"- 평면 잔차 RMS (Die 평균 기준): X {af['residual_x']:.4f} µm, Y {af['residual_y']:.4f} µm",
+              _pattern_hint(a)]
     for axis in AXES:
-        b = _between_die(a, axis)
+        for cross_only, title in ((False, '계통 성분(평면) 제거 후'),
+                                  (True, '교차 항(회전·직교도)만 제거 후 (Sx·Sy 유지)')):
+            rng, std, missing = a.whatif_plane(axis, cross_only)
+            if rng is None:
+                continue
+            verdict = _would_pass(rng, std, spec_range, spec_stddev)
+            change = ('' if verdict is None or verdicts.get(axis) is None
+                      else f" (현재 {result_text(verdicts[axis])} → {result_text(verdict)})")
+            extra = f', 평면 피팅에서 빠진 Die {missing}개는 그대로' if missing else ''
+            lines.append(f'- {axis} {title} (what-if 추정, 같은 데이터로 피팅한 값이라 낙관적) {DERIVED}: '
+                         f'Range {rng:.3f} µm, StdDev {std:.3f} µm{change}{extra}')
+
+    decomp_rows = []
+    plane_rows = []
+    for axis in AXES:
+        d = _decompose(a, axis)
         p = _plane_r2(a, axis)
-        rows.append([
+        if d:
+            decomp_rows.append([
+                axis, d['mode'], _num(d['die_share'] * 100, '.1f'),
+                _num(None if d['lot_share'] is None else d['lot_share'] * 100, '.1f'),
+                _num(d['rest_share'] * 100, '.1f'), _num(d['die_expect'] * 100, '.1f'),
+                f"{_f_text(d['die_f'])} ({_pvalue_text(d['die_p'])})",
+                '—' if d['lot_f'] is None else f"{_f_text(d['lot_f'])} ({_pvalue_text(d['lot_p'])})"])
+        else:
+            decomp_rows.append([axis, '—'] + ['—'] * 6)
+        plane_rows.append([
             axis,
-            _num(b[0] * 100, '.1f') if b else '—', _num(b[1] * 100, '.1f') if b else '—',
-            f'{b[2]:.1f} ({_pvalue_text(b[3])})' if b else '—',
             _num(p[0] * 100, '.1f') if p else '—', _num(p[1] * 100, '.1f') if p else '—',
             _num(p[2] * 100, '.1f') if p else '—',
-            f'{p[3]:.1f} ({_pvalue_text(p[4])})' if p else '—',
-            _num(b[0] * p[0] * 100, '.1f') if b and p else '—'])
+            f'{_f_text(p[3])} ({_pvalue_text(p[4])})' if p else '—',
+            _num(d['die_share'] * p[0] * 100, '.1f') if d and p else '—'])
     lines += ['',
-              f'분산 분해 {DERIVED}. Die 간 비율 = Σ n·(Die 평균 − 전체 평균)² / 전체 SS (일원 분산분석). '
-              '잡음만일 때 기대 비율 ≈ (k−1)/(N−1). 평면 R² = Die 평균 분산 중 평면 피팅이 설명하는 비율, '
-              '잡음만일 때 기대 R² ≈ 2/(k−1). 전체 중 계통 ≈ Die 간 비율 × 평면 R². '
-              '나머지는 평면으로 설명되지 않는 Die 고유 성분과 Die 안(Repeat 간) 랜덤 성분이다. '
-              'F와 p는 참고용이다(측정 간 독립을 가정).',
-              _table(['축', 'Die 간 비율 (%)', '잡음 기대 (%)', 'Die 간 F (p)', '평면 R² (%)',
-                      '잡음 기대 R² (%)', '수정 R² (%)', '평면 F (p)', '전체 중 계통 ≈ (%)'], rows)]
+              f'분산 분해 {DERIVED}. 편차 행렬(Die × Lot)의 제곱합을 Die 간, Lot 간, Die×Lot 잔여'
+              '(랜덤 + 상호작용)로 나눈다(2원). 결측 칸이 있으면 1원(Die 간 + Die 안 잔여)으로 대신한다. '
+              'Die 잡음 기대 ≈ (k−1)/(N−1)은 차이가 없을 때 Die 간 비율의 기대값. '
+              'F는 2원이면 잔여(자유도 (k−1)(L−1))에 대해, 1원이면 Die 안 잔여에 대해 검정한다. '
+              'F·p는 측정 간 독립을 가정한 참고값이다.'
+              + ('' if _F_DIST is not None else ' p값 없음: scipy를 불러오지 못했다.'),
+              _table(['축', '분해', 'Die 간 (%)', 'Lot 간 (%)', 'Die×Lot 잔여 (%)', 'Die 잡음 기대 (%)',
+                      'Die F (p)', 'Lot F (p)'], decomp_rows),
+              f'평면 피팅 {DERIVED}. 평면 R² = Die 평균 분산 중 평면이 설명하는 비율, 잡음만일 때 기대 '
+              'R² ≈ 2/(k−1). 전체 중 계통 ≈ Die 간 비율 × 평면 R².',
+              _table(['축', '평면 R² (%)', '잡음 기대 R² (%)', '수정 R² (%)', '평면 F (p)',
+                      '전체 중 계통 ≈ (%)'], plane_rows)]
     return lines
+
+
+def _f_text(f_stat):
+    if f_stat is None:
+        return '—'
+    return '∞' if math.isinf(f_stat) else f'{f_stat:.1f}'
 
 
 def _pvalue_text(p):
     if p is None:
-        return 'p 계산 안 됨'
+        return 'p 없음'
     return 'p<1e-6' if p < 1e-6 else f'p={p:.3g}'
 
 
@@ -580,9 +708,25 @@ def _temporal(a: _Analysis) -> list:
         slope, r2 = _fit_line([p[0] for p in pts], [p[1] for p in pts])
         if slope is not None:
             lines.append(f'- {axis} drift {DERIVED}: Lot 평균 편차를 Lot 순서에 최소제곱 직선으로 맞춘 '
-                         f'기울기 {slope:+.4f} µm/Lot (R² {r2:.2f}), '
-                         f'마지막 Lot − 첫 Lot = {pts[-1][1] - pts[0][1]:+.3f} µm')
+                         f'기울기 {_zero(slope, 4):+.4f} µm/Lot (R² {r2:.2f}), '
+                         f'마지막 Lot − 첫 Lot = {_zero(pts[-1][1] - pts[0][1], 3):+.3f} µm')
+        means = [p[1] for p in pts]
+        if len(means) >= 4:
+            odd = [m for i, m in enumerate(means) if i % 2 == 0]     # 1, 3, 5번째
+            even = [m for i, m in enumerate(means) if i % 2 == 1]
+            diff = sum(odd) / len(odd) - sum(even) / len(even)
+            lines.append(f'- {axis} Lot 교대 패턴 {DERIVED}: 홀수 번째 − 짝수 번째 Lot 평균 = '
+                         f'{_zero(diff, 3):+.3f} µm, Lot 평균의 lag-1 자기상관 '
+                         f'{_lag1(means):+.2f} (−1에 가까우면 교대, +1에 가까우면 느린 변화)')
     return lines
+
+
+def _lag1(values):
+    mean = sum(values) / len(values)
+    den = sum((v - mean) ** 2 for v in values)
+    if not den:
+        return 0.0
+    return _zero(sum((a - mean) * (b - mean) for a, b in zip(values, values[1:])) / den, 2)
 
 
 def _quality(result, a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
@@ -605,7 +749,7 @@ def _quality(result, a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
             verdict = _would_pass(rng, std, spec_range, spec_stddev)
             lines.append(f'  - 이상치 셀 {n}개를 뺀다면 {axis} (what-if) {DERIVED}: Range {_num(rng)} µm, '
                          f'StdDev {_num(std)} µm → {result_text(verdict)}'
-                         f"{'' if verdict is False else ' (판정이 바뀜)'}")
+                         f"{' (판정이 바뀜)' if verdict is True else ''}")
     failed = result.get('failed_measurements') or {}
     lines.append(f"- 측정 실패: {failed['text'] if failed.get('count') else '없음'}")
     lines.append(f'- 첫 리핏 제외: {_first_repeat_text(result)}')
@@ -762,21 +906,80 @@ def _appendix_table(raw, axis) -> str:
     return _table(['Die'] + lot_names, rows)
 
 
-def _appendix(results) -> str:
-    lines = ['## 부록: Die×Repeat 편차 표',
+def _appendix(results, raw_csv=None) -> str:
+    raw_csv = raw_csv or {}
+    if raw_csv.get('error'):
+        csv_text = (f"모든 회차의 셀 값을 담을 CSV `{raw_csv.get('name', '')}`는 쓰지 못했다 "
+                    f"({raw_csv['error']}).")
+    elif raw_csv.get('name'):
+        csv_text = (f"모든 Workflow·회차의 셀 값은 같이 저장한 CSV `{raw_csv['name']}`에 있다 "
+                    '(긴 형식: ' + ', '.join(RAW_CSV_COLUMNS) + '). 필요하면 LLM에 함께 첨부한다.')
+    else:
+        csv_text = '다른 회차의 셀 값은 이 파일에 없다.'
+    lines = ['## 부록: Die×Repeat 편차 표 (선택 회차)',
+             '각 Workflow의 선택 회차만 싣는다. ' + csv_text,
              '단위 µm, 소수 셋째 자리(nm 단위) 반올림. 편차 = 측정값 − 그 회차·축의 분석 대상 평균. '
              '`*` 이상치(IQR × 1.5, 판정에 포함), `NaN` 측정 실패로 값 없음, `(제외)` 안정화 Die, '
              '`—` 값 없음. 첫 리핏으로 제외한 폴더는 표에 없다. 열은 측정 순서.']
     for r in results:
+        raw = r.get('raw_data', [])
+        lines += ['', f"### {_name(r)} — 회차 {r.get('round', '')}"]
+        if not raw:
+            lines.append(f"- 데이터 없음{(' (' + r['error'] + ')') if r.get('error') else ''}")
+            continue
+        for axis in AXES:
+            lines += ['', f'#### {axis}', _appendix_table(raw, axis)]
+    return '\n'.join(lines).rstrip()
+
+
+def build_raw_csv(recipe_results: list) -> str:
+    """모든 Workflow·회차의 측정 행을 긴 형식 CSV 문자열로 (BOM 없음. 쓰는 쪽이 utf-8-sig로 쓴다).
+
+    deviation_um은 그 회차·축의 분석 대상 평균을 뺀 편차(부록 표와 같은 값, 0.1 nm까지).
+    flags: excluded(안정화 Die), failed(측정 실패), outlier(IQR × 1.5, 판정에 포함), unreadable(Site ID).
+    """
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator='\n')
+    writer.writerow(RAW_CSV_COLUMNS)
+    for r in recipe_results or []:
         for run in _runs_of(r) or [r]:
             raw = run.get('raw_data', [])
-            lines += ['', f"### {_name(r)} — 회차 {run.get('round', '')}"]
             if not raw:
-                lines.append(f"- 데이터 없음{(' (' + run['error'] + ')') if run.get('error') else ''}")
                 continue
-            for axis in AXES:
-                lines += ['', f'#### {axis}', _appendix_table(raw, axis)]
-    return '\n'.join(lines).rstrip()
+            excluded = stabilization_die(raw)
+            analysis = filter_stabilization_die(raw)
+            matrices = {axis: compute_deviation_matrix(analysis, axis)['matrix'] for axis in AXES}
+
+            def key(row):
+                die = extract_die_number(row.get('site_id', ''))
+                return (AXES.index(row['method'].upper()) if row.get('method', '').upper() in AXES else 9,
+                        row.get('lot_index', 0), row.get('lot_name', ''),
+                        -1 if die is None else die, row.get('point_no', 0))
+            for row in sorted(raw, key=key):
+                axis = (row.get('method') or '').upper()
+                if axis not in AXES:
+                    continue
+                die = extract_die_number(row.get('site_id', ''))
+                flags = []
+                if die is None:
+                    flags.append('unreadable')
+                elif die == excluded:
+                    flags.append('excluded')
+                if not is_usable(row):
+                    flags.append('failed')
+                elif row.get('is_outlier'):
+                    flags.append('outlier')
+                value = None
+                if die is not None and die != excluded and is_usable(row):
+                    value = matrices[axis].get(row.get('lot_name', ''), {}).get(f'Die{die + 1}')
+                x_um, y_um = row.get('x_um'), row.get('y_um')
+                writer.writerow([
+                    _name(r), run.get('round', ''), row.get('lot_index', ''), row.get('lot_name', ''),
+                    '' if die is None else f'Die{die + 1}',
+                    f'{x_um / 1000:.3f}' if isinstance(x_um, (int, float)) and math.isfinite(x_um) else '',
+                    f'{y_um / 1000:.3f}' if isinstance(y_um, (int, float)) and math.isfinite(y_um) else '',
+                    axis, '' if value is None else f'{value:.4f}', '|'.join(flags)])
+    return out.getvalue()
 
 
 # ──────────────────────────────────────────────
@@ -812,8 +1015,16 @@ def _request(results, spec_limits, spec_deviation) -> str:
              '이 도구의 유도값·경험 규칙입니다. 통계 검정 결과나 결론으로 다루지 말고 근거 중 하나로만 쓰세요.',
              '- Avg(nm)는 레시피별 기준점 차이가 섞여 Workflow끼리 비교할 수 없습니다. 병진 변화는 '
              '같은 Workflow의 회차 간 Avg 변화로만 판단하세요.',
-             '- X/Y 직교도(직각도) 오차, 한 축 이동에 따른 다른 축 오차, 특정 Die(예: 안정화 Die 다음 첫 Die)의 '
-             'settling 같은 후보는 평면 계수·잔차·회차 × Die 표의 숫자가 뒷받침할 때만 제시하세요.',
+             '- 원인 후보는 아래 목록을 하나씩 확인하고, 리포트의 숫자가 뒷받침하는 것만 받아들이세요. '
+             '각 후보마다 지지/반박/판단 불가와 근거 숫자를 적어 주세요.',
+             '  - 병진 (같은 Workflow의 회차 간 Avg 변화)',
+             '  - Scaling (Sx, Sy)',
+             '  - 회전 ((θy − θx)/2)',
+             '  - 직교도 (θx + θy)',
+             '  - Die 고유 편차 (평면 잔차가 큰 Die)',
+             '  - drift / warm-up (Lot 순서에 따른 변화)',
+             '  - Lot 교대·주기 패턴 (Lot 간 비율, 홀짝 차이, lag-1 자기상관)',
+             '  - 측정·비전 잡음 (Die×Lot 잔여, Die 안 StdDev)',
              '- 이상치(*)는 Range·StdDev·판정에 포함되어 있습니다.']
     if multi_run:
         lines.append('- "회차 변경 이력" 표가 비어 있으면 회차 간 차이의 원인(무엇을 바꿨는지)은 추정하지 말고, '
@@ -824,21 +1035,22 @@ def _request(results, spec_limits, spec_deviation) -> str:
 
 def build_llm_report(recipe_results: list, spec_limits: dict = None,
                      spec_deviation: dict = None, *, app_version: str = '',
-                     exported_at: str = '', source_root: str = '') -> str:
+                     exported_at: str = '', source_root: str = '', raw_csv: dict = None) -> str:
     """LLM 원인 분석용 Markdown 한 파일 (UTF-8 문자열).
 
     recipe_results: 화면의 Recipe 결과 목록 (선택 회차 결과, 회차가 여럿이면 run_results 포함)
+    raw_csv: 같이 쓴 셀 값 CSV {'name': 파일 이름} 또는 실패 시 {'name':…, 'error': 이유}
     """
     results = list(recipe_results or [])
     sections = [
-        _front_matter(results, app_version, exported_at, source_root),
+        _front_matter(results, app_version, exported_at, source_root, raw_csv),
         '# XY Stage 위치 오프셋 — AI 분석용 리포트',
         _conditions(results, spec_limits, spec_deviation),
         _summary(results, spec_limits, spec_deviation),
         _clues(results, spec_limits, spec_deviation),
         _run_comparison(results, spec_limits, spec_deviation),
         _change_log(results),
-        _appendix(results),
+        _appendix(results, raw_csv),
         _request(results, spec_limits, spec_deviation),
     ]
     return '\n\n'.join(s.strip('\n') for s in sections if s) + '\n'

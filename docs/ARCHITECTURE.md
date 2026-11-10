@@ -100,7 +100,8 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
     ├─ exporter.export_combined_csv() → .csv
     ├─ pdf_generator.generate_pdf_report() → .pdf
     └─ llm_report.build_llm_report() → .md (front matter + 분석 조건·결과 요약·원인 단서(축별 평면 계수·what-if·평면 잔차)·
-       회차 비교·회차 변경 이력(사용자 기입)·부록 Die×Repeat 편차 표·LLM 분석 요청)
+       회차 비교·회차 변경 이력(사용자 기입)·부록 선택 회차 Die×Repeat 편차 표·LLM 분석 요청)
+       + llm_report.build_raw_csv() → <이름>_raw.csv (모든 Workflow·회차 셀 값, 긴 형식, UTF-8 BOM)
 ```
 
 ---
