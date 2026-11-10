@@ -387,8 +387,9 @@ def scan(window, monkeypatch, tmp_path):
         finished = Signal(list, list, float)
         error = Signal(str, str)     # 실제 DataLoaderThread와 같은 형태
         progress = Signal(str)
+        cancelled = Signal()
 
-        def __init__(self, folder, recipes=None):
+        def __init__(self, folder, recipes=None, session=None):
             super().__init__()
             self.folder = folder
             self.recipes = recipes
@@ -400,6 +401,8 @@ def scan(window, monkeypatch, tmp_path):
             return False
 
     monkeypatch.setattr(controller, 'DataLoaderThread', FakeThread)
+    # 폴더 확인 스레드는 이 테스트에서 바로 실행한다 (시그널이 곧바로 슬롯을 부른다)
+    monkeypatch.setattr(controller.FolderScanThread, 'start', lambda self: self.run())
 
     class CancelledDialog:  # 폴더명 불일치 때 여는 Workflow별 폴더 선택을 취소한다
         def __init__(self, *args, **kwargs):
@@ -419,7 +422,7 @@ def scan(window, monkeypatch, tmp_path):
     def run(names):
         recipes = [{'name': n, 'short_name': n, 'index': i + 1, 'rounds': []}
                    for i, n in enumerate(names)]
-        monkeypatch.setattr(controller, 'scan_recipes', lambda _: recipes)
+        monkeypatch.setattr(controller, 'scan_recipes', lambda *_a, **_k: recipes)
         window._scan_folder()
     yield run
     window._loader_thread = None

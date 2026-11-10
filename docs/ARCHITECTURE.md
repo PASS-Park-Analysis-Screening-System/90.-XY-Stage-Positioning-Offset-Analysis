@@ -235,7 +235,11 @@ overall = pass_x and pass_y
 
 | 작업 | 처리 방식 | 이유 |
 |------|-----------|------|
-| 폴더 스캔 + 데이터 로드 | `QThread (ScanWorker)` | UI 블로킹 방지 — CSV 파일 수백 개 |
+| 폴더 확인 (Scan·시작 시 자동 스캔) | `QThread (FolderScanThread)` | 네트워크 폴더에서 '응답 없음' 방지. 진행 문구·중지(Esc) |
+| Workflow별 대화상자 폴더 상태 | 작업 스레드 1개 (`ThreadPoolExecutor`) | 대화상자는 바로 열리고 행마다 '확인 중…' |
+| 데이터 로드 | `QThread (DataLoaderThread)` + Lot 스레드 8개 | 네트워크 지연을 겹친다. 결과 순서는 Lot 순서 |
+| 폴더 확인 결과 재사용 | `ScanSession` (사용자 동작 1회) | 스캔→대화상자→로드가 같은 폴더를 다시 읽지 않는다 |
+| TIFF 찾기·읽기 | `QThread (TiffLoadThread)` | 더블클릭 때 폴더 목록·TIFF 읽기 |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |
 | 결과 UI 업데이트 | `QTimer.singleShot(0, ...)` | 스레드 → 메인 스레드 안전한 UI 업데이트 |

@@ -87,6 +87,15 @@ class UIBuilderMixin:
         self.btn_workflow.clicked.connect(self._open_workflow_dialog)
         top.addWidget(self.btn_workflow)
 
+        # 폴더 확인·데이터 로드 중에만 보인다. 중지하면 이전 결과를 그대로 둔다 (Esc도 같다)
+        self.btn_cancel_scan = QPushButton("중지 (Esc)")
+        self.btn_cancel_scan.setToolTip("진행 중인 폴더 확인·데이터 로드를 멈춥니다. 이전 결과는 그대로입니다")
+        self.btn_cancel_scan.clicked.connect(self._cancel_scan)
+        self.btn_cancel_scan.setVisible(False)
+        top.addWidget(self.btn_cancel_scan)
+        self._cancel_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self._cancel_shortcut.activated.connect(self._cancel_scan)
+
         # Wafer 크기 선택 (200mm / 300mm)
         top.addSpacing(16)
         wafer_label = QLabel("Wafer Size:")

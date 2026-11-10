@@ -133,10 +133,23 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
     # ──────────────────────────────────────────────
     def closeEvent(self, event):
         self._save_settings()
+        # 실행 중인 폴더 확인 스레드는 중지시키고 기다린다 (다음 폴더에서 멈춘다)
+        scan = getattr(self, '_scan_thread', None)
+        if scan is not None and scan.isRunning():
+            scan.cancel()
+            if not scan.wait(3000):
+                scan.terminate()
+                scan.wait()
+        tiff = getattr(self, '_tiff_thread', None)
+        if tiff is not None and tiff.isRunning() and not tiff.wait(3000):
+            tiff.terminate()
+            tiff.wait()
         # 실행 중인 백그라운드 로드 스레드 정리 —
         # 'QThread: Destroyed while thread is still running' 크래시 방지.
         thread = getattr(self, '_loader_thread', None)
         if thread is not None and thread.isRunning():
+            if hasattr(thread, 'cancel'):
+                thread.cancel()     # Lot 사이에서 멈춘다
             thread.quit()
             if not thread.wait(3000):
                 # run()이 이벤트 루프 없이 CPU/IO 작업 중이라 quit()에 반응하지 않으면
@@ -154,9 +167,11 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
         save_settings(self.settings)
 
     def _restore_settings(self):
-        if self.folder_path and os.path.isdir(self.folder_path):
+        # 지난 폴더가 네트워크 경로면 isdir 한 번도 수 초가 걸린다. 창을 먼저 띄우고
+        # 폴더 확인은 스캔 스레드가 한다 (없으면 경고 없이 System Log에만 남긴다)
+        if self.folder_path:
             self.path_edit.setText(self.folder_path)
-            QTimer.singleShot(100, self._scan_folder)
+            QTimer.singleShot(100, partial(self._scan_folder, startup=True))
         self._restore_geometry()
 
     def _restore_geometry(self):

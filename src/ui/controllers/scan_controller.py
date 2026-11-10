@@ -1,12 +1,14 @@
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 import logging
-import os
+import time
 import traceback
-from core.recipe_scanner import (build_recipe, normalize_spec_names, recipes_from_mapping,
-                                 scan_recipes)
-from core.workflow_map import common_source_folder
+from core.csv_loader import ScanSession, is_dir
+from core.recipe_scanner import (build_recipe, compare_recipes, normalize_spec_names,
+                                 recipes_from_mapping, scan_recipes)
+from core.workflow_map import common_source_folder, compute_prefill
 from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
 from ui.workers.data_loader_thread import DataLoaderThread
+from ui.workers.folder_scan_thread import FolderScanThread
 from core.checklist import basis_warnings, summarize_runs
 from core.settings import add_recent_folder
 from core import (compute_deviation_matrix, compute_affine_transform, extract_die_positions,
@@ -14,8 +16,48 @@ from core import (compute_deviation_matrix, compute_affine_transform, extract_di
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 import charts as viz
 
+FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
+                    "어느 Workflow의 데이터인지 지정해 주세요.")
+
+
+def detect_scan_target(folder, spec_keys, remembered, session):
+    """[스캔 스레드] 고른 폴더를 확인해 다음 단계를 정한다. 화면은 건드리지 않는다.
+
+    Returns:
+        {'action': 'invalid'}                 — 폴더가 없다
+        {'action': 'none'}                    — Recipe 구조가 없다
+        {'action': 'load', 'recipes': [...]}  — 그대로 로드한다
+        {'action': 'dialog', 'reason': str, 'mismatched': [...], 'prefill': {...}}
+            — Workflow별 폴더 대화상자를 연다 (초기값도 여기서 계산해 대화상자가 바로 뜬다)
+    """
+    if not is_dir(folder, session):
+        return {'action': 'invalid'}
+    recipes = scan_recipes(folder, session=session)
+    mismatched = []
+    if not recipes:
+        # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
+        # Workflow를 지정해 분석할 수 있게 한다
+        if not (spec_keys and build_recipe(folder, session=session) is not None):
+            return {'action': 'none'}
+        reason = FLAT_ROOT_REASON
+    else:
+        # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
+        # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
+        mismatched = normalize_spec_names(recipes, spec_keys) if spec_keys else []
+        if not mismatched:
+            return {'action': 'load', 'recipes': recipes}
+        mis_list = '\n'.join(f"  • {m}" for m in mismatched)
+        reason = ("폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
+                  f"Spec 이름과 다른 폴더:\n{mis_list}")
+    return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched,
+            'prefill': compute_prefill(spec_keys, folder, remembered, session)}
+
 
 class ScanMixin:
+    _scan_thread = None       # 폴더 확인 스레드 (FolderScanThread)
+    _scan_then = None         # 폴더 확인이 끝나면 부를 함수
+    _previous_view = None     # 로드를 중지하면 되돌릴 이전 결과
+
     def _browse_folder(self):
         path = QFileDialog.getExistingDirectory(
             self, "Root Data 폴더 선택", self.path_edit.text() or "")
@@ -23,62 +65,123 @@ class ScanMixin:
             self.path_edit.setText(path)
             self._scan_folder()
 
-
-    def _scan_folder(self):
-        folder = self.path_edit.text()
-        if not folder or not os.path.isdir(folder):
-            QMessageBox.warning(self, "경고", "유효한 폴더를 선택해주세요.")
-            return
-
-        # 재진입 차단: 이전 로드 스레드가 아직 실행 중이면 새 스캔을 시작하지 않는다.
+    def _scan_busy(self):
+        """폴더 확인이나 데이터 로드가 진행 중이면 알리고 True."""
+        # 재진입 차단: 이전 스레드가 아직 실행 중이면 새 스캔을 시작하지 않는다.
         # (실행 중 스레드 참조를 덮어써 누수·UI 변조가 일어나는 것을 방지)
-        if self._loader_thread is not None and self._loader_thread.isRunning():
+        busy = any(thread is not None and thread.isRunning()
+                   for thread in (self._loader_thread, self._scan_thread))
+        if busy:
             self.logger.warn("이미 스캔이 진행 중입니다. 완료 후 다시 시도하세요.")
             QMessageBox.information(self, "알림",
                                     "이미 스캔이 진행 중입니다. 완료될 때까지 기다려주세요.")
+        return busy
+
+    def _scan_folder(self, *_args, startup=False):
+        """Scan 버튼 — 폴더 확인은 스캔 스레드가 한다 (네트워크 폴더에서 화면이 멈추지 않게).
+
+        startup=True는 시작할 때 지난 폴더를 자동 스캔하는 경우다. 폴더가 없으면 경고 없이 그친다.
+        """
+        folder = self.path_edit.text()
+        if not folder:
+            if not startup:
+                QMessageBox.warning(self, "경고", "유효한 폴더를 선택해주세요.")
+            return
+        if self._scan_busy():
             return
 
         self.main_tabs.setCurrentIndex(0)
         self.logger.section("폴더 스캔 시작")
         self.logger.info(f"경로: {folder}")
-        self.statusBar().showMessage("스캔 중...")
 
-        # 검증을 통과한 뒤에만 바꾼다. 취소했을 때 이전 결과가 새 Recipe 이름 아래 보이면 안 된다
-        recipes = scan_recipes(folder)
+        # 새 동작은 새 세션으로 읽는다 (이전 스캔의 폴더 확인 결과를 쓰지 않는다)
+        session = ScanSession()
         spec_keys = list(self.settings.get('spec_deviation', {}).keys())
-        if not recipes:
-            # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
-            # Workflow를 지정해 분석할 수 있게 한다
-            if spec_keys and build_recipe(folder) is not None:
-                self._load_with_workflow_dialog(
-                    folder, "선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
-                            "어느 Workflow의 데이터인지 지정해 주세요.")
+        remembered = dict(self.settings.get('workflow_folder_map') or {})
+        self._start_folder_check(
+            session, lambda s: detect_scan_target(folder, spec_keys, remembered, s),
+            lambda result: self._on_scan_target(folder, result, session, startup))
+
+    def _start_folder_check(self, session, job, then):
+        """job(session)을 스캔 스레드에서 돌리고, 끝나면 화면 스레드에서 then(결과)을 부른다."""
+        self.statusBar().showMessage("폴더 확인 중...")
+        thread = FolderScanThread(job, session)
+        thread.progress.connect(self.statusBar().showMessage)
+        thread.done.connect(self._on_folder_check_done)
+        thread.failed.connect(self._on_folder_check_failed)
+        thread.cancelled.connect(self._on_folder_check_cancelled)
+        self._scan_thread = thread
+        self._scan_then = then
+        self._set_scan_controls_enabled(False)
+        thread.start()
+
+    def _finish_folder_check(self):
+        thread, self._scan_thread = self._scan_thread, None
+        if thread is not None:
+            thread.wait(2000)   # run()은 마지막 시그널을 보냈다. 끝날 때까지 잠깐 기다린다
+        self._set_scan_controls_enabled(True)
+        then, self._scan_then = self._scan_then, None
+        return then
+
+    def _on_folder_check_done(self, result, elapsed):
+        then = self._finish_folder_check()
+        self.logger.info(f"⏱ 폴더 확인 {elapsed:.1f}초")
+        if then is not None:
+            then(result)
+
+    def _on_folder_check_cancelled(self):
+        self._finish_folder_check()
+        self.logger.warn("폴더 확인을 중지했습니다. 이전 결과를 그대로 둡니다.")
+        self.statusBar().showMessage("스캔 중지 — 이전 결과 유지")
+
+    def _on_folder_check_failed(self, message, tb=''):
+        self._finish_folder_check()
+        self._log_during_recovery(f"폴더 확인 오류: {message}")
+        if tb:
+            self._log_during_recovery(tb.rstrip())
+        self.statusBar().showMessage("스캔 실패")
+        QMessageBox.critical(self, "오류", message)
+
+    def _cancel_scan(self):
+        """중지 버튼·Esc — 진행 중인 폴더 확인이나 데이터 로드를 멈춘다. 이전 결과는 그대로다."""
+        for thread in (self._scan_thread, self._loader_thread):
+            if thread is not None and thread.isRunning() and hasattr(thread, 'cancel'):
+                thread.cancel()
+                self.statusBar().showMessage("중지하는 중... (지금 읽는 폴더가 끝나면 멈춥니다)")
                 return
+
+    def _on_scan_target(self, folder, result, session, startup=False):
+        """[화면 스레드] 폴더 확인 결과에 따라 대화상자를 열거나 로드를 시작한다."""
+        action = result['action']
+        if action == 'invalid':
+            if startup:
+                self.logger.info(f"지난 폴더를 찾을 수 없어 자동 스캔하지 않았습니다: {folder}")
+                self.statusBar().showMessage("폴더를 선택하세요.")
+                return
+            self.logger.warn(f"폴더를 찾을 수 없습니다: {folder}")
+            self.statusBar().showMessage("폴더 없음")
+            QMessageBox.warning(self, "경고", "유효한 폴더를 선택해주세요.")
+            return
+        if action == 'none':
             self.logger.warn("Recipe 구조를 찾지 못했습니다.")
+            self.statusBar().showMessage("Recipe 구조 없음")
             QMessageBox.information(self, "알림", "Recipe 구조를 찾지 못했습니다.")
             return
-
-        # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
-        # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
-        if spec_keys:
-            mismatched = normalize_spec_names(recipes, spec_keys)
-            if mismatched:
+        if action == 'dialog':
+            if result['mismatched']:
                 self.logger.warn("폴더명이 Spec 이름과 달라 Workflow별 폴더 선택을 엽니다: "
-                                 + ', '.join(mismatched))
-                mis_list = '\n'.join(f"  • {m}" for m in mismatched)
-                self._load_with_workflow_dialog(
-                    folder, "폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
-                            f"Spec 이름과 다른 폴더:\n{mis_list}")
-                return
-
-        self._start_load(recipes, folder)
+                                 + ', '.join(result['mismatched']))
+            self._load_with_workflow_dialog(folder, result['reason'], session=session,
+                                            prefill=result['prefill'])
+            return
+        self._start_load(result['recipes'], folder, session=session)
 
     def _open_workflow_dialog(self):
-        """상단 'Workflow별 선택' 버튼 — 폴더명과 관계없이 Workflow마다 폴더를 고른다."""
-        if self._loader_thread is not None and self._loader_thread.isRunning():
-            self.logger.warn("이미 스캔이 진행 중입니다. 완료 후 다시 시도하세요.")
-            QMessageBox.information(self, "알림",
-                                    "이미 스캔이 진행 중입니다. 완료될 때까지 기다려주세요.")
+        """상단 'Workflow별 선택' 버튼 — 폴더명과 관계없이 Workflow마다 폴더를 고른다.
+
+        대화상자는 바로 열린다. 초기값과 폴더 상태는 대화상자가 작업 스레드에서 확인한다.
+        """
+        if self._scan_busy():
             return
         if not self.settings.get('spec_deviation'):
             QMessageBox.warning(self, "경고", "Spec 설정(spec_deviation)이 없어 Workflow를 지정할 수 없습니다.")
@@ -87,14 +190,20 @@ class ScanMixin:
         self.main_tabs.setCurrentIndex(0)
         self.logger.section("Workflow별 폴더 선택")
         self._load_with_workflow_dialog(
-            folder if os.path.isdir(folder) else '',
+            folder,
             "Workflow마다 분석할 데이터 폴더를 지정합니다. 폴더 이름은 Spec 이름과 달라도 됩니다.")
 
-    def _load_with_workflow_dialog(self, root, reason):
-        """Workflow별 폴더 대화상자를 열고, 확인하면 그 폴더들로 로드한다. 취소하면 아무것도 바꾸지 않는다."""
+    def _load_with_workflow_dialog(self, root, reason, session=None, prefill=None):
+        """Workflow별 폴더 대화상자를 열고, 확인하면 그 폴더들로 로드한다. 취소하면 아무것도 바꾸지 않는다.
+
+        session: 폴더 확인 결과 — 대화상자와 로드가 같은 폴더를 다시 읽지 않는다
+        prefill: 스캔 스레드가 계산한 초기값 (없으면 대화상자가 열고 나서 계산한다)
+        """
+        session = session if session is not None else ScanSession()
         spec_keys = list(self.settings.get('spec_deviation', {}).keys())
         remembered = self.settings.get('workflow_folder_map', {})
-        dlg = WorkflowFolderDialog(self, spec_keys, root, remembered, reason)
+        dlg = WorkflowFolderDialog(self, spec_keys, root, remembered, reason,
+                                   session=session, prefill=prefill)
         if dlg.exec() != QDialog.Accepted:
             self.logger.info("Workflow별 폴더 선택을 취소했습니다. 분석하지 않습니다.")
             self.statusBar().showMessage("스캔 취소")
@@ -107,7 +216,8 @@ class ScanMixin:
             key: value for key, value in merged.items() if key in spec_keys}
         for text in dlg.warnings():
             self.logger.warn(f"  ⚠ {text}")
-        recipes, problems = recipes_from_mapping(mapping, spec_keys)
+        # 대화상자가 확인한 폴더는 세션에서 꺼낸다 (다시 읽지 않는다)
+        recipes, problems = recipes_from_mapping(mapping, spec_keys, session=session)
         if problems:
             lines = '\n'.join(f"  • {name}: {reason_text} ({path or '경로 없음'})"
                               for name, path, reason_text in problems)
@@ -123,14 +233,18 @@ class ScanMixin:
         for r in recipes:
             self.logger.info(f"  {r['short_name']} ← {r['source_label']} ({r['source_path']})")
         source = common_source_folder([r['source_path'] for r in recipes])
-        self._start_load(recipes, source, source_label='Workflow별 선택')
+        self._start_load(recipes, source, source_label='Workflow별 선택', session=session)
 
-    def _start_load(self, recipes, source_folder, source_label=None):
+    def _start_load(self, recipes, source_folder, source_label=None, session=None):
         """검증을 마친 Recipe 목록으로 로드를 시작한다.
 
         source_label이 없으면 루트 폴더 자동 스캔이다. 그때만 최근 폴더에 넣는다
         (Workflow별 선택의 공통 상위 폴더는 다시 스캔할 루트가 아니다).
+        session: 폴더 확인 결과 — 로드가 Lot 폴더를 다시 찾지 않는다
         """
+        # 로드를 중지하면 이 화면으로 되돌린다
+        self._previous_view = {'recipes': self.recipes, 'results': self.recipe_results,
+                               'index': self.current_recipe_idx}
         self.recipes = recipes
         self.logger.ok(f"✅ {len(self.recipes)}개 Recipe 발견"
                        + (f" ({source_label})" if source_label else ""))
@@ -142,9 +256,10 @@ class ScanMixin:
         self._save_settings()
 
         self.logger.info("전체 Recipe 데이터 로드 시작 (회차 폴더가 여럿이면 모든 회차)...")
-        self._loader_thread = DataLoaderThread(source_folder, recipes=recipes)
+        self._loader_thread = DataLoaderThread(source_folder, recipes=recipes, session=session)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
+        self._loader_thread.cancelled.connect(self._on_load_cancelled)
         self._loader_thread.progress.connect(self.statusBar().showMessage)
         try:
             self._reset_results_for_scan()
@@ -185,11 +300,45 @@ class ScanMixin:
             logging.getLogger(__name__).exception('System Log 기록 실패')
 
     def _set_scan_controls_enabled(self, enabled: bool):
-        """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open/Workflow별 선택 버튼 활성/비활성."""
+        """스캔 진행 중 중복 트리거 방지를 위해 Scan/Open/Workflow별 선택 버튼 활성/비활성.
+
+        진행 중에는 중지 버튼을 보인다.
+        """
         for attr in ('btn_scan', 'btn_browse', 'btn_workflow'):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setEnabled(enabled)
+        cancel = getattr(self, 'btn_cancel_scan', None)
+        if cancel is not None:
+            cancel.setVisible(not enabled)
+
+    def _on_load_cancelled(self):
+        """로드 스레드 cancelled 슬롯 — 로드 전 화면(이전 결과)으로 되돌린다."""
+        thread, self._loader_thread = self._loader_thread, None
+        if thread is not None and hasattr(thread, 'wait'):
+            thread.wait(2000)
+        self._set_scan_controls_enabled(True)
+        self.logger.warn("데이터 로드를 중지했습니다. 이전 결과로 되돌립니다.")
+        try:
+            self._restore_previous_view()
+        except Exception as e:
+            self._log_during_recovery(f"이전 결과 복원 오류: {type(e).__name__}: {e}")
+        self.statusBar().showMessage("로드 중지 — 이전 결과 유지")
+
+    def _restore_previous_view(self):
+        view, self._previous_view = self._previous_view, None
+        if view is None:
+            return
+        self.recipes = view['recipes']
+        self.recipe_results = view['results']
+        self._run_compare_key = None
+        self._build_nav()
+        if self.recipe_results:
+            self._update_summary_table(compare_recipes(self.recipe_results), self.recipe_results)
+            self._compute_all_step_pass_states()
+        if self.recipes:
+            index = view['index'] if 0 <= view['index'] < len(self.recipes) else 0
+            self._select_step(index)
 
     def _on_scan_error(self, e, tb=''):
         """로드 스레드 error 슬롯 — 메시지 표시 + 상태 복구(스레드 리셋, 버튼 재활성).
@@ -198,6 +347,7 @@ class ScanMixin:
         (현장에서 어느 파일·어느 함수인지 추적할 수 있어야 한다)
         """
         self._loader_thread = None
+        self._previous_view = None
         self._set_scan_controls_enabled(True)
         # 메시지 없는 예외도 대화상자가 비지 않게 한다
         try:
@@ -320,6 +470,10 @@ class ScanMixin:
                                  f"(회차 비교 탭의 ⚠ 참고)")
 
     def _on_scan_complete(self, results, comparison, elapsed):
+        t_render = time.perf_counter()
+        self._previous_view = None
+        # 어느 단계가 느린지 현장에서 구분할 수 있게 단계별 시간을 남긴다
+        self.logger.info(f"⏱ 데이터 로드 {elapsed:.1f}초")
         # 회차가 둘 이상인 Workflow는 회차별 요약을 붙인다 (회차 비교 표·Excel)
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
@@ -382,5 +536,6 @@ class ScanMixin:
         # 스레드 완료 → 참조 해제 + 컨트롤 재활성 (isRunning() 가드를 신뢰 가능하게 유지)
         self._loader_thread = None
         self._set_scan_controls_enabled(True)
+        self.logger.info(f"⏱ 화면 갱신 {time.perf_counter() - t_render:.1f}초")
 
 

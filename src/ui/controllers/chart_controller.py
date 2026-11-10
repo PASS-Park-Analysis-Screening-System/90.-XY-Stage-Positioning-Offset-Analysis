@@ -172,9 +172,14 @@ class ChartMixin:
 
     def _render_die_position(self):
         dyn = getattr(self, '_dynamic_die_positions', None)
+        # Die 좌표와 웨이퍼 크기가 같으면 다시 그리지 않는다 (Step·회차 전환마다 0.3초 남짓)
+        key = (self._get_wafer_radius_um(), tuple(sorted(dyn.items())) if dyn else None)
+        if key == getattr(self, '_die_position_key', None):
+            return
         self.chart_widgets['Die Position'].set_figure(
             viz.plot_die_position_map(dynamic_positions=dyn,
                                        wafer_radius_um=self._get_wafer_radius_um()))
+        self._die_position_key = key
 
 
     def _get_wafer_radius_um(self) -> float:

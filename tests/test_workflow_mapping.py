@@ -337,12 +337,23 @@ def qapp():
     app.processEvents()
 
 
+def _wait_for(qapp, condition, timeout=10.0):
+    """작업 스레드의 결과가 화면 스레드에 올 때까지 이벤트를 돌린다."""
+    import time
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, '작업 스레드 결과가 오지 않았습니다'
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
 def test_dialog_ok_follows_rows(qapp, tmp_path):
     from PySide6.QtWidgets import QDialogButtonBox
     from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
     root = _make_lots(tmp_path / 'lots', range(1, 4))
 
     dlg = WorkflowFolderDialog(None, SPECS, str(root), {}, '이유 문구')
+    _wait_for(qapp, lambda: not dlg._prefill_pending)     # 초기값은 열고 나서 채워진다
     ok_btn = dlg.buttons.button(QDialogButtonBox.Ok)
     check, edit, status, _timer = dlg._rows['Vision Pattern']
     assert not check.isChecked() and edit.text() == str(root)
@@ -375,11 +386,13 @@ def test_dialog_rechecks_only_changed_row(qapp, tmp_path, monkeypatch):
     ida = _make_lots(tmp_path / 'ida', ['L1'])
     calls = []
     real = wm.build_recipe
-    monkeypatch.setattr(wm, 'build_recipe', lambda p: calls.append(p) or real(p))
+    monkeypatch.setattr(wm, 'build_recipe',
+                        lambda p, *a, **k: calls.append(p) or real(p, *a, **k))
 
     dlg = WorkflowFolderDialog(None, SPECS, '', {
         'Vision Pattern': {'path': str(vp), 'enabled': True},
         'In-Die Align': {'path': str(ida), 'enabled': True}})
+    _wait_for(qapp, lambda: not dlg._prefill_pending and not dlg._pending)
     assert sorted(calls) == sorted([str(vp), str(ida)])     # 열 때 폴더마다 한 번
 
     calls.clear()
@@ -389,8 +402,9 @@ def test_dialog_rechecks_only_changed_row(qapp, tmp_path, monkeypatch):
     dlg._update_status('LLC Translation')
     assert calls == []      # 이미 읽은 폴더는 다시 읽지 않고, 다른 행도 다시 읽지 않는다
 
-    dlg._accept_if_valid()  # 확인할 때는 한 번 새로 읽는다
-    assert sorted(calls) == sorted([str(vp), str(ida)])
+    dlg._accept_if_valid()  # 확인할 때도 다시 읽지 않는다 (확인한 결과를 그대로 쓴다)
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert calls == []
     dlg.deleteLater()
 
 
@@ -528,9 +542,9 @@ def flow(window, monkeypatch):
              'shown_warning': [], 'shown_info': []}
 
     class FakeThread:
-        def __init__(self, folder, recipes=None):
-            self.folder, self.recipes = folder, recipes
-            self.finished = self.error = self.progress = self
+        def __init__(self, folder, recipes=None, session=None):
+            self.folder, self.recipes, self.session = folder, recipes, session
+            self.finished = self.error = self.progress = self.cancelled = self
             state['threads'].append(self)
 
         def connect(self, _slot):
@@ -543,9 +557,11 @@ def flow(window, monkeypatch):
             return state['running']
 
     class FakeDialog:
-        def __init__(self, parent, spec_keys, root, remembered, reason):
+        def __init__(self, parent, spec_keys, root, remembered, reason,
+                     session=None, prefill=None):
             state['dialogs'].append({'root': root, 'reason': reason, 'specs': spec_keys,
-                                     'remembered': remembered})
+                                     'remembered': remembered, 'session': session,
+                                     'prefill': prefill})
 
         def exec(self):
             return QDialog.Accepted if state['answer'] else QDialog.Rejected
@@ -563,6 +579,8 @@ def flow(window, monkeypatch):
 
     monkeypatch.setattr(controller, 'DataLoaderThread', FakeThread)
     monkeypatch.setattr(controller, 'WorkflowFolderDialog', FakeDialog)
+    # 폴더 확인 스레드는 이 테스트에서 바로 실행한다 (시그널이 곧바로 슬롯을 부른다)
+    monkeypatch.setattr(controller.FolderScanThread, 'start', lambda self: self.run())
     monkeypatch.setattr(controller, 'add_recent_folder',
                         lambda s, f: state['recent'].append(f) or s)
     monkeypatch.setattr(window, '_save_settings', lambda: None)
