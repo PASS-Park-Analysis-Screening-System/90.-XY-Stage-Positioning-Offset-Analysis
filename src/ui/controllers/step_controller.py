@@ -3,7 +3,7 @@ from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
                   filter_stabilization_die, stabilization_die)
 from core.die_analysis import select_display_rows
-from core.checklist import analysis_warnings
+from core.checklist import analysis_warnings, combine_verdicts
 from core import compute_statistics, filter_by_method
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
@@ -66,12 +66,7 @@ class StepMixin:
             # PASS/FAIL 판정은 core.evaluate_deviation_pass 단일 출처를 사용 (CardMixin과 동일).
             px = evaluate_deviation_pass(sx, dx, spec_r, spec_s)
             py = evaluate_deviation_pass(sy, dy, spec_r, spec_s)
-            if px is False or py is False:
-                self.step_pass_states[i] = False
-            elif px is None or py is None:
-                self.step_pass_states[i] = None
-            else:
-                self.step_pass_states[i] = True
+            self.step_pass_states[i] = combine_verdicts(px, py)
         self._refresh_step_buttons()
 
 
@@ -108,6 +103,8 @@ class StepMixin:
         recipe = self.recipes[idx]
         self.step_title.setText(f"Step {recipe['index']}: {recipe['name']}")
         self.logger.info(f"Step 전환 → {recipe['name']}")
+        self._sync_run_combo()
+        self._update_run_compare()
 
         if idx < len(self.recipe_results) and self.recipe_results[idx].get('raw_data'):
             result = self.recipe_results[idx]

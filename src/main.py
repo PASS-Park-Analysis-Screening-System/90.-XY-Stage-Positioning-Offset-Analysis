@@ -77,11 +77,12 @@ from ui.controllers.die_filter_controller import DieFilterMixin
 from ui.controllers.lot_filter_controller import LotFilterMixin
 from ui.controllers.tiff_controller import TiffMixin
 from ui.controllers.export_controller import ExportMixin
+from ui.controllers.run_compare_controller import RunCompareMixin
 
 # ═══════════════════════════════════════════════
 #  Main Application
 # ═══════════════════════════════════════════════
-class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin):
+class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin):
 
     def __init__(self):
         super().__init__()

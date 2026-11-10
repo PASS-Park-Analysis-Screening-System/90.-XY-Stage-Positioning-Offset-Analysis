@@ -71,6 +71,10 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
          → recipes_from_mapping(mapping) → 지정한 Recipe로 로드 (취소 시 로드 안 함)
 
 [3] 데이터 로드 (ScanWorker)
+    └─ 라운드(회차)가 2개 이상이면 load_all_recipes가 회차마다 load_recipe_data
+       → 결과 = 기본 회차 결과 + run_results(회차별 전체) + default_run
+         (default_round_name: 1st 있으면 1st, 숫자·날짜 회차는 마지막, 그 밖은 첫 라운드)
+       → 화면: summarize_runs로 회차 비교 표·Excel Run Comparison, 회차 콤보로 run_view 전환
     └─ csv_loader.batch_load_lots(recipe_path)
        → raw_data[]: [{lot_name, site_id, method, value, is_outlier, valid}, ...]
 

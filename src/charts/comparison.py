@@ -167,3 +167,75 @@ from core import DIE_POSITIONS, get_die_position
 
 
 
+
+
+# ──────────────────────────────────────────────
+# 회차 비교 (한 Workflow의 트러블슈팅 회차들)
+# ──────────────────────────────────────────────
+
+def plot_run_comparison_metrics(runs: list, spec_range=None, spec_stddev=None,
+                                title: str = '') -> Figure:
+    """회차별 Dev Range·Dev StdDev (X/Y 2행). runs는 core.checklist.summarize_runs 결과."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    labels = [str(r['run']) for r in runs]
+    xs = list(range(len(runs)))
+    for row, axis in enumerate(('x', 'y')):
+        ax = axes[row]
+        for key, spec, color, marker in (('range', spec_range, '#2196F3', 'o'),
+                                         ('stddev', spec_stddev, '#FF9800', 's')):
+            values = [r[axis][key] for r in runs]
+            pts = [(x, v) for x, v in zip(xs, values) if v is not None]
+            if pts:
+                ax.plot([p[0] for p in pts], [p[1] for p in pts], marker + '-', color=color,
+                        linewidth=2, markersize=5,
+                        label=f"Dev {'Range' if key == 'range' else 'StdDev'}")
+            if spec is not None:
+                ax.axhline(spec, color=color, linestyle='--', linewidth=1,
+                           label=f"Spec {'Range' if key == 'range' else 'StdDev'} {spec}")
+        # FAIL 회차는 빨간 표시로 바로 보이게 한다
+        for x, r in zip(xs, runs):
+            if r[axis]['result'] is False and r[axis]['range'] is not None:
+                ax.plot(x, r[axis]['range'], 'o', markersize=10, markerfacecolor='none',
+                        markeredgecolor='#D32F2F', markeredgewidth=2)
+        ax.set_ylabel(f'{axis.upper()} Deviation (µm)')
+        ax.set_title(f'{axis.upper()} — Dev Range / StdDev per run', fontsize=10)
+        ax.grid(True, alpha=0.3)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc='best', fontsize=8)
+    axes[1].set_xticks(xs)
+    axes[1].set_xticklabels(labels, rotation=45 if len(labels) > 10 else 0, fontsize=8)
+    axes[1].set_xlabel('Run')
+    fig.suptitle(f'Run Comparison {title}'.strip(), fontsize=12, fontweight='bold')
+    fig.tight_layout()
+    return fig
+
+
+def plot_run_comparison_boxplot(run_results: list, title: str = '') -> Figure:
+    """회차별 편차(µm) 분포 박스플롯 (X/Y 2행, 분석 기준: 안정화 Die 제외)."""
+    from core.die_analysis import compute_deviation_matrix
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    labels = [str(r.get('round', '')) for r in run_results]
+    for row, axis in enumerate(('X', 'Y')):
+        ax = axes[row]
+        series = []
+        for run in run_results:
+            dev = compute_deviation_matrix(filter_stabilization_die(run.get('raw_data', [])), axis)
+            series.append([v for row_vals in dev['matrix'].values()
+                           for v in row_vals.values() if v is not None])
+        positions = [i for i, s in enumerate(series) if s]
+        if positions:
+            ax.boxplot([series[i] for i in positions], positions=positions, widths=0.6,
+                       patch_artist=True,
+                       boxprops=dict(facecolor='#2196F340', edgecolor='#2196F3'),
+                       medianprops=dict(color='#D32F2F', linewidth=2),
+                       flierprops=dict(marker='o', markerfacecolor='#FF5722', markersize=3))
+        ax.axhline(0, color='#888888', linewidth=0.8)
+        ax.set_ylabel(f'{axis} Deviation (µm)')
+        ax.set_title(f'{axis} — deviation per run', fontsize=10)
+        ax.grid(True, alpha=0.3, axis='y')
+    axes[1].set_xticks(range(len(labels)))
+    axes[1].set_xticklabels(labels, rotation=45 if len(labels) > 10 else 0, fontsize=8)
+    axes[1].set_xlabel('Run')
+    fig.suptitle(f'Run Deviation Boxplot {title}'.strip(), fontsize=12, fontweight='bold')
+    fig.tight_layout()
+    return fig

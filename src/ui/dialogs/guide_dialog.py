@@ -244,7 +244,15 @@ class GuideDialog(QDialog):
                 "<li>체크한 Workflow의 폴더가 없거나 Lot 데이터가 없으면 확인할 수 없습니다. 같은 폴더를 두 Workflow에 지정하면 경고만 보여 줍니다.</li>"
                 "<li>고른 폴더는 다음에 다시 열 때 <b>(지난번 선택)</b>으로 채워집니다. 스캔에서 열린 경우, 선택한 폴더 밖의 지난번 폴더와 Lot이 바로 들어 있는 선택한 폴더는 <b>체크하지 않은 채</b> 보여 주므로 어느 Workflow인지 확인한 뒤 체크하세요. 경로는 전체 경로로 입력하며, 탐색기 '경로로 복사'의 큰따옴표는 자동으로 뗍니다.</li>"
                 "</ul>"
-                "<h3>5.4 Cpk와 Spec Range 연계 해석</h3>"
+                "<h3>5.4 회차(트러블슈팅 반복) 폴더</h3>"
+                "<p>Workflow 폴더 아래에 <code>1</code>~<code>14</code>나 날짜 이름의 폴더가 있고 그 안에 Lot이 있으면 각 폴더를 <b>회차</b>로 보고 <b>모든 회차를 따로 분석</b>합니다. 회차마다 21 Die × 10 Repeat 기준, 첫 리핏 제외, 이상치 판정이 그대로 적용됩니다.</p>"
+                "<ul>"
+                "<li>Step 상세(카드·차트·PDF·Excel)는 기본으로 <b>마지막 회차</b>를 보여 줍니다. 제목 옆 <b>회차</b> 콤보에서 바꿀 수 있고, 내보내기에는 <code>Run: 14 (14회차 중)</code>처럼 적힙니다.</li>"
+                "<li>기존 <code>1st</code>/<code>2nd</code> 구조는 지금처럼 <b>1st</b>가 기본입니다.</li>"
+                "<li>Chart 영역 <b>Comparison → 회차 비교</b> 탭에서 회차별 Range·StdDev·Avg·Cpk·판정 표와 추이·박스플롯을 봅니다. 행을 클릭하면 그 회차로 바뀝니다. ⚠는 경고가 있는 회차입니다.</li>"
+                "<li>Excel 리포트에는 회차가 둘 이상인 Workflow마다 <b>Run Comparison</b> 시트가 붙습니다.</li>"
+                "</ul>"
+                "<h3>5.5 Cpk와 Spec Range 연계 해석</h3>"
                 "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die·Repeat 2개 미만) Cpk도 —로 표시합니다.</p>"
             )
         }

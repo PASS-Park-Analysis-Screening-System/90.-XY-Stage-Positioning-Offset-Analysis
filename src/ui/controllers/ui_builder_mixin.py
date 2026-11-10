@@ -20,6 +20,43 @@ from ui.controllers.table_controller import (
     SUMMARY_ROW_LABELS, SUMMARY_GROUP_HEADER_ROWS, SUMMARY_CHK_ROWS)
 
 class UIBuilderMixin:
+    def _build_run_compare_widget(self):
+        """선택한 Workflow의 회차 비교: 표 + Range/StdDev 추이 + 편차 박스플롯."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        self.run_compare_label = QLabel("회차가 1개라 비교할 수 없습니다")
+        self.run_compare_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
+        self.run_compare_label.setWordWrap(True)
+        layout.addWidget(self.run_compare_label)
+
+        splitter = QSplitter(Qt.Vertical)
+        self.run_compare_table = QTableWidget(0, len(self.RUN_COMPARE_HEADERS))
+        self.run_compare_table.setHorizontalHeaderLabels(self.RUN_COMPARE_HEADERS)
+        self.run_compare_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.run_compare_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.run_compare_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.run_compare_table.verticalHeader().setVisible(False)
+        self.run_compare_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.run_compare_table.setToolTip("행을 클릭하면 Step 상세의 회차가 바뀝니다")
+        self.run_compare_table.cellClicked.connect(self._on_run_row_clicked)
+        splitter.addWidget(self.run_compare_table)
+
+        self.run_compare_charts = QTabWidget()
+        self.run_compare_charts.setDocumentMode(True)
+        self.chart_widgets['Run Metrics'] = ChartWidget()
+        self.chart_widgets['Run Boxplot'] = ChartWidget()
+        self.run_compare_charts.addTab(self.chart_widgets['Run Metrics'], 'Range / StdDev')
+        self.run_compare_charts.addTab(self.chart_widgets['Run Boxplot'], '편차 Boxplot')
+        splitter.addWidget(self.run_compare_charts)
+        self.run_compare_table.setMinimumHeight(180)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        layout.addWidget(splitter, 1)
+        self.run_compare_table.hide()
+        self.run_compare_charts.hide()
+        return widget
+
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -98,6 +135,15 @@ class UIBuilderMixin:
         self.step_title = QLabel("Step: 폴더를 선택하세요")
         self.step_title.setStyleSheet(f"font-size: 16pt; font-weight: bold; color: {ACCENT};")
         left_layout.addWidget(self.step_title)
+        # 회차(트러블슈팅 반복)가 둘 이상인 Workflow만 보인다. 카드·차트·PDF가 이 회차를 쓴다
+        self.run_combo_label = QLabel("회차:")
+        self.run_combo_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
+        self.run_combo = QComboBox()
+        self.run_combo.setMinimumWidth(140)
+        self.run_combo.setToolTip("Step 상세(카드·차트·내보내기)에 쓸 회차")
+        self.run_combo.currentIndexChanged.connect(self._on_run_combo_changed)
+        self.run_combo_label.hide()
+        self.run_combo.hide()
 
         # --- Stat Cards ---
         cards = QHBoxLayout()
@@ -109,7 +155,13 @@ class UIBuilderMixin:
 
         btn_spec = QPushButton("⚙️ Spec Config")
         btn_spec.clicked.connect(self._open_spec_config)
-        left_layout.addWidget(btn_spec, alignment=Qt.AlignRight)
+        # 회차 콤보는 Spec Config 버튼 줄에 둔다 (제목 줄에 두면 긴 제목과 합쳐 패널 최소 폭이 커진다)
+        spec_row = QHBoxLayout()
+        spec_row.addWidget(self.run_combo_label)
+        spec_row.addWidget(self.run_combo)
+        spec_row.addStretch()
+        spec_row.addWidget(btn_spec)
+        left_layout.addLayout(spec_row)
 
         # --- Bottom Tabs ---
         self.main_tabs = QTabWidget()
@@ -782,6 +834,7 @@ class UIBuilderMixin:
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:
             _add_chart('Comparison', name, ChartWidget())
+        _add_chart('Comparison', '회차 비교', self._build_run_compare_widget(), register=False)
 
         # ── Remark 탭 (Export + Help 하위탭) ──────────────────────
         # ── Export 하위탭 ─────────────────────────────────────────

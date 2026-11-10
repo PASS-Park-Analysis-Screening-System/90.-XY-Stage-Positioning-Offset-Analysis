@@ -7,7 +7,7 @@ from core.recipe_scanner import (build_recipe, normalize_spec_names, recipes_fro
 from core.workflow_map import common_source_folder
 from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
 from ui.workers.data_loader_thread import DataLoaderThread
-from core.checklist import basis_warnings
+from core.checklist import basis_warnings, summarize_runs
 from core.settings import add_recent_folder
 from core import (compute_deviation_matrix, compute_affine_transform, extract_die_positions,
                   filter_stabilization_die)
@@ -145,6 +145,7 @@ class ScanMixin:
         self._loader_thread = DataLoaderThread(source_folder, recipes=recipes)
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
+        self._loader_thread.progress.connect(self.statusBar().showMessage)
         try:
             self._reset_results_for_scan()
         except Exception as e:
@@ -159,6 +160,7 @@ class ScanMixin:
     def _reset_results_for_scan(self):
         """이전 폴더의 결과를 지운다. 안 그러면 로드 중에 새 Step 이름으로 이전 판정이 보인다."""
         self.recipe_results = []
+        self._run_compare_key = None    # 새 결과의 회차 비교 차트를 다시 그리게 한다
         self.sum_table.setColumnCount(0)
         self._build_nav()
         if self.recipes:
@@ -281,7 +283,27 @@ class ScanMixin:
                 "  ℹ 측정 실패 행은 분석·차트에서 제외되었습니다. "
                 "장비 원본 데이터 확인이 필요합니다.")
 
+    def _log_runs(self, results):
+        """회차를 모두 읽었다는 것과 기본 회차를 남긴다 (전에는 첫 회차만 조용히 분석했다)."""
+        for r in results:
+            runs = r.get('runs') or []
+            if len(runs) < 2:
+                continue
+            label = r.get('short_name') or r.get('recipe', '')
+            self.logger.info(f"  ℹ {label}: 회차 {len(runs)}개 분석 — Step 상세 기본 회차 "
+                             f"{r.get('default_run')} (회차 콤보·'회차 비교' 탭에서 변경)")
+            warned = [str(run['run']) for run in runs if run['warnings']]
+            if warned:
+                self.logger.warn(f"  ⚠ {label}: 경고가 있는 회차 {', '.join(warned)} "
+                                 f"(회차 비교 탭의 ⚠ 참고)")
+
     def _on_scan_complete(self, results, comparison, elapsed):
+        # 회차가 둘 이상인 Workflow는 회차별 요약을 붙인다 (회차 비교 표·Excel)
+        spec_limits = self.settings.get('spec_limits', {})
+        spec_deviation = self.settings.get('spec_deviation', {})
+        for result in results:
+            if result.get('run_results'):
+                result['runs'] = summarize_runs(result, spec_limits, spec_deviation)
         self.recipe_results = results
         # 경로 입력란은 스캔 뒤에 바뀔 수 있다. 내보내기는 이 값으로 출처를 적는다.
         self._scanned_folder = self._loader_thread.folder
@@ -289,6 +311,7 @@ class ScanMixin:
         self.logger.ok(f"✅ 전체 로드 완료: {total}개 데이터 ({elapsed:.1f}초 소요)")
 
         self._log_data_quality(results)
+        self._log_runs(results)
         self._update_summary_table(comparison, results)
 
         # 모든 Step Pass/Fail 일괄 계산 → 버튼 색상 즉시 반영

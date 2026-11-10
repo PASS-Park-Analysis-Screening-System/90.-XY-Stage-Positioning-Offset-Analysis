@@ -530,7 +530,7 @@ def flow(window, monkeypatch):
     class FakeThread:
         def __init__(self, folder, recipes=None):
             self.folder, self.recipes = folder, recipes
-            self.finished = self.error = self
+            self.finished = self.error = self.progress = self
             state['threads'].append(self)
 
         def connect(self, _slot):

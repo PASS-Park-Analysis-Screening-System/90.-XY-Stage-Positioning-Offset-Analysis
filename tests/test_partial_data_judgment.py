@@ -386,6 +386,7 @@ def scan(window, monkeypatch, tmp_path):
     class FakeThread(QObject):
         finished = Signal(list, list, float)
         error = Signal(str, str)     # 실제 DataLoaderThread와 같은 형태
+        progress = Signal(str)
 
         def __init__(self, folder, recipes=None):
             super().__init__()
