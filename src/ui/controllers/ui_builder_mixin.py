@@ -859,6 +859,8 @@ class UIBuilderMixin:
             ('Quality Report', '측정 실패·이상치·Spec 초과 행과 System Log를\n전체 Recipe 기준으로 Excel 저장 (추적정보 포함)', self._export_quality_report, ORANGE),
             ('CSV Export', 'Raw Data를 CSV 형식으로 저장\n타 프로그램에서 불러오기 용이', self._export_csv, GREEN),
             ('PDF Report', '차트 + 통계 포함 PDF 보고서 생성\n출력 및 공유용', self._export_pdf, RED),
+            ('AI 분석용 Markdown', 'Spec 초과 원인 분석을 LLM에 맡기기 위한 Markdown 한 파일\n'
+             '요약·원인 단서·회차 비교·Die×Repeat 편차 표 포함', self._export_llm_markdown, PURPLE),
         ]
         for text, desc, slot, color in export_buttons_data:
             btn = QPushButton(f"{text}")

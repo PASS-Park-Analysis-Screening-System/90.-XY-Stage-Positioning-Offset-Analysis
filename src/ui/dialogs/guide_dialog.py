@@ -253,7 +253,15 @@ class GuideDialog(QDialog):
                 "<li>Chart 영역 <b>Comparison → 회차 비교</b> 탭에서 회차별 Range·StdDev·Avg·Cpk·판정 표와 추이·박스플롯을 봅니다. 행을 클릭하면 그 회차로 바뀝니다. ⚠는 경고가 있는 회차입니다.</li>"
                 "<li>Excel 리포트에는 회차가 둘 이상인 Workflow마다 <b>Run Comparison</b> 시트가 붙습니다.</li>"
                 "</ul>"
-                "<h3>5.5 Cpk와 Spec Range 연계 해석</h3>"
+                "<h3>5.5 AI 분석용 Markdown (LLM 원인 분석)</h3>"
+                "<p>Remark → Export의 <b>AI 분석용 Markdown</b>은 'Spec이 왜 나갔는지'를 LLM(ChatGPT, Claude 등)에 물어보기 위한 파일입니다. 화면은 사람이 보는 용도이고, 원인 추론은 이 파일을 LLM에 붙여 넣어 맡깁니다.</p>"
+                "<ul>"
+                "<li>한 파일(.md, UTF-8)에 분석 조건·결과 요약(Spec 초과 먼저, 여유 µm·%)·원인 단서(Affine 계통 성분, Die별 공간 분포, Lot 순서별 drift, 이상치·측정 실패)·회차 비교·회차별 Die×Repeat 편차 표가 들어 있습니다. 원인 단서는 화면에서 고른 회차 기준입니다.</li>"
+                "<li><b>회차 변경 이력 (사용자 기입)</b> 표에 회차마다 바꾼 모듈·설정을 직접 적은 뒤 LLM에 넣으면 회차 간 차이의 원인까지 묻습니다.</li>"
+                "<li>파일 끝의 <b>LLM 분석 요청</b>이 질문입니다. 파일 전체를 그대로 붙여 넣거나 첨부하면 됩니다. 파일이 크면 첨부를 쓰세요.</li>"
+                "<li>LLM 답은 이 파일의 숫자만 근거로 한 추정입니다. 장비 사실 확인과 결론은 담당자가 합니다.</li>"
+                "</ul>"
+                "<h3>5.6 Cpk와 Spec Range 연계 해석</h3>"
                 "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die·Repeat 2개 미만) Cpk도 —로 표시합니다.</p>"
             )
         }

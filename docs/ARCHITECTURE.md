@@ -19,6 +19,7 @@
 │   │   ├── tiff_loader.py    # PSPylib 전용 TIFF 바이너리 파서
 │   │   ├── exporter.py       # CSV, Excel Export
 │   │   ├── pdf_generator.py  # PDF 리포트 생성
+│   │   ├── llm_report.py     # LLM 원인 분석용 Markdown (report_schema: xy-stage-llm-report/1)
 │   │   └── settings.py       # 사용자 설정 관리
 │   ├── charts/               # 시각화 모듈
 │   │   ├── basic.py          # 범용 차트 (Matplotlib)
@@ -49,6 +50,7 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
 ├── charts.*            (모든 차트 렌더링 호출)
 ├── core.exporter       (Excel/CSV 내보내기)
 ├── core.pdf_generator  (PDF 내보내기)
+├── core.llm_report     (AI 분석용 Markdown, Qt 없음)
 ├── core.tiff_loader    (TIFF 열기)
 └── core.settings       (환경 설정 연동)
 ```
@@ -96,7 +98,9 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
 [6] Export (선택)
     ├─ exporter.export_excel_report() → .xlsx
     ├─ exporter.export_combined_csv() → .csv
-    └─ pdf_generator.generate_pdf_report() → .pdf
+    ├─ pdf_generator.generate_pdf_report() → .pdf
+    └─ llm_report.build_llm_report() → .md (front matter + 분석 조건·결과 요약·원인 단서·
+       회차 비교·회차 변경 이력(사용자 기입)·부록 Die×Repeat 편차 표·LLM 분석 요청)
 ```
 
 ---

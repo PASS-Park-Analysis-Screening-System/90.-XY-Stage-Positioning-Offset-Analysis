@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 from PySide6.QtCore import QTimer
-import os, threading
+import datetime, os, re, threading
 from core.exporter import (export_combined_csv, export_excel_report,
                            export_quality_report, collect_anomalies)
 from core import compute_repeatability, compute_trend, filter_stabilization_die
@@ -132,3 +132,62 @@ class ExportMixin:
         threading.Thread(target=run, daemon=True).start()
 
 
+
+    def _export_llm_markdown(self):
+        """LLM 원인 분석용 Markdown (전체 Workflow, 회차 비교·부록은 모든 회차)."""
+        # 내보내는 동안 회차를 바꿔도 섞이지 않게 메인 스레드에서 목록을 복사한다
+        results = list(getattr(self, 'recipe_results', None) or [])
+        if not results:
+            QMessageBox.warning(self, "경고", "스캔된 데이터가 없습니다.")
+            return
+        root = getattr(self, '_scanned_folder', '') or self.path_edit.text()
+        now = datetime.datetime.now()
+        names = [r.get('short_name') or r.get('recipe', '') for r in results]
+        label = names[0] if len(names) == 1 else (os.path.basename(os.path.normpath(root)) or 'root')
+        # 파일 이름에 쓸 수 없는 문자와 공백은 _로 바꾼다
+        label = re.sub(r'[\\/:*?"<>|\s]+', '_', label).strip('_') or 'root'
+        path, _ = QFileDialog.getSaveFileName(
+            self, "AI 분석용 Markdown", "", "Markdown (*.md)",
+            f"XY_LLM_{label}_{now:%Y%m%d_%H%M}.md")
+        if not path:
+            return
+        self.logger.info("AI 분석용 Markdown 생성 중...")
+        outcome = []
+        spec_limits = self.settings.get('spec_limits', {})
+        spec_deviation = self.settings.get('spec_deviation', {})
+
+        def run():
+            temp_path = path + '.part'
+            try:
+                from core.llm_report import build_llm_report
+                from core.version import APP_VERSION
+                text = build_llm_report(results, spec_limits, spec_deviation,
+                                        app_version=APP_VERSION,
+                                        exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
+                                        source_root=root)
+                with open(temp_path, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write(text)
+                os.replace(temp_path, path)
+                outcome.append(None)
+            except Exception as e:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                outcome.append(e)
+
+        poll = QTimer(self)
+
+        def check():
+            if not outcome:
+                return
+            poll.stop()
+            poll.deleteLater()
+            if outcome[0] is None:
+                size_kb = os.path.getsize(path) / 1024
+                self.logger.ok(f"AI 분석용 Markdown 저장: {path} ({size_kb:.1f} KB)")
+            else:
+                self.logger.error(f"AI 분석용 Markdown 오류: {outcome[0]}")
+                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{outcome[0]}")
+
+        poll.timeout.connect(check)
+        poll.start(200)
+        threading.Thread(target=run, daemon=True).start()
