@@ -652,33 +652,44 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None) -> l
     if session is not None:
         session.found(len(subdirs))
 
-    for name in subdirs:
-        full_path = os.path.join(root_path, name)
-        if session is not None:
-            session.check_cancelled()
+    # 폴더 판별(목록 + CSV 앞부분)은 네트워크 왕복이라 Lot마다 겹쳐 읽는다. 순서는 그대로다
+    def check(name):
+        if session is not None and session.cancelled:
+            return None
+        return _is_data_folder(os.path.join(root_path, name))
 
-        file_info = _is_data_folder(full_path)
-        if session is not None:
-            session.checked(full_path)
-        if file_info is None:
-            continue
+    pool = (ThreadPoolExecutor(max_workers=min(LOT_LOAD_WORKERS, len(subdirs)),
+                               thread_name_prefix='lot-scan')
+            if len(subdirs) > 1 else None)
+    infos = pool.map(check, subdirs) if pool is not None else map(check, subdirs)
+    try:
+        for name, file_info in zip(subdirs, infos):    # 끝나는 대로 순서대로 받는다
+            full_path = os.path.join(root_path, name)
+            if session is not None:
+                session.check_cancelled()
+                session.checked(full_path)
+            if file_info is None:
+                continue
 
-        lot_number = _extract_folder_number(name)
+            lot_number = _extract_folder_number(name)
 
-        folders.append({
-            'lot_name': name,
-            'path': full_path,
-            'lot_number': lot_number,
-            'has_x_csv': file_info['x_csv'] is not None,
-            'has_y_csv': file_info['y_csv'] is not None,
-            'has_summary': file_info['summary_csv'] is not None,
-            'x_csv': file_info['x_csv'],
-            'y_csv': file_info['y_csv'],
-            'summary_csv': file_info['summary_csv'],
-            'tiff_count': len(file_info['tiff_files']),
-            'tiff_files': file_info['tiff_files'],
-            'head': file_info.get('head'),    # 측정 순서 정렬에만 쓰고 지운다
-        })
+            folders.append({
+                'lot_name': name,
+                'path': full_path,
+                'lot_number': lot_number,
+                'has_x_csv': file_info['x_csv'] is not None,
+                'has_y_csv': file_info['y_csv'] is not None,
+                'has_summary': file_info['summary_csv'] is not None,
+                'x_csv': file_info['x_csv'],
+                'y_csv': file_info['y_csv'],
+                'summary_csv': file_info['summary_csv'],
+                'tiff_count': len(file_info['tiff_files']),
+                'tiff_files': file_info['tiff_files'],
+                'head': file_info.get('head'),    # 측정 순서 정렬에만 쓰고 지운다
+            })
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
 
     # 측정 순서 정렬 + 인덱스 부여
     _sort_by_measurement_order(folders)
