@@ -13,7 +13,9 @@ cache를 넘겨 결과를 재사용한다. cache는 dict이거나 ScanSession이
 import os
 
 from core.csv_loader import ScanSession, is_dir, list_dir, scan_self_lot
-from core.recipe_scanner import build_recipe, is_run_style, match_spec_key
+from core.recipe_scanner import (build_recipe, is_run_style, match_spec_key,
+                                 normalize_spec_names, scan_recipes, stray_csv_note,
+                                 summary_only_notes)
 
 NOTE_REMEMBERED = '지난번 선택'
 NOTE_ROOT = '선택한 폴더 — 어느 Workflow인지 확인 후 체크하세요'
@@ -218,3 +220,64 @@ def common_source_folder(paths) -> str:
         return os.path.commonpath(paths)
     except ValueError:
         return paths[0]
+
+
+FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
+                    "어느 Workflow의 데이터인지 지정해 주세요.")
+SELF_LOT_REASON = ("선택한 폴더가 Lot 폴더입니다 (Lot 1개, X/Y 측정 CSV가 바로 있음). "
+                   "어느 Workflow의 데이터인지 지정해 주세요.")
+SELF_LOT_NO_SPEC = "선택한 폴더는 Lot 폴더입니다 — Spec 설정 후 Workflow별 선택으로 지정하세요"
+
+
+def detect_scan_target(folder, spec_keys, remembered, session):
+    """고른 폴더를 확인해 다음 단계를 정한다 (화면의 스캔 스레드와 명령줄 --llm-report가 쓴다).
+    화면은 건드리지 않는다.
+
+    Returns:
+        {'action': 'invalid'}                 — 폴더가 없다
+        {'action': 'none', 'message': str}    — Recipe 구조가 없다 (message는 이유, 없을 수 있음)
+        {'action': 'load', 'recipes': [...]}  — 그대로 로드한다
+        {'action': 'dialog', 'reason': str, 'mismatched': [...], 'prefill': {...}}
+            — Workflow별 폴더 대화상자를 연다 (초기값도 여기서 계산해 대화상자가 바로 뜬다)
+        'notes': [(수준 'warn'|'info', 문구), ...] — System Log에 남길 안내 (없을 수 있음)
+    """
+    if not is_dir(folder, session):
+        return {'action': 'invalid'}
+    mismatched = []
+    dropped = []
+    recipes = scan_recipes(folder, session=session, notes=dropped)
+    notes = [('info', text) for text in dropped]
+    if not recipes:
+        # 고른 폴더 자체가 Lot 폴더면(측정 Lot 하위 폴더가 없을 때만) Lot 1개로 본다.
+        # 하위의 Capture, Debug, Info, Log는 Recipe가 아니다 (Info·Debug/Analysis는 메타만 같다)
+        if scan_self_lot(folder, session):
+            if not spec_keys:
+                return {'action': 'none', 'message': SELF_LOT_NO_SPEC}
+            return {'action': 'dialog', 'reason': SELF_LOT_REASON, 'mismatched': [],
+                    'prefill': compute_prefill(spec_keys, folder, remembered, session)}
+        # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
+        # Workflow를 지정해 분석할 수 있게 한다
+        flat = build_recipe(folder, session=session)
+        stray = stray_csv_note(folder, session) if flat is not None else None
+        if flat is None:
+            notes += [('info', text)
+                      for text in summary_only_notes(folder, session, include_subs=False)]
+        elif stray:
+            notes.append(('warn', stray))
+        if not (spec_keys and flat is not None):
+            return {'action': 'none', 'notes': notes}
+        reason = FLAT_ROOT_REASON
+    else:
+        stray = stray_csv_note(folder, session)
+        if stray:
+            notes.append(('warn', stray))
+        # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
+        # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
+        mismatched = normalize_spec_names(recipes, spec_keys) if spec_keys else []
+        if not mismatched:
+            return {'action': 'load', 'recipes': recipes, 'notes': notes}
+        mis_list = '\n'.join(f"  • {m}" for m in mismatched)
+        reason = ("폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
+                  f"Spec 이름과 다른 폴더:\n{mis_list}")
+    return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched, 'notes': notes,
+            'prefill': compute_prefill(spec_keys, folder, remembered, session)}

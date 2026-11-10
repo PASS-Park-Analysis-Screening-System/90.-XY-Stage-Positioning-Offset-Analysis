@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import math
+import os
 
 from core.checklist import (EXPECTED_DIES, EXPECTED_REPEATS, analysis_warnings,
                             combine_verdicts, compute_axis_metrics, cpk_text, result_text,
@@ -24,6 +25,7 @@ from core.die_analysis import (REFERENCE_LABEL, compute_affine_transform, comput
                                is_reference_size,
                                extract_die_number, extract_die_positions,
                                filter_stabilization_die, stabilization_die)
+from core.fileio import write_atomic
 from core.statistics import filter_by_method, is_usable
 
 try:   # p값만 쓴다. 없으면 F만 적는다
@@ -1366,3 +1368,46 @@ def build_llm_report(recipe_results: list, spec_limits: dict = None,
         _request(results, spec_limits, spec_deviation),
     ]
     return '\n\n'.join(s.strip('\n') for s in sections if s) + '\n'
+
+
+def raw_csv_path(md_path: str) -> str:
+    """.md 옆에 쓰는 셀 값 CSV 경로 (모든 회차의 셀 값. .md 부록은 선택 회차만)."""
+    return os.path.splitext(md_path)[0] + '_raw.csv'
+
+
+def write_llm_report_files(recipe_results: list, md_path: str, spec_limits: dict = None,
+                           spec_deviation: dict = None, *, app_version: str = '',
+                           exported_at: str = '', source_root: str = '',
+                           rotation_spec: dict = None, rotation_test: dict = None,
+                           rotation_test_tool: str = None, tool_root: str = None) -> dict:
+    """셀 값 CSV와 .md를 원자적으로 쓴다 (화면 내보내기와 명령줄 --llm-report 공용).
+
+    회전 규격·회전 시험·tool_root는 build_llm_report에 그대로 넘긴다 (진단 절).
+
+    CSV가 실패해도 .md는 쓴다(.md에 실패 이유를 적는다). 예외를 올리지 않고 결과로 돌려준다.
+    Returns:
+        {'error': .md 실패 예외 또는 None, 'csv_error': CSV 실패 문구 또는 None,
+         'csv_written': CSV를 썼는가, 'csv_replaced': 같은 이름의 기존 CSV를 덮어썼는가}
+    """
+    state = {'error': None, 'csv_error': None, 'csv_written': False, 'csv_replaced': False}
+    csv_path = raw_csv_path(md_path)
+    try:
+        raw_csv = {'name': os.path.basename(csv_path)}
+        try:
+            # .md 덮어쓰기를 확인했으므로 같은 이름의 CSV도 덮어쓴다 (System Log에 남긴다)
+            state['csv_replaced'] = os.path.exists(csv_path)
+            # Excel에서 바로 열리게 BOM을 붙인다
+            write_atomic(csv_path, build_raw_csv(recipe_results), 'utf-8-sig', '')
+            state['csv_written'] = True
+        except Exception as e:     # CSV가 실패해도 .md는 쓴다
+            raw_csv['error'] = f'{type(e).__name__}: {e}'
+            state['csv_error'] = raw_csv['error']
+        text = build_llm_report(recipe_results, spec_limits, spec_deviation,
+                                app_version=app_version, exported_at=exported_at,
+                                source_root=source_root, raw_csv=raw_csv,
+                                rotation_spec=rotation_spec, rotation_test=rotation_test,
+                                rotation_test_tool=rotation_test_tool, tool_root=tool_root)
+        write_atomic(md_path, text, 'utf-8', '\n')
+    except Exception as e:
+        state['error'] = e
+    return state

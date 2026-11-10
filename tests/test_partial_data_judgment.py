@@ -386,6 +386,7 @@ def scan(window, monkeypatch, tmp_path):
     """실제 _scan_folder를 가짜 로더 스레드로 돌린다 (설정 파일과 대화상자는 막는다)."""
     from PySide6.QtCore import QObject, Signal
     from PySide6.QtWidgets import QMessageBox
+    import core.workflow_map as workflow_map     # 폴더 판별(detect_scan_target)이 있는 곳
     import ui.controllers.scan_controller as controller
 
     class FakeThread(QObject):
@@ -428,7 +429,7 @@ def scan(window, monkeypatch, tmp_path):
     def run(names):
         recipes = [{'name': n, 'short_name': n, 'index': i + 1, 'rounds': []}
                    for i, n in enumerate(names)]
-        monkeypatch.setattr(controller, 'scan_recipes', lambda *_a, **_k: recipes)
+        monkeypatch.setattr(workflow_map, 'scan_recipes', lambda *_a, **_k: recipes)
         window._scan_folder()
     yield run
     window._loader_thread = None

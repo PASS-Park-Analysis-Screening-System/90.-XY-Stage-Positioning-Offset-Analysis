@@ -4,11 +4,11 @@ import copy
 import logging
 import time
 import traceback
-from core.csv_loader import ScanSession, is_dir, scan_self_lot
-from core.recipe_scanner import (build_recipe, compare_recipes, normalize_spec_names,
-                                 recipes_from_mapping, scan_recipes, stray_csv_note,
-                                 summary_only_notes)
-from core.workflow_map import common_source_folder, compute_prefill
+from core.csv_loader import ScanSession, is_dir
+from core.recipe_scanner import compare_recipes, recipes_from_mapping
+# 폴더 확인 판별은 명령줄(--llm-report)과 같이 쓰므로 core에 있다 (이름은 여기서도 그대로 쓴다)
+from core.workflow_map import (FLAT_ROOT_REASON, SELF_LOT_NO_SPEC, SELF_LOT_REASON,
+                               common_source_folder, detect_scan_target)
 from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
 from ui.workers.data_loader_thread import DataLoaderThread
 from ui.workers.folder_scan_thread import FolderScanThread
@@ -26,66 +26,6 @@ COMPARISON_CHARTS = (
     ('Heatmap', 'plot_recipe_comparison_heatmap', "🗺️ Recipe Heatmap 비교 차트 생성 완료"),
 )
 RUN_COMPARE_TAB = 'Run Comparison'
-
-FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
-                    "어느 Workflow의 데이터인지 지정해 주세요.")
-SELF_LOT_REASON = ("선택한 폴더가 Lot 폴더입니다 (Lot 1개, X/Y 측정 CSV가 바로 있음). "
-                   "어느 Workflow의 데이터인지 지정해 주세요.")
-SELF_LOT_NO_SPEC = "선택한 폴더는 Lot 폴더입니다 — Spec 설정 후 Workflow별 선택으로 지정하세요"
-
-
-def detect_scan_target(folder, spec_keys, remembered, session):
-    """[스캔 스레드] 고른 폴더를 확인해 다음 단계를 정한다. 화면은 건드리지 않는다.
-
-    Returns:
-        {'action': 'invalid'}                 — 폴더가 없다
-        {'action': 'none', 'message': str}    — Recipe 구조가 없다 (message는 이유, 없을 수 있음)
-        {'action': 'load', 'recipes': [...]}  — 그대로 로드한다
-        {'action': 'dialog', 'reason': str, 'mismatched': [...], 'prefill': {...}}
-            — Workflow별 폴더 대화상자를 연다 (초기값도 여기서 계산해 대화상자가 바로 뜬다)
-        'notes': [(수준 'warn'|'info', 문구), ...] — System Log에 남길 안내 (없을 수 있음)
-    """
-    if not is_dir(folder, session):
-        return {'action': 'invalid'}
-    mismatched = []
-    dropped = []
-    recipes = scan_recipes(folder, session=session, notes=dropped)
-    notes = [('info', text) for text in dropped]
-    if not recipes:
-        # 고른 폴더 자체가 Lot 폴더면(측정 Lot 하위 폴더가 없을 때만) Lot 1개로 본다.
-        # 하위의 Capture, Debug, Info, Log는 Recipe가 아니다 (Info·Debug/Analysis는 메타만 같다)
-        if scan_self_lot(folder, session):
-            if not spec_keys:
-                return {'action': 'none', 'message': SELF_LOT_NO_SPEC}
-            return {'action': 'dialog', 'reason': SELF_LOT_REASON, 'mismatched': [],
-                    'prefill': compute_prefill(spec_keys, folder, remembered, session)}
-        # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
-        # Workflow를 지정해 분석할 수 있게 한다
-        flat = build_recipe(folder, session=session)
-        stray = stray_csv_note(folder, session) if flat is not None else None
-        if flat is None:
-            notes += [('info', text)
-                      for text in summary_only_notes(folder, session, include_subs=False)]
-        elif stray:
-            notes.append(('warn', stray))
-        if not (spec_keys and flat is not None):
-            return {'action': 'none', 'notes': notes}
-        reason = FLAT_ROOT_REASON
-    else:
-        stray = stray_csv_note(folder, session)
-        if stray:
-            notes.append(('warn', stray))
-        # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
-        # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
-        mismatched = normalize_spec_names(recipes, spec_keys) if spec_keys else []
-        if not mismatched:
-            return {'action': 'load', 'recipes': recipes, 'notes': notes}
-        mis_list = '\n'.join(f"  • {m}" for m in mismatched)
-        reason = ("폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
-                  f"Spec 이름과 다른 폴더:\n{mis_list}")
-    return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched, 'notes': notes,
-            'prefill': compute_prefill(spec_keys, folder, remembered, session)}
-
 
 EMPTY_DIALOG_LINES = 8     # 0행 알림 창에 보일 Workflow 줄 수 (나머지는 '외 N개', System Log에 전부)
 

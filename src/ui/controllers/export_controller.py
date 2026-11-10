@@ -171,43 +171,25 @@ class ExportMixin:
         tool_root = getattr(self, '_scanned_folder', '') or None    # 화면 진단과 같은 장비 기준
 
         # 모든 회차의 셀 값은 .md 옆 CSV에 둔다 (.md 부록은 선택 회차만)
-        csv_path = os.path.splitext(path)[0] + '_raw.csv'
-
-        def write_atomic(target, text, encoding, newline):
-            temp_path = target + '.part'
-            try:
-                with open(temp_path, 'w', encoding=encoding, newline=newline) as f:
-                    f.write(text)
-                os.replace(temp_path, target)
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        from core.llm_report import raw_csv_path
+        csv_path = raw_csv_path(path)
 
         # 결과: error(.md 실패), csv_error, csv_written(CSV를 썼는가), csv_replaced(기존 CSV를 덮어씀)
+        # 쓰기는 명령줄(--llm-report)과 같은 함수다
         def run():
-            state = {'error': None, 'csv_error': None, 'csv_written': False, 'csv_replaced': False}
             try:
-                from core.llm_report import build_llm_report, build_raw_csv
+                from core.llm_report import write_llm_report_files
                 from core.version import APP_VERSION
-                raw_csv = {'name': os.path.basename(csv_path)}
-                try:
-                    # .md 덮어쓰기를 확인했으므로 같은 이름의 CSV도 덮어쓴다 (System Log에 남긴다)
-                    state['csv_replaced'] = os.path.exists(csv_path)
-                    # Excel에서 바로 열리게 BOM을 붙인다
-                    write_atomic(csv_path, build_raw_csv(results), 'utf-8-sig', '')
-                    state['csv_written'] = True
-                except Exception as e:     # CSV가 실패해도 .md는 쓴다
-                    raw_csv['error'] = f'{type(e).__name__}: {e}'
-                    state['csv_error'] = raw_csv['error']
-                text = build_llm_report(results, spec_limits, spec_deviation,
-                                        app_version=APP_VERSION,
-                                        exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
-                                        source_root=root, raw_csv=raw_csv,
-                                        rotation_spec=rot_spec, rotation_test=rot_test,
-                                        rotation_test_tool=rot_test_tool, tool_root=tool_root)
-                write_atomic(path, text, 'utf-8', '\n')
+                state = write_llm_report_files(results, path, spec_limits, spec_deviation,
+                                               app_version=APP_VERSION,
+                                               exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
+                                               source_root=root, rotation_spec=rot_spec,
+                                               rotation_test=rot_test,
+                                               rotation_test_tool=rot_test_tool,
+                                               tool_root=tool_root)
             except Exception as e:
-                state['error'] = e
+                state = {'error': e, 'csv_error': None, 'csv_written': False,
+                         'csv_replaced': False}
             outcome.append(state)
 
         def size_text(target):
