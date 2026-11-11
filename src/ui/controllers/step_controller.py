@@ -260,6 +260,9 @@ class StepMixin:
         self._update_raw_table()         # self.raw_data 기반 → Die 필터 미적용 (전체 표시)
         self._update_charts(data, result, recipe)
         self._render_die_position()
+        update_positioning = getattr(self, '_update_positioning_log', None)
+        if update_positioning is not None:      # Positioning Log 탭 (로그 없으면 안내)
+            update_positioning(result)
         stats = result.get('statistics', {})
         self.statusBar().showMessage(
             f"Step {recipe['index']}: {recipe['short_name']} — "
