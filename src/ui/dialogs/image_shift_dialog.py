@@ -5,8 +5,10 @@ Positioning Panel "Capture…"로 받은 원본 이미지 두 장(이상)을 골
 움직였는지 sub-pixel로 재고, 지시한 스테이지 이동과 비교해 각도 φ·배율·잔차를 보인다.
 계산은 core.image_shift가 하고, 이 창은 고르기·ROI 지정·결과 표시·복사·CSV 저장만 한다.
 
-이미지 읽기·미리보기 만들기·분석은 화면 스레드 밖(QThread)에서 한다 (1600×1200 한 쌍 약 0.3~1초,
-네트워크 경로는 더 걸린다). 픽셀 크기·지시 이동만 바꾸면 이미 잰 이동량으로 바로 다시 계산한다.
+이미지 읽기·미리보기 만들기·분석은 화면 스레드 밖(QThread)에서 한다 (1600×1200 한 쌍 약 0.3~3초,
+네트워크 경로는 더 걸린다). 픽셀 크기·지시 이동·축 대응만 바꾸면 이미 잰 이동량으로 바로 다시 계산한다.
+이미지·ROI·방법이 바뀌면 진행 중인 분석은 다음 쌍에서 멈추고(취소 깃발) 결과를 버린다. 앱을 끝낼 때도
+멈추고 기다리며, 그래도 남으면 main()이 threads_alive()로 보고 os._exit로 끝낸다.
 """
 
 import math
@@ -48,13 +50,28 @@ def open_image_shift_dialog(parent=None):
     return dlg
 
 
-def _wait_live_threads():
+def threads_alive() -> bool:
+    """이 창이 띄운 작업 스레드 중 아직 도는 것이 있나 (main()의 os._exit 판단용)."""
+    return any(t.isRunning() for t in list(_live_threads))
+
+
+def _wait_live_threads(timeout_ms=5000, cancel=True):
+    """작업 스레드가 끝나기를 기다린다. cancel이면 먼저 모두 멈추라고 알린다 (앱 종료 aboutToQuit).
+
+    테스트·화면 캡처는 cancel=False로 결과까지 받는다.
+    """
+    if cancel:
+        for t in list(_live_threads):
+            t.cancelled = True
     for t in list(_live_threads):
-        t.wait(5000)
+        t.wait(timeout_ms)
 
 
 class _Task(QThread):
-    """함수 하나를 작업 스레드에서 돌린다. fn(progress) → 결과."""
+    """함수 하나를 작업 스레드에서 돌린다. fn(progress) → 결과.
+
+    progress(끝난 수, 전체)는 cancelled 깃발이 서 있으면 ims.AnalysisCancelled를 던져 멈춘다.
+    """
     done = Signal(int, object)          # (작업 번호, 결과)
     failed = Signal(int, str)           # (작업 번호, 문구)
     progress = Signal(int, int, int)    # (작업 번호, 끝난 수, 전체)
@@ -63,14 +80,23 @@ class _Task(QThread):
         super().__init__()
         self.job = job
         self.fn = fn
+        self.cancelled = False
+
+    def _progress(self, done, total):
+        if self.cancelled:
+            raise ims.AnalysisCancelled()
+        self.progress.emit(self.job, done, total)
 
     def run(self):
         try:
-            result = self.fn(lambda d, t: self.progress.emit(self.job, d, t))
+            result = self.fn(self._progress)
+        except ims.AnalysisCancelled:
+            return
         except Exception as e:      # 화면에 문구로 보이고, 창은 계속 쓸 수 있어야 한다
             self.failed.emit(self.job, str(e) or type(e).__name__)
         else:
-            self.done.emit(self.job, result)
+            if not self.cancelled:
+                self.done.emit(self.job, result)
 
 
 def _qimage(u8):
@@ -231,12 +257,14 @@ class ImageShiftDialog(QDialog):
         self.roi = None
         self.batch = None               # 마지막 분석 결과 (ims.BatchResult)
         self._job = 0                   # 분석 작업 번호 (늦게 온 이전 결과는 버린다)
-        self._task = None
-        self._previews = {}             # 경로 → QImage (8비트 미리보기)
-        self._preview_jobs = {}         # 작업 번호 → 경로
-        self._preview_errors = {}       # 경로 → 문구
+        self._task = None               # 결과를 기다리는 분석 작업
+        self._analysis_tasks = set()    # 아직 도는 분석 작업 (멈추라고 한 것 포함) — 끝나야 새로 시작
+        self._previews = {}             # (경로, 수정 시각, 크기) → QImage (8비트 미리보기)
+        self._preview_jobs = {}         # 작업 번호 → (경로, 수정 시각, 크기)
+        self._preview_errors = {}       # (경로, 수정 시각, 크기) → 문구
         self._next_preview_job = 1_000_000
         self._bulk = False              # 목록을 한꺼번에 바꾸는 중 (행 신호마다 다시 그리지 않는다)
+        self._ref_path = None           # 이미지 1 경로 — 바뀌면 ROI를 지운다
         self._build_ui()
         self._refresh_views()
 
@@ -256,6 +284,11 @@ class ImageShiftDialog(QDialog):
         intro.setWordWrap(True)
         intro.setStyleSheet(f'color: {FG2}; font-size: 9pt;')
         root.addWidget(intro)
+        raw_hint = QLabel('원본 *_PR.png(1600×1200)를 쓰세요. *_Result.bmp처럼 좌표 글자·십자선·상자가 그려진 이미지는 '
+                          '그 오버레이가 화면에 고정돼 이동량을 0 쪽으로 끕니다 (감지하면 빼고 계산하고 경고합니다).')
+        raw_hint.setWordWrap(True)
+        raw_hint.setStyleSheet(f'color: {ORANGE}; font-size: 9pt;')
+        root.addWidget(raw_hint)
 
         # 이미지 목록
         files = QHBoxLayout()
@@ -304,6 +337,16 @@ class ImageShiftDialog(QDialog):
         inputs.addWidget(QLabel('ΔY'))
         self.stage_dy = self._spin(-1e6, 1e6, 3, 0.0, ' µm')
         inputs.addWidget(self.stage_dy)
+        inputs.addWidget(QLabel('축 대응'))
+        self.mapping = QComboBox()
+        self.mapping.addItem('자동', ims.MAPPING_AUTO)
+        for m in ims.MAPPING_CHOICES:
+            self.mapping.addItem(ims.mapping_label(m), m)
+        self.mapping.setToolTip('스테이지 +X·+Y가 화면에서 어느 쪽으로 가는지\n'
+                                '자동: 측정 방향에 가장 가까운 대응 — 한 축만 움직였거나 후보가 10° 이상 떨어질 때만 정함\n'
+                                'X·Y를 함께 움직였는데 정하지 못하면 여기서 직접 고르세요 (다시 재지 않고 바로 계산)')
+        self.mapping.currentIndexChanged.connect(self._recompute_motion)
+        inputs.addWidget(self.mapping)
         inputs.addSpacing(12)
         inputs.addWidget(QLabel('방법'))
         self.method = QComboBox()
@@ -340,7 +383,8 @@ class ImageShiftDialog(QDialog):
         self.stage_dy.valueChanged.connect(self._recompute_motion)
 
         sign = QLabel('부호: Δx 화면 오른쪽 +, Δy 화면 아래 + · φ = 기대 방향에서 측정 방향으로 화면에서 반시계면 + · '
-                      '배율 = 측정 거리 / 지시 거리 · 스테이지 축이 화면의 어느 방향인지는 측정 방향에 가장 가까운 축으로 정합니다')
+                      '배율 = 측정 거리 / 지시 거리 · 기대 방향은 축 대응으로 정합니다 · 여러 장 평균·표준편차는 '
+                      '경고 없는 쌍만 씁니다')
         sign.setWordWrap(True)
         sign.setStyleSheet(f'color: {FG2}; font-size: 8pt;')
         root.addWidget(sign)
@@ -468,10 +512,16 @@ class ImageShiftDialog(QDialog):
     def _on_list_changed(self, *_args):
         if self._bulk:
             return
+        paths = self.paths()
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
             name = os.path.basename(item.data(Qt.ItemDataRole.UserRole))
             item.setText(f'{i + 1}. {name}' + ('  (기준)' if i == 0 else ''))
+        ref = paths[0] if paths else None
+        if ref != self._ref_path:
+            self._ref_path = ref
+            self.roi = None             # 다른 이미지 1에서 그린 ROI는 맞지 않는다
+        self._prune_previews(paths)
         self._invalidate()
         self._refresh_views()
 
@@ -481,16 +531,33 @@ class ImageShiftDialog(QDialog):
 
     # ── 미리보기 ─────────────────────────────────────────
 
+    @staticmethod
+    def _preview_key(path):
+        """(경로, 수정 시각, 크기) — 같은 이름으로 다시 저장한 파일은 새로 읽는다."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return (path, None, None)
+        return (path, st.st_mtime_ns, st.st_size)
+
+    def _prune_previews(self, paths):
+        """목록에서 빠진 파일의 미리보기·오류는 버린다."""
+        keep = set(paths)
+        for cache in (self._previews, self._preview_errors):
+            for key in [k for k in cache if k[0] not in keep]:
+                del cache[key]
+
     def _preview(self, path):
         """(QImage 또는 None, 안내 문구). 없으면 작업 스레드에서 읽기 시작한다."""
-        if path in self._previews:
-            return self._previews[path], ''
-        if path in self._preview_errors:
-            return None, self._preview_errors[path]
-        if path not in self._preview_jobs.values():
+        key = self._preview_key(path)
+        if key in self._previews:
+            return self._previews[key], ''
+        if key in self._preview_errors:
+            return None, self._preview_errors[key]
+        if key not in self._preview_jobs.values():
             job = self._next_preview_job
             self._next_preview_job += 1
-            self._preview_jobs[job] = path
+            self._preview_jobs[job] = key
             task = _Task(job, lambda _progress, p=path: ims.to_uint8(ims.load_gray(p)))
             task.done.connect(self._on_preview_done)
             task.failed.connect(self._on_preview_failed)
@@ -498,15 +565,15 @@ class ImageShiftDialog(QDialog):
         return None, '읽는 중…'
 
     def _on_preview_done(self, job, u8):
-        path = self._preview_jobs.pop(job, None)
-        if path is not None:
-            self._previews[path] = _qimage(u8)
+        key = self._preview_jobs.pop(job, None)
+        if key is not None and key[0] in self.paths():
+            self._previews[key] = _qimage(u8)
             self._refresh_views()
 
     def _on_preview_failed(self, job, msg):
-        path = self._preview_jobs.pop(job, None)
-        if path is not None:
-            self._preview_errors[path] = msg
+        key = self._preview_jobs.pop(job, None)
+        if key is not None and key[0] in self.paths():
+            self._preview_errors[key] = msg
             self._refresh_views()
 
     def _refresh_views(self, compare_row=None):
@@ -561,27 +628,42 @@ class ImageShiftDialog(QDialog):
         self._refresh_views()
 
     def _invalidate(self, *_args):
-        """이미지·ROI·방법이 바뀌면 이전 결과는 맞지 않으므로 지운다."""
+        """이미지·ROI·방법이 바뀌면 이전 결과는 맞지 않으므로 지우고, 진행 중인 분석은 멈추게 한다."""
         if self._task is not None:
-            self._job += 1          # 진행 중인 분석 결과는 도착해도 버린다
+            self._task.cancelled = True     # 다음 쌍으로 넘어갈 때 멈춘다
+            self._job += 1                  # 그 사이 도착한 결과도 버린다
             self._set_busy(False)
+            if self._analysis_tasks:
+                self.status.setText('이전 분석을 멈추는 중…')
         if self.batch is not None:
             self.batch = None
             self._show_results()
         self._update_buttons()
 
     def _recompute_motion(self, *_args):
-        """픽셀 크기·지시 이동만 바뀌었으면 이미 잰 이동량으로 각도·배율을 바로 다시 계산한다."""
+        """픽셀 크기·지시 이동·축 대응만 바뀌었으면 이미 잰 이동량으로 각도·배율을 바로 다시 계산한다.
+
+        interpret_batch는 모든 쌍을 계산한 뒤에야 batch를 바꾸므로, 실패하면 batch는 그대로다.
+        그래도 화면 입력과 결과가 갈라지지 않게 결과를 지우고 이유를 보인다.
+        """
         if self.batch is None:
             return
-        ps = self.pixel_size.value()
-        sx, sy = self.stage_dx.value(), self.stage_dy.value()
-        self.batch.pixel_size_um = ps
-        self.batch.stage_um = (sx, sy)
-        for p in self.batch.pairs:
-            p.motion = ims.analyze_motion(p.shift.dx_px, p.shift.dy_px, ps, sx, sy)
         row = self.table.currentRow()
+        try:
+            ims.interpret_batch(self.batch, self.pixel_size.value(),
+                                (self.stage_dx.value(), self.stage_dy.value()), self._mapping_choice())
+        except Exception as e:      # 계산 실패가 창을 막지 않게
+            self.batch = None
+            self._show_results()
+            self.status.setText(f'다시 계산 실패 — 분석을 다시 누르세요: {e}')
+            self.status.setStyleSheet(f'color: {RED};')
+            return
         self._show_results(keep_row=row)
+
+    def _mapping_choice(self):
+        """축 대응 콤보 값: ims.MAPPING_AUTO 또는 (swap, gx, gy) — Qt가 튜플을 목록으로 돌려줘도 튜플로."""
+        data = self.mapping.currentData()
+        return tuple(data) if isinstance(data, (list, tuple)) else data
 
     # ── 분석 ─────────────────────────────────────────────
 
@@ -590,17 +672,23 @@ class ImageShiftDialog(QDialog):
         if len(paths) < 2:
             self.status.setText('이미지를 2장 이상 추가하세요')
             return
+        if self._analysis_tasks:
+            self.status.setText('이전 분석을 멈추는 중… 잠시 뒤 다시 누르세요')
+            return
         self._job += 1
         job = self._job
         ps = self.pixel_size.value()
         stage = (self.stage_dx.value(), self.stage_dy.value())
         method = self.method.currentData()
+        mapping = self._mapping_choice()
         roi = self.roi
-        task = _Task(job, lambda progress: ims.analyze_images(paths, ps, stage, method, roi, progress=progress))
+        task = _Task(job, lambda progress: ims.analyze_images(paths, ps, stage, method, roi, progress=progress,
+                                                              mapping=mapping))
         task.done.connect(self._on_done)
         task.failed.connect(self._on_failed)
         task.progress.connect(self._on_progress)
         self._task = task
+        self._analysis_tasks.add(task)
         self.batch = None
         self._show_results()
         self._set_busy(True, f'분석 중… (0/{len(paths) - 1})')
@@ -612,14 +700,20 @@ class ImageShiftDialog(QDialog):
             app.aboutToQuit.connect(_wait_live_threads)
             app._image_shift_quit_hooked = True
         _live_threads.add(task)
-        task.finished.connect(self._reap)     # 화면 스레드에서 (스레드가 끝난 뒤) 놓는다
+        task.finished.connect(self._on_task_finished)     # 화면 스레드에서 받는다 (queued)
         task.start()
 
-    def _reap(self):
-        for t in list(_live_threads):
-            if t.isFinished():
-                t.wait()
-                _live_threads.discard(t)
+    def _on_task_finished(self):
+        """끝난 작업을 놓는다. 보낸 스레드를 wait()로 완전히 끝낸 뒤 목록에서 뺀다."""
+        task = self.sender()
+        finished = [task] if isinstance(task, _Task) else [t for t in _live_threads if t.isFinished()]
+        for t in finished:
+            t.wait()
+            _live_threads.discard(t)
+            self._analysis_tasks.discard(t)
+        if not self._analysis_tasks and self._task is None and self.status.text().startswith('이전 분석을 멈추는 중'):
+            self._show_results()
+        self._update_buttons()
 
     def run_and_wait(self, timeout_ms=60000):
         """분석을 시작하고 끝날 때까지 기다린다 (테스트·화면 캡처용)."""
@@ -638,7 +732,6 @@ class ImageShiftDialog(QDialog):
         else:
             self.busy.hide()
             self._task = None
-        self.btn_run.setEnabled(not on)
         self._update_buttons()
 
     def _on_progress(self, job, done, total):
@@ -661,6 +754,8 @@ class ImageShiftDialog(QDialog):
         self._set_busy(False)
         self.batch = batch
         self._show_results()
+        # 분석 중에 바꾼 픽셀 크기·지시 이동·축 대응을 결과에 반영한다
+        self._recompute_motion()
 
     # ── 결과 표시 ────────────────────────────────────────
 
@@ -693,18 +788,9 @@ class ImageShiftDialog(QDialog):
         self.status.setText(f'분석 완료 — {ok}쌍' + (f', 실패 {bad}장' if bad else ''))
         if not batch.pairs:
             self.status.setStyleSheet(f'color: {RED};')
-        stats = batch.stats
-        if len(batch.pairs) > 1 and 'phi_deg' in stats:
-            mean, std, n = stats['phi_deg']
-            sd = f' ± {std:.4f}°' if std is not None else ''
-            smean, _sstd, _ = stats['scale_ratio']
-            self.stats.setText(f'φ 평균 {mean:+.4f}°{sd} (표준편차, n={n}) · {math.radians(mean) * 1000:+.3f} mrad · '
-                               f'배율 평균 {smean:.5f}')
-        elif len(batch.pairs) > 1:
-            (mx, sx, n), (my, sy, _) = stats['dx_px'], stats['dy_px']
-            self.stats.setText(f'Δx 평균 {mx:+.3f} ± {sx:.3f} px · Δy 평균 {my:+.3f} ± {sy:.3f} px (n={n})')
-        else:
-            self.stats.clear()
+        if batch.pairs and any(batch.stage_um):
+            self.status.setText(self.status.text() + f' · 축 대응 {ims.mapping_text(batch)}')
+        self.stats.setText(ims.stats_summary(batch))
         if batch.pairs:
             self.table.selectRow(min(max(keep_row, 0), len(batch.pairs) - 1))
         self._show_pair(self.table.currentRow())
@@ -743,7 +829,7 @@ class ImageShiftDialog(QDialog):
         if pair is None:
             self.interpretation.clear()
             self.detail.clear()
-            errs = [f'#{i} {name}: {msg}' for i, name, msg in (batch.errors if batch else [])]
+            errs = [f'❌ #{i} {name}: {msg}' for i, name, msg in (batch.errors if batch else [])]
             self.warn.setText('\n'.join(errs))
             self._refresh_views()
             return
@@ -760,6 +846,7 @@ class ImageShiftDialog(QDialog):
         parts.extend(f'참고: {n}' for n in s.notes)
         self.detail.setText('\n'.join(parts))
         lines = [f'⚠ {w}' for w in pair.warnings]
+        lines += [f'⚠ (여러 장) {w}' for w in batch.warnings if w not in pair.warnings]
         lines += [f'❌ #{i} {name}: {msg}' for i, name, msg in batch.errors]
         self.warn.setText('\n'.join(lines))
         self._refresh_views()
@@ -768,7 +855,8 @@ class ImageShiftDialog(QDialog):
         has = self.batch is not None and bool(self.batch.pairs)
         self.btn_copy.setEnabled(has)
         self.btn_csv.setEnabled(has)
-        self.btn_run.setEnabled(self._task is None and len(self.paths()) >= 2)
+        # 멈추라고 한 이전 분석이 끝나기 전에는 새로 시작하지 않는다 (작업이 쌓이지 않게)
+        self.btn_run.setEnabled(self._task is None and not self._analysis_tasks and len(self.paths()) >= 2)
 
     # ── 복사·저장 ────────────────────────────────────────
 

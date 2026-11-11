@@ -78,6 +78,7 @@ from ui.controllers.die_filter_controller import DieFilterMixin
 from ui.controllers.lot_filter_controller import LotFilterMixin
 from ui.controllers.tiff_controller import TiffMixin
 from ui.controllers.export_controller import ExportMixin
+from ui.dialogs.image_shift_dialog import threads_alive as image_shift_threads_alive
 from ui.controllers.run_compare_controller import RunCompareMixin
 from ui.controllers.positioning_controller import PositioningMixin
 
@@ -240,7 +241,8 @@ def main():
     window.show()
     code = app.exec()
     # 네트워크 읽기에 묶인 작업 스레드가 남으면 창 없이 프로세스가 남는다 (설정은 저장했다)
-    if window.background_busy() or _worker_threads_alive():
+    # 이미지 이동량 분석 창의 QThread가 남은 채 Python이 끝나면 'Destroyed while thread is still running'으로 죽는다
+    if window.background_busy() or _worker_threads_alive() or image_shift_threads_alive():
         os._exit(code)
     sys.exit(code)
 

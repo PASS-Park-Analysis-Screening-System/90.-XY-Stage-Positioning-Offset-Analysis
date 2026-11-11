@@ -19,13 +19,27 @@ image_shift.py — 카메라 이미지 2장(이상)의 이동량을 sub-pixel로
                 정규화 상호상관(NCC)으로 찾고, 찾은 자리에서 위상 상관으로 소수점을 다듬는다.
                 무늬가 화면을 가로질러 크게(예: 1600 px 중 1173 px) 움직여도 된다.
     자동        위상 상관 결과가 믿을 만하면 그대로 쓰고, 아니면 템플릿 추적으로 바꾼다.
+    위상 상관은 정수 이동만큼 겹친 영역으로 잘라 한 번 더 재서 큰 이동의 0 쪽 치우침을 없앤다.
+
+화면 고정 오버레이 (Result.bmp의 글자·십자선·상자)
+    두 장에서 값이 정확히 같고 둘레 밝기 차가 큰 픽셀을 후보로 잡고, 후보를 주변 밝기로 채운 뒤
+    잰 이동으로 이미지 1을 옮겨 보아 '장면이라면 바뀌었어야 하는데 그대로인' 후보만 오버레이로
+    확정한다 (잡음이 작은 8비트 이미지는 장면 픽셀도 20% 넘게 우연히 같으므로 같다는 것만으로는
+    오버레이가 아니다). 확정한 픽셀을 채우고 다시 재며 경고한다. 합성 시험에서 5 px 이상 이동은
+    0.05 px 안, 2 px 안팎은 0.1 px 안이지만 1 px보다 작은 이동은 0.2 px쯤 0 쪽으로 끌리고, 0.1 px
+    아래는 오버레이를 확정조차 못 한다. 원본 PR.png를 쓰는 것이 가장 좋다.
 
 각도 φ (스테이지 이동을 입력했을 때)
-    지시 이동 (ΔX, ΔY) µm가 화면에서 어느 방향이어야 하는지(기대 방향)는 측정 방향에 가장
-    가까운 축 대응(오른쪽/왼쪽/위/아래, 축 바뀜 포함)으로 정한다. 카메라가 45° 넘게 돌아가
-    있지 않다고 가정한다.
+    지시 이동 (ΔX, ΔY) µm가 화면에서 어느 방향인지(축 대응: 스테이지 X·Y → 화면 오른쪽/왼쪽/
+    위/아래, 축 바뀜 포함 8가지)를 사용자가 고르거나 자동으로 정한다.
+    자동은 측정 방향에 가장 가까운 대응을 고르되, 후보 기대 방향끼리 10° 이상 떨어져 있을 때만
+    정한다. 한 축만 움직이면 후보가 90°씩 떨어져 늘 정해지고(카메라가 45° 넘게 돌지 않았다는
+    가정), X·Y를 함께 움직이면 (400, 4)·(400, 395)처럼 거울·축 바뀜 후보가 1° 안쪽으로 붙어
+    φ가 조용히 틀릴 수 있어 정하지 않고 경고한다 (φ·배율 없음 — 축 대응을 직접 고른다).
+    여러 장은 경고 없는 쌍들의 평균 측정 방향으로 대응 하나를 정하고, 다른 대응에 가까운 쌍은 경고한다.
     φ = atan2(수직 성분, 진행 성분) — 기대 방향에서 측정 방향으로 화면에서 반시계 방향이 +.
     배율 = 측정 이동 거리 / 지시 이동 거리, 잔차 = 측정 벡터 − 기대 벡터 (화면 좌표).
+    측정 이동이 0.5 px보다 작으면 방향을 정할 수 없어 φ·배율을 내지 않는다.
 """
 
 from __future__ import annotations
@@ -59,10 +73,28 @@ BANDPASS_FINE, BANDPASS_COARSE = 2, 8   # 대역 통과: 5×5 평균 − 17×17 
 NEAR_HALF = 0.35                  # 이동이 분석 영역의 이 비율을 넘으면 방향이 모호하다
 AUTO_PHASE_LIMIT = 0.25           # 자동: 위상 상관은 이 비율 이하 이동에서만 믿는다
 LOWPASS_SIGMA = 0.1               # 상관 스펙트럼 가우스 저역 통과 (cycles/px) — 잡음 고주파를 누른다
+REFINE_MIN_SHIFT = 2              # 위상 상관: 이 이상(px) 움직이면 겹친 영역으로 잘라 한 번 더 잰다
+MIN_MOTION_PX = 0.5               # 측정 이동이 이보다 작으면 방향(φ·배율)을 정하지 않는다
+MAPPING_MIN_SEPARATION_DEG = 10.0  # 자동 축 대응: 후보 기대 방향끼리 이만큼은 떨어져 있어야 정한다
+OVERLAY_CONTRAST = 0.1            # 오버레이 후보: 3×3 둘레 밝기 차 ≥ (1~99 백분위 폭) × 이 값
+OVERLAY_MIN_FRACTION = 1e-4       # 오버레이로 보는 최소 픽셀 비율 (1600×1200이면 192 px)
+OVERLAY_MIN_PIXELS = 100
+OVERLAY_FILL_RADIUS = 6           # 오버레이 픽셀은 (2r+1)² 둘레의 다른 픽셀 평균으로 채운다
+OVERLAY_GROW_STEPS = 3            # 확정한 오버레이를 값이 같은 이웃으로 넓히는 횟수
+CSV_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')   # 엑셀 수식으로 읽히는 첫 글자
+
+MAPPING_AUTO = 'auto'
+# 축 대응 (swap, gx, gy): swap이 아니면 기대 = (gx·ΔX, gy·ΔY), swap이면 (gx·ΔY, gy·ΔX) (화면 x 오른쪽, y 아래)
+MAPPING_CHOICES = [(False, 1, 1), (False, 1, -1), (False, -1, 1), (False, -1, -1),
+                   (True, 1, 1), (True, -1, 1), (True, 1, -1), (True, -1, -1)]
 
 
 class ImageLoadError(ValueError):
     """이미지를 읽을 수 없다 (형식·손상·경로)."""
+
+
+class AnalysisCancelled(Exception):
+    """사용자가 분석을 멈췄다 (progress 콜백이 던진다)."""
 
 
 # ── 이미지 읽기 ─────────────────────────────────────────
@@ -70,8 +102,10 @@ class ImageLoadError(ValueError):
 def load_gray(path) -> np.ndarray:
     """이미지 파일 → 2D float64 그레이 배열 (원래 값 범위 그대로: 8비트 0~255, 16비트 0~65535).
 
-    bmp/png/jpg/tiff, 8·16비트 그레이와 컬러를 읽는다. 컬러는 밝기(0.299 R + 0.587 G + 0.114 B)로
-    바꾼다. 여러 장이 든 TIFF는 첫 장만 쓴다.
+    bmp/png/jpg/tiff를 읽는다. 그레이는 8·16비트(·32비트 정수·실수) 값 그대로, 컬러는 밝기
+    (0.299 R + 0.587 G + 0.114 B)로 바꾼다. 16비트 컬러(48비트 RGB TIFF 등)는 Pillow가 8비트로
+    줄여 읽으므로 그레이 16비트만큼 정밀하지 않다. 여러 장이 든 TIFF는 첫 장만 쓴다.
+    NaN·무한대 픽셀이 있거나 Pillow의 압축 폭탄 한도를 넘는 이미지는 거절한다.
     """
     from PIL import Image, UnidentifiedImageError
 
@@ -82,10 +116,14 @@ def load_gray(path) -> np.ndarray:
             arr = _pil_to_gray(im)
     except FileNotFoundError:
         raise ImageLoadError(f'파일이 없습니다: {name}') from None
+    except Image.DecompressionBombError as e:
+        raise ImageLoadError(f'이미지가 너무 큽니다: {name} ({e})') from None
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as e:
         raise ImageLoadError(f'이미지를 읽을 수 없습니다: {name} ({e})') from None
     if arr.ndim != 2 or min(arr.shape) < MIN_ROI:
         raise ImageLoadError(f'이미지가 너무 작거나 2차원이 아닙니다: {name} {arr.shape}')
+    if not np.isfinite(arr).all():
+        raise ImageLoadError(f'NaN·무한대 픽셀이 있습니다: {name}')
     return arr
 
 
@@ -185,18 +223,24 @@ def _dft_patch(spec_w, H, W, ys, xs):
 
 
 def _refine_peak(spec_w, H, W, py, px, upsample):
-    """정수 피크 (py, px) 주변을 확대 DFT로 다시 찾아 소수점 위치를 낸다."""
+    """정수 피크 (py, px) 주변을 확대 DFT로 다시 찾아 소수점 위치를 낸다.
+
+    곡면이 평평하거나(무늬 없음) 최댓값이 찾는 칸의 가장자리에 걸리면(피크가 뚜렷하지 않음)
+    None — 가장자리로 끌려가 엉뚱한 값을 내지 않는다.
+    """
     cy, cx = float(py), float(px)
     res = 0.1
     while True:
         offs = np.arange(-15, 16) * res          # ±1.5 단계 → 다음 단계는 10배 촘촘히
         patch = _dft_patch(spec_w, H, W, cy + offs, cx + offs)
+        span = float(patch.max() - patch.min())
+        if not span > 1e-12 * max(1.0, float(np.abs(patch).max())):
+            return None
         i, j = np.unravel_index(int(np.argmax(patch)), patch.shape)
-        if 0 < i < len(offs) - 1 and 0 < j < len(offs) - 1:
-            fy = _parabola(patch[i - 1, j], patch[i, j], patch[i + 1, j])
-            fx = _parabola(patch[i, j - 1], patch[i, j], patch[i, j + 1])
-        else:
-            fy = fx = 0.0
+        if not (0 < i < len(offs) - 1 and 0 < j < len(offs) - 1):
+            return None
+        fy = _parabola(patch[i - 1, j], patch[i, j], patch[i + 1, j])
+        fx = _parabola(patch[i, j - 1], patch[i, j], patch[i, j + 1])
         if res <= 1.0 / upsample + 1e-12:
             return cy + (offs[i] + fy * res), cx + (offs[j] + fx * res)
         cy += offs[i]
@@ -248,32 +292,30 @@ def _bandpass(img, fine=BANDPASS_FINE, coarse=BANDPASS_COARSE):
     return _box_mean(img, fine) - _box_mean(img, coarse)
 
 
-def _overlap_ncc(a, b, dy, dx):
-    """정수 이동 (dy, dx)로 겹친 영역의 zero-mean NCC. b[y+dy, x+dx] ≈ a[y, x]."""
+def _overlap(a, b, dy, dx):
+    """정수 이동 (dy, dx)로 겹친 영역 (a 조각, b 조각). b[y+dy, x+dx] ≈ a[y, x]. 없으면 (None, None)."""
     H, W = a.shape
     y0, y1 = max(0, -dy), min(H, H - dy)
     x0, x1 = max(0, -dx), min(W, W - dx)
     if y1 - y0 < 2 or x1 - x0 < 2:
+        return None, None
+    return a[y0:y1, x0:x1], b[y0 + dy:y1 + dy, x0 + dx:x1 + dx]
+
+
+def _overlap_ncc(a, b, dy, dx):
+    """정수 이동 (dy, dx)로 겹친 영역의 zero-mean NCC."""
+    pa, pb = _overlap(a, b, dy, dx)
+    if pa is None:
         return float('nan')
-    pa = a[y0:y1, x0:x1]
-    pb = b[y0 + dy:y1 + dy, x0 + dx:x1 + dx]
     pa = pa - pa.mean()
     pb = pb - pb.mean()
     den = math.sqrt(float((pa * pa).sum()) * float((pb * pb).sum()))
     return float((pa * pb).sum() / den) if den > 0 else float('nan')
 
 
-def phase_correlation(img1, img2, roi=None, upsample=100) -> ShiftResult:
-    """위상 상관으로 이미지 1 → 이미지 2 이동량을 잰다. roi는 두 이미지에 같이 적용한다."""
-    a0 = np.asarray(img1, dtype=np.float64)
-    b0 = np.asarray(img2, dtype=np.float64)
-    if a0.shape != b0.shape:
-        raise ValueError(f'이미지 크기가 다릅니다 ({_size_text(a0.shape)} / {_size_text(b0.shape)})')
-    roi = clip_roi(roi, a0.shape)
-    a, b = _crop(a0, roi), _crop(b0, roi)
+def _correlate(a, b, upsample):
+    """같은 크기 두 배열의 위상 상관 → (dy, dx, 정규화 피크, PSR, 2등/1등). 잴 수 없으면 ValueError."""
     H, W = a.shape
-    if min(H, W) < MIN_ROI:
-        raise ValueError('분석 영역이 너무 작습니다')
     Fa = np.fft.rfft2(_prepare(a))
     Fb = np.fft.rfft2(_prepare(b))
     cross = Fb * np.conj(Fa)
@@ -290,8 +332,36 @@ def phase_correlation(img1, img2, roi=None, upsample=100) -> ShiftResult:
     peak = float(surface[py, px] / ((lowpass * half_w).sum() / (H * W)))
     # 소수점: 절반 정규화 — 잡음이 큰 고주파의 비중을 줄여 sub-pixel 오차가 작다
     spec_w = cross / np.sqrt(mag) * lowpass * half_w
-    fy, fx = _refine_peak(spec_w, H, W, py, px, max(1, int(upsample)))
-    dy, dx = _wrap(fy, H), _wrap(fx, W)
+    found = _refine_peak(spec_w, H, W, py, px, max(1, int(upsample)))
+    if found is None:
+        raise ValueError('상관 피크가 뚜렷하지 않아 이동량을 잴 수 없습니다 (무늬가 없거나 평평함)')
+    return _wrap(found[0], H), _wrap(found[1], W), peak, psr, second
+
+
+def phase_correlation(img1, img2, roi=None, upsample=100) -> ShiftResult:
+    """위상 상관으로 이미지 1 → 이미지 2 이동량을 잰다. roi는 두 이미지에 같이 적용한다."""
+    a0 = np.asarray(img1, dtype=np.float64)
+    b0 = np.asarray(img2, dtype=np.float64)
+    if a0.shape != b0.shape:
+        raise ValueError(f'이미지 크기가 다릅니다 ({_size_text(a0.shape)} / {_size_text(b0.shape)})')
+    roi = clip_roi(roi, a0.shape)
+    a, b = _crop(a0, roi), _crop(b0, roi)
+    H, W = a.shape
+    if min(H, W) < MIN_ROI:
+        raise ValueError('분석 영역이 너무 작습니다')
+    dy, dx, peak, psr, second = _correlate(a, b, upsample)
+    # 큰 이동: Hann 창이 두 이미지의 다른 자리를 눌러 0 쪽으로 치우친다 (300 px에서 약 0.05 px).
+    # 정수 이동만큼 겹친 영역으로 잘라 같은 내용끼리 다시 재면 남은 소수점만 잰다.
+    iy, ix = int(round(dy)), int(round(dx))
+    if max(abs(iy), abs(ix)) >= REFINE_MIN_SHIFT:
+        pa, pb = _overlap(a, b, iy, ix)
+        if pa is not None and min(pa.shape) >= 2 * MIN_ROI:
+            try:
+                ry, rx = _correlate(pa, pb, upsample)[:2]
+            except ValueError:
+                ry = rx = None
+            if ry is not None and abs(ry) <= 1.0 and abs(rx) <= 1.0:
+                dy, dx = iy + ry, ix + rx
 
     ncc = _overlap_ncc(_bandpass(a), _bandpass(b), int(round(dy)), int(round(dx)))
     res = ShiftResult(dx_px=dx, dy_px=dy, method=METHOD_PHASE, peak=peak,
@@ -464,20 +534,131 @@ def _track_one(a, b, searcher, roi, upsample):
 # ── 방법 고르기 ─────────────────────────────────────────
 
 def measure_shift(img1, img2, method=METHOD_AUTO, roi=None, upsample=100) -> ShiftResult:
-    """이미지 1 → 이미지 2 이동량. method: 'auto' / 'phase' / 'template'."""
+    """이미지 1 → 이미지 2 이동량. method: 'auto' / 'phase' / 'template'.
+
+    화면 고정 오버레이(두 장에서 그대로인 글자·십자선)가 있으면 그 픽셀을 빼고 재며 경고한다.
+    """
     a = np.asarray(img1, dtype=np.float64)
     b = np.asarray(img2, dtype=np.float64)
     if a.shape != b.shape:
         raise ValueError(f'이미지 크기가 다릅니다 ({_size_text(a.shape)} / {_size_text(b.shape)})')
+    if method not in (METHOD_AUTO, METHOD_PHASE, METHOD_TEMPLATE):
+        raise ValueError(f'알 수 없는 방법: {method}')
     roi = clip_roi(roi, a.shape)
+    mask = fixed_overlay_mask(a, b, method, roi, upsample)
+    if mask is None:
+        return _measure(a, b, method, roi, upsample)
+    res = _measure(_fill_masked(a, mask), _fill_masked(b, mask), method, roi, upsample)
+    res.warnings.append(f'화면 고정 오버레이 감지 ({mask.mean() * 100:.1f}% 픽셀, 빼고 계산) — '
+                        f'원본(PR.png) 사용 권장')
+    return res
+
+
+def _local_range(img):
+    """3×3 둘레의 최대 − 최소."""
+    H, W = img.shape
+    p = np.pad(img, 1, mode='edge')
+    lo = hi = img
+    for i in range(3):
+        for j in range(3):
+            v = p[i:i + H, j:j + W]
+            lo = np.minimum(lo, v)
+            hi = np.maximum(hi, v)
+    return hi - lo
+
+
+def _dilate(mask):
+    H, W = mask.shape
+    p = np.pad(mask, 1)
+    out = np.zeros_like(mask)
+    for i in range(3):
+        for j in range(3):
+            out |= p[i:i + H, j:j + W]
+    return out
+
+
+def _fill_masked(img, mask, r=OVERLAY_FILL_RADIUS):
+    """mask 픽셀을 둘레(2r+1)²의 mask 아닌 픽셀 평균으로 채운다 (둘레에 없으면 전체 평균)."""
+    keep = (~mask).astype(np.float64)
+    num = _box_mean(img * keep, r)
+    den = _box_mean(keep, r)
+    rest = img[~mask]
+    fallback = float(rest.mean()) if rest.size else 0.0
+    fill = np.where(den > 1e-9, num / np.maximum(den, 1e-9), fallback)
+    return np.where(mask, fill, img)
+
+
+def _shift_image(img, dy, dx):
+    """img를 (dx, dy) px 옮긴 예측 — 정수는 잘라 옮기고 소수는 푸리에. 범위 밖·가장자리 4 px는 nan."""
+    H, W = img.shape
+    iy, ix = int(round(dy)), int(round(dx))
+    fy, fx = dy - iy, dx - ix
+    src = img
+    if fy or fx:
+        ky = np.fft.fftfreq(H)[:, None]
+        kx = np.fft.rfftfreq(W)[None, :]
+        src = np.fft.irfft2(np.fft.rfft2(img) * np.exp(-2j * np.pi * (kx * fx + ky * fy)), s=(H, W))
+    out = np.full((H, W), np.nan)
+    y0, y1 = max(0, iy), min(H, H + iy)
+    x0, x1 = max(0, ix), min(W, W + ix)
+    if y1 > y0 and x1 > x0:
+        out[y0:y1, x0:x1] = src[y0 - iy:y1 - iy, x0 - ix:x1 - ix]
+    e = 4
+    out[:e, :] = out[-e:, :] = np.nan
+    out[:, :e] = out[:, -e:] = np.nan
+    return out
+
+
+def fixed_overlay_mask(a, b, method=METHOD_AUTO, roi=None, upsample=100):
+    """화면에 고정된 오버레이 픽셀 mask (한 칸 넓힘). 없으면 None.
+
+    1) 후보: 두 장에서 값이 정확히 같고 3×3 둘레 밝기 차가 큰 픽셀 (글자·선의 윤곽)
+    2) 후보를 채우고 이동량을 잰 뒤, 이미지 1을 그만큼 옮긴 예측과 이미지 2가 크게 다른 후보만
+       확정한다 — 장면이었다면 바뀌었어야 할 자리가 그대로인 것. 우연히 같은 장면 픽셀(잡음 작은
+       8비트에서 20% 넘음)이나 움직이지 않은 장면은 예측과 맞아 빠진다.
+    포화·검은 픽셀은 따로 빼지 않는다: 장면과 함께 움직인 포화 영역은 예측과 맞아 빠지고,
+    화면에 고정된 포화 영역(글자, 고정 반사)은 오버레이처럼 빼는 것이 맞다.
+    """
+    sample = a[::4, ::4]
+    lo, hi = np.percentile(sample, [1, 99])
+    contrast = OVERLAY_CONTRAST * float(hi - lo)
+    if not contrast > 0:
+        return None
+    least = max(OVERLAY_MIN_PIXELS, OVERLAY_MIN_FRACTION * a.size)
+    cand = (a == b) & (_local_range(a) >= contrast) & (_local_range(b) >= contrast)
+    if cand.sum() < least:
+        return None
+    try:
+        first = _measure(_fill_masked(a, cand), _fill_masked(b, cand), method, roi, upsample)
+    except ValueError:
+        return None
+    pred = _shift_image(a, first.dy_px, first.dx_px)
+    with np.errstate(invalid='ignore'):
+        confirmed = cand & (np.abs(pred - b) >= contrast)
+    if confirmed.sum() < least:
+        return None
+    # 확정한 윤곽에서 그대로인(값이 같은) 이웃으로 몇 칸 넓혀 글자 획 안쪽·번진 가장자리까지 덮는다.
+    # 남은 고정 무늬가 작은 이동(2 px 안팎)의 피크와 겹쳐 0 쪽으로 끄는 것을 줄인다
+    mask = _dilate(confirmed)
+    same = a == b
+    for _ in range(OVERLAY_GROW_STEPS):
+        mask |= _dilate(mask) & same
+    return mask
+
+
+def _measure(a, b, method, roi, upsample):
+    """방법 하나로 잰다 (오버레이 처리 없음). roi는 이미 잘라 둔 값."""
     if method == METHOD_PHASE:
         return phase_correlation(a, b, roi, upsample)
     if method == METHOD_TEMPLATE:
         return template_track(a, b, roi, upsample)
-    if method != METHOD_AUTO:
-        raise ValueError(f'알 수 없는 방법: {method}')
 
-    pc = phase_correlation(a, b, roi, upsample)
+    try:
+        pc = phase_correlation(a, b, roi, upsample)
+    except ValueError as e:
+        tm = template_track(a, b, roi, upsample)
+        tm.notes.insert(0, f'자동: 위상 상관을 잴 수 없어({e}) 템플릿 추적 사용')
+        return tm
     h, w = (roi[3], roi[2]) if roi is not None else a.shape
     small = abs(pc.dx_px) <= AUTO_PHASE_LIMIT * w and abs(pc.dy_px) <= AUTO_PHASE_LIMIT * h
     if pc.reliable and small:
@@ -498,21 +679,63 @@ def measure_shift(img1, img2, method=METHOD_AUTO, roi=None, upsample=100) -> Shi
 
 # ── 이동 → 각도·배율 ────────────────────────────────────
 
-def _axis_mapping(sx, sy, mx, my):
-    """지시 이동 (sx, sy)를 화면 축으로 옮긴 기대 벡터 중 측정 (mx, my)와 가장 가까운 것.
+def expected_vector(mapping, sx, sy):
+    """축 대응 (swap, gx, gy)로 지시 이동 (sx, sy)가 화면에서 가야 할 벡터 (화면 x 오른쪽, y 아래)."""
+    swap, gx, gy = mapping
+    p, q = (sy, sx) if swap else (sx, sy)
+    return gx * p, gy * q
 
-    Returns: ((ex, ey), swap, gx, gy) — swap이면 스테이지 X↔화면 y. gx, gy는 화면 x·y 부호.
+
+def mapping_label(mapping):
+    """'X→오른쪽, Y→아래' 꼴 (자동이면 '자동')."""
+    if mapping == MAPPING_AUTO:
+        return '자동'
+    swap, gx, gy = mapping
+    horiz = '오른쪽' if gx > 0 else '왼쪽'
+    vert = '아래' if gy > 0 else '위'
+    return f'X→{vert}, Y→{horiz}' if swap else f'X→{horiz}, Y→{vert}'
+
+
+def _angle_deg(u, v):
+    nu, nv = math.hypot(*u), math.hypot(*v)
+    if nu == 0 or nv == 0:
+        return 0.0
+    c = (u[0] * v[0] + u[1] * v[1]) / (nu * nv)
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def _candidates(sx, sy):
+    """서로 다른 기대 벡터마다 [(벡터, 축 대응)] — 한 축 이동이면 4개, 두 축이면 8개."""
+    out = []
+    for m in MAPPING_CHOICES:
+        e = expected_vector(m, sx, sy)
+        if not any(abs(e[0] - v[0]) < 1e-9 and abs(e[1] - v[1]) < 1e-9 for v, _m in out):
+            out.append((e, m))
+    return out
+
+
+def mapping_separation_deg(sx, sy):
+    """축 대응 후보 기대 방향끼리의 가장 작은 각도. 한 축 이동 90°, (400, 4) 1.1°, (400, 395) 0.7°."""
+    vecs = [e for e, _m in _candidates(sx, sy)]
+    if len(vecs) < 2:
+        return 180.0
+    return min(_angle_deg(u, v) for i, u in enumerate(vecs) for v in vecs[i + 1:])
+
+
+def infer_mapping(sx, sy, mx, my):
+    """측정 방향 (mx, my)에 가장 가까운 축 대응 → (축 대응 또는 None, 못 정한 이유).
+
+    후보끼리 MAPPING_MIN_SEPARATION_DEG 이상 떨어져 있을 때만 정한다 (카메라가 그 절반보다 덜
+    돌아가 있다는 가정). 측정 이동이 MIN_MOTION_PX보다 작으면 정하지 않는다.
     """
-    best = None
-    for swap in (False, True):
-        p, q = (sy, sx) if swap else (sx, sy)
-        for gx in (1, -1):
-            for gy in (1, -1):
-                ex, ey = gx * p, gy * q
-                score = ex * mx + ey * my
-                if best is None or score > best[0] + 1e-12:
-                    best = (score, (ex, ey), swap, gx, gy)
-    return best[1:]
+    sep = mapping_separation_deg(sx, sy)
+    if sep < MAPPING_MIN_SEPARATION_DEG:
+        return None, (f'스테이지 X·Y를 함께 움직여 축 대응 후보가 {sep:.1f}°밖에 떨어지지 않아 자동으로 '
+                      f'정할 수 없습니다 — 축 대응을 직접 고르세요 (φ·배율 없음)')
+    if math.hypot(mx, my) < MIN_MOTION_PX:
+        return None, f'측정 이동이 {MIN_MOTION_PX:g} px보다 작아 화면 방향을 정할 수 없습니다'
+    best = min(_candidates(sx, sy), key=lambda c: _angle_deg(c[0], (mx, my)))
+    return best[1], ''
 
 
 _SCREEN_DIR = {('x', 1): '화면 오른쪽(+x)', ('x', -1): '화면 왼쪽(−x)',
@@ -528,10 +751,13 @@ def _mapping_text(sx, sy, swap, gx, gy):
     return ', '.join(parts)
 
 
-def analyze_motion(dx_px, dy_px, pixel_size_um=DEFAULT_PIXEL_SIZE_UM, stage_dx_um=0.0, stage_dy_um=0.0):
+def analyze_motion(dx_px, dy_px, pixel_size_um=DEFAULT_PIXEL_SIZE_UM, stage_dx_um=0.0, stage_dy_um=0.0,
+                   mapping=MAPPING_AUTO, mapping_source=None):
     """이미지 이동 (px)과 지시 스테이지 이동 (µm) → µm 이동, 각도 φ, 배율, 잔차, 해석 문장.
 
-    스테이지 이동이 0이면 이동량만 낸다 (φ 등은 None).
+    mapping: MAPPING_AUTO(infer_mapping으로 정함) 또는 (swap, gx, gy).
+    스테이지 이동이 0이면 이동량만 낸다. 측정 이동이 0.5 px보다 작거나 자동 축 대응을 정할 수
+    없으면 φ·배율·잔차는 None이고 warnings에 이유를 남긴다.
     """
     ps = float(pixel_size_um)
     if not ps > 0:
@@ -542,17 +768,29 @@ def analyze_motion(dx_px, dy_px, pixel_size_um=DEFAULT_PIXEL_SIZE_UM, stage_dx_u
         'dx_um': mx, 'dy_um': my,
         'length_px': math.hypot(dx_px, dy_px), 'length_um': math.hypot(mx, my),
         'stage_dx_um': sx, 'stage_dy_um': sy,
-        'expected_um': None, 'expected_px': None, 'mapping': '',
+        'expected_um': None, 'expected_px': None, 'mapping': '', 'mapping_key': None, 'mapping_source': '',
         'phi_deg': None, 'phi_mrad': None, 'along_um': None, 'perp_um': None,
         'scale_ratio': None, 'pixel_size_implied': None,
         'residual_um': None, 'residual_px': None, 'warnings': [],
     }
+    out['interpretation'] = _shift_sentence(dx_px, dy_px, mx, my)
     if sx == 0 and sy == 0:
-        out['interpretation'] = _shift_sentence(dx_px, dy_px, mx, my)
         return out
-    if out['length_px'] < 0.5:
-        out['warnings'].append('측정 이동이 0.5 px보다 작아 화면 방향을 정할 수 없습니다')
-    (ex, ey), swap, gx, gy = _axis_mapping(sx, sy, mx, my)
+    if out['length_px'] < MIN_MOTION_PX:
+        out['warnings'].append(f'측정 이동이 {MIN_MOTION_PX:g} px보다 작아 방향(φ)·배율을 낼 수 없습니다')
+        out['interpretation'] += ' — φ·배율 없음 (이동이 너무 작음)'
+        return out
+    if mapping == MAPPING_AUTO:
+        mapping, why = infer_mapping(sx, sy, dx_px, dy_px)
+        if mapping is None:
+            out['warnings'].append(why)
+            out['interpretation'] += ' — φ·배율 없음 (축 대응 미정)'
+            return out
+        mapping_source = mapping_source or '자동'
+    swap, gx, gy = mapping
+    ex, ey = expected_vector(mapping, sx, sy)
+    out['mapping_key'] = tuple(mapping)
+    out['mapping_source'] = mapping_source or '지정'
     L = math.hypot(ex, ey)
     cross = ex * my - ey * mx                       # 화면 좌표(y 아래)의 외적
     along = (ex * mx + ey * my) / L
@@ -599,7 +837,7 @@ def _angle_sentence(sx, sy, ex, ey, perp, ps, phi, scale):
     else:
         text = (f'{head} → 카메라 축이 스테이지 {axis}에 대해 {abs(phi):.2f}° 돌아가 있음 '
                 f'(φ = {phi:+.2f}°, 화면에서 반시계 +)')
-    if abs(scale - 1.0) > SCALE_NOTE:
+    if scale > 0 and abs(scale - 1.0) > SCALE_NOTE:
         text += f' · 이동 거리 비 {scale:.4f} (픽셀 크기 {ps / scale:.4f} µm/px에 해당)'
     return text
 
@@ -628,21 +866,33 @@ class BatchResult:
     names: list
     pairs: list = field(default_factory=list)
     errors: list = field(default_factory=list)     # (번호, 이름, 문구)
+    mapping: object = MAPPING_AUTO                 # 사용자가 고른 축 대응 (자동 또는 (swap, gx, gy))
+    mapping_used: tuple | None = None              # 실제로 쓴 축 대응 (못 정했으면 None)
+    warnings: list = field(default_factory=list)   # 여러 장 전체에 대한 경고 (축 대응 불일치 등)
 
     @property
     def stats(self):
         return batch_stats(self.pairs)
+
+    @property
+    def excluded(self):
+        """경고가 있어 평균·표준편차에서 뺀 쌍 수."""
+        return sum(1 for p in self.pairs if p.warnings)
 
 
 _STAT_KEYS = ('dx_px', 'dy_px', 'dx_um', 'dy_um', 'phi_deg', 'phi_mrad', 'scale_ratio')
 
 
 def batch_stats(pairs):
-    """{키: (평균, 표준편차 ddof=1 또는 None, 개수)} — φ 등이 없는 쌍은 그 키에서 뺀다."""
+    """{키: (평균, 표준편차 ddof=1 또는 None, 개수)}.
+
+    경고가 있는 쌍은 빼고(BatchResult.excluded), φ 등이 없는 쌍은 그 키에서 뺀다.
+    """
     out = {}
+    clean = [p for p in pairs if not p.warnings]
     for key in _STAT_KEYS:
         vals = []
-        for p in pairs:
+        for p in clean:
             v = getattr(p.shift, key) if key in ('dx_px', 'dy_px') else p.motion.get(key)
             if v is not None and np.isfinite(v):
                 vals.append(float(v))
@@ -653,10 +903,13 @@ def batch_stats(pairs):
 
 
 def analyze_images(images, pixel_size_um=DEFAULT_PIXEL_SIZE_UM, stage_um=(0.0, 0.0),
-                   method=METHOD_AUTO, roi=None, names=None, upsample=100, progress=None):
+                   method=METHOD_AUTO, roi=None, names=None, upsample=100, progress=None,
+                   mapping=MAPPING_AUTO):
     """이미지 2..N을 각각 이미지 1과 비교한다. images는 경로 또는 2D 배열.
 
-    한 장이 실패해도 나머지는 계속하고 errors에 남긴다. progress(done, total)를 부른다.
+    한 장이 실패해도(어떤 예외든) 나머지는 계속하고 errors에 남긴다. progress(done, total)를
+    시작과 한 장마다 부르며, progress가 AnalysisCancelled를 던지면 그대로 멈춘다.
+    각도·배율은 다 잰 뒤 interpret_batch로 한꺼번에 계산한다 (자동 축 대응은 여러 장이 하나로).
     """
     images = list(images)
     if len(images) < 2:
@@ -666,20 +919,66 @@ def analyze_images(images, pixel_size_um=DEFAULT_PIXEL_SIZE_UM, stage_um=(0.0, 0
                  for i, x in enumerate(images)]
     sx, sy = (float(v or 0.0) for v in stage_um)
     batch = BatchResult(pixel_size_um=float(pixel_size_um), stage_um=(sx, sy), method=method,
-                        roi=None, names=list(names))
+                        roi=None, names=list(names), mapping=mapping)
+    total = len(images) - 1
+    if progress is not None:
+        progress(0, total)
     ref = _as_gray(images[0])
     batch.roi = clip_roi(roi, ref.shape)
-    total = len(images) - 1
     for k in range(1, len(images)):
         try:
             img = _as_gray(images[k])
             shift = measure_shift(ref, img, method, batch.roi, upsample)
-            motion = analyze_motion(shift.dx_px, shift.dy_px, pixel_size_um, sx, sy)
-            batch.pairs.append(PairResult(k + 1, names[0], names[k], shift, motion))
-        except (ValueError, MemoryError) as e:
-            batch.errors.append((k + 1, names[k], str(e)))
+            batch.pairs.append(PairResult(k + 1, names[0], names[k], shift, {}))
+        except AnalysisCancelled:
+            raise
+        except Exception as e:      # 한 장의 어떤 실패도 나머지 쌍을 막지 않는다
+            batch.errors.append((k + 1, names[k], str(e) or type(e).__name__))
         if progress is not None:
             progress(k, total)
+    return interpret_batch(batch)
+
+
+def interpret_batch(batch, pixel_size_um=None, stage_um=None, mapping=None):
+    """잰 이동량으로 각도·배율을 (다시) 계산한다. 픽셀 크기·지시 이동·축 대응만 바뀌면 다시 재지 않는다.
+
+    자동 축 대응은 경고 없는 쌍(없으면 전체)의 평균 측정 방향으로 하나를 정해 모든 쌍에 쓰고,
+    자기 방향으로는 다른 대응이 나오는 쌍에 경고한다. 모든 쌍을 계산한 뒤 한꺼번에 바꾸므로
+    중간에 실패해도 batch는 이전 상태 그대로다.
+    """
+    ps = batch.pixel_size_um if pixel_size_um is None else float(pixel_size_um)
+    if not ps > 0:
+        raise ValueError('픽셀 크기는 0보다 커야 합니다')
+    sx, sy = batch.stage_um if stage_um is None else tuple(float(v or 0.0) for v in stage_um)
+    want = batch.mapping if mapping is None else mapping
+    use, source, warnings = want, None, []
+    if (sx or sy) and want == MAPPING_AUTO and batch.pairs:
+        good = [p for p in batch.pairs if p.shift.reliable] or batch.pairs
+        mean_dx = float(np.mean([p.shift.dx_px for p in good]))
+        mean_dy = float(np.mean([p.shift.dy_px for p in good]))
+        found, why = infer_mapping(sx, sy, mean_dx, mean_dy)
+        if found is not None:
+            use, source = found, '자동 (여러 장 평균 방향)' if len(batch.pairs) > 1 else '자동'
+        elif len(batch.pairs) > 1:
+            warnings.append(why)
+    motions, disagree = [], 0
+    for p in batch.pairs:
+        m = analyze_motion(p.shift.dx_px, p.shift.dy_px, ps, sx, sy, use, source)
+        if source and m['phi_deg'] is not None:
+            own, _why = infer_mapping(sx, sy, p.shift.dx_px, p.shift.dy_px)
+            if own is not None and expected_vector(own, sx, sy) != expected_vector(use, sx, sy):
+                m['warnings'].append(f'이 쌍의 측정 방향은 다른 축 대응({mapping_label(own)})에 더 가깝습니다 '
+                                     f'— 축 대응을 직접 확인하세요')
+                disagree += 1
+        motions.append(m)
+    if disagree:
+        warnings.append(f'{disagree}쌍이 여러 장 평균과 다른 축 대응({mapping_label(use)} 아님)에 더 가깝습니다 '
+                        f'— 축 대응을 직접 고르세요')
+    for p, m in zip(batch.pairs, motions):
+        p.motion = m
+    batch.pixel_size_um, batch.stage_um, batch.mapping = ps, (sx, sy), want
+    batch.mapping_used = use if use != MAPPING_AUTO else None
+    batch.warnings = warnings
     return batch
 
 
@@ -691,6 +990,8 @@ def _as_gray(x):
         a = a[..., :3] @ np.array([0.299, 0.587, 0.114]) if a.shape[2] >= 3 else a[..., 0]
     if a.ndim != 2:
         raise ValueError('2차원 이미지가 아닙니다')
+    if not np.isfinite(a).all():
+        raise ValueError('NaN·무한대 픽셀이 있습니다')
     return a
 
 
@@ -724,13 +1025,13 @@ def pair_row(p):
     s, m = p.shift, p.motion
     res = m.get('residual_um') or (None, None)
     return [
-        str(p.index), p.name1, p.name2, METHOD_LABELS.get(s.method, s.method),
+        str(p.index), _csv_text(p.name1), _csv_text(p.name2), METHOD_LABELS.get(s.method, s.method),
         _num(s.dx_px, '.3f'), _num(s.dy_px, '.3f'),
         _num(m['dx_um'], '.3f'), _num(m['dy_um'], '.3f'), _num(m['length_um'], '.3f'),
         _num(m['phi_deg'], '.4f'), _num(m['phi_mrad'], '.3f'), _num(m['scale_ratio'], '.5f'),
         _num(res[0], '.3f'), _num(res[1], '.3f'),
         _num(s.ncc, '.3f'), _num(s.peak, '.3f'), _num(s.psr, '.1f'), _num(s.second_ratio, '.2f'),
-        ' / '.join(p.warnings), m['interpretation'],
+        _csv_text(' / '.join(p.warnings)), _csv_text(m['interpretation']),
     ]
 
 
@@ -739,12 +1040,56 @@ CSV_HEADERS = ['번호', '이미지 1', '비교 이미지', '방법', 'Δx (px)'
                '일치도 NCC', '상관 피크', 'PSR', '2등/1등 피크', '경고', '해석']
 
 
-def _stat_line(stats, key, label, unit, fmt):
+def stats_count_text(n, excluded):
+    """'n=3, 경고 1쌍 제외' — 평균·표준편차에 쓴 쌍 수와 경고로 뺀 쌍 수."""
+    return f'n={n}' + (f', 경고 {excluded}쌍 제외' if excluded else '')
+
+
+def stats_summary(batch: BatchResult) -> str:
+    """화면 한 줄: φ(또는 이동량) 평균 ± 표준편차, 쓴 쌍·뺀 쌍 수. 쌍이 하나면 빈 문자열."""
+    if len(batch.pairs) < 2:
+        return ''
+    stats, excluded = batch.stats, batch.excluded
+
+    def pm(key, fmt):
+        mean, std, _n = stats[key]
+        return format(mean, fmt) + (f' ± {format(std, fmt.replace("+", ""))}' if std is not None else '')
+
+    if 'phi_deg' in stats:
+        n = stats['phi_deg'][2]
+        text = (f'φ 평균 {pm("phi_deg", "+.4f")}° ({stats_count_text(n, excluded)}) · '
+                f'{pm("phi_mrad", "+.3f")} mrad')
+        if 'scale_ratio' in stats:
+            text += f' · 배율 평균 {stats["scale_ratio"][0]:.5f}'
+        return text
+    if 'dx_px' in stats:
+        n = stats['dx_px'][2]
+        return (f'Δx 평균 {pm("dx_px", "+.3f")} px · Δy 평균 {pm("dy_px", "+.3f")} px '
+                f'({stats_count_text(n, excluded)})')
+    return f'평균·표준편차 없음 — 모든 쌍({excluded})에 경고가 있습니다'
+
+
+def mapping_text(batch: BatchResult) -> str:
+    """'자동 → X→오른쪽, Y→아래' / '지정: …' / '자동 (정하지 못함)'."""
+    if batch.mapping != MAPPING_AUTO:
+        return f'지정: {mapping_label(batch.mapping)}'
+    if batch.mapping_used is None:
+        return '자동 (정하지 못함)'
+    return f'자동 → {mapping_label(batch.mapping_used)}'
+
+
+def _stat_line(stats, key, label, unit, fmt, excluded=0):
     if key not in stats:
         return None
     mean, std, n = stats[key]
-    sd = f' ± {format(std, fmt)}' if std is not None else ''
-    return f'{label}: 평균 {format(mean, fmt)}{sd} {unit} (n={n}, 표준편차 ddof=1)'
+    sd = f' ± {format(std, fmt.replace("+", ""))}' if std is not None else ''
+    return f'{label}: 평균 {format(mean, fmt)}{sd} {unit} ({stats_count_text(n, excluded)}, 표준편차 ddof=1)'
+
+
+def _csv_text(value):
+    """엑셀이 수식으로 읽지 않게: =, +, -, @, 탭, CR로 시작하는 글은 앞에 ' 를 붙인다 (숫자 칸에는 쓰지 않는다)."""
+    text = str(value)
+    return "'" + text if text.startswith(CSV_FORMULA_PREFIXES) else text
 
 
 def format_report(batch: BatchResult) -> str:
@@ -753,9 +1098,12 @@ def format_report(batch: BatchResult) -> str:
     lines = ['[이미지 이동량 분석]',
              f'픽셀 크기: {batch.pixel_size_um:g} µm/px',
              f'지시 스테이지 이동: X {sx:+g} µm, Y {sy:+g} µm' if (sx or sy) else '지시 스테이지 이동: 없음 (이동량만)',
-             f'방법: {METHOD_LABELS.get(batch.method, batch.method)} · ROI: {roi_text(batch.roi)}',
+             f'방법: {METHOD_LABELS.get(batch.method, batch.method)} · ROI: {roi_text(batch.roi)}'
+             + (f' · 축 대응: {mapping_text(batch)}' if (sx or sy) else ''),
              '부호: Δx 화면 오른쪽 +, Δy 화면 아래 +, φ는 기대 방향 → 측정 방향이 화면에서 반시계면 +',
              '']
+    for w in batch.warnings:
+        lines.append(f'경고: {w}')
     for p in batch.pairs:
         s, m = p.shift, p.motion
         lines.append(f'#{p.index} {p.name1} → {p.name2} ({METHOD_LABELS.get(s.method, s.method)})')
@@ -776,10 +1124,12 @@ def format_report(batch: BatchResult) -> str:
     stats = batch.stats
     if len(batch.pairs) > 1:
         lines.append('')
+        if not stats:
+            lines.append(f'평균·표준편차: 모든 쌍({batch.excluded})에 경고가 있어 내지 않음')
         for key, label, unit, fmt in (('phi_deg', 'φ', '°', '+.4f'), ('phi_mrad', 'φ', 'mrad', '+.3f'),
                                       ('dx_px', 'Δx', 'px', '+.3f'), ('dy_px', 'Δy', 'px', '+.3f'),
                                       ('scale_ratio', '배율', '', '.5f')):
-            line = _stat_line(stats, key, label, unit, fmt)
+            line = _stat_line(stats, key, label, unit, fmt, batch.excluded)
             if line:
                 lines.append(line)
     return '\n'.join(lines)
@@ -792,20 +1142,24 @@ def write_csv(path, batch: BatchResult):
         sx, sy = batch.stage_um
         w.writerow(['픽셀 크기 (µm/px)', f'{batch.pixel_size_um:g}', '지시 이동 X (µm)', f'{sx:g}',
                     '지시 이동 Y (µm)', f'{sy:g}', '방법', METHOD_LABELS.get(batch.method, batch.method),
-                    'ROI', roi_text(batch.roi)])
+                    'ROI', roi_text(batch.roi), '축 대응', mapping_text(batch)])
         w.writerow(CSV_HEADERS)
         for p in batch.pairs:
             w.writerow(pair_row(p))
         for idx, name, msg in batch.errors:
-            row = [str(idx), batch.names[0] if batch.names else '', name] + [''] * (len(CSV_HEADERS) - 3)
+            row = [str(idx), _csv_text(batch.names[0]) if batch.names else '', _csv_text(name)] \
+                + [''] * (len(CSV_HEADERS) - 3)
             row[-2] = f'실패: {msg}'
             w.writerow(row)
         stats = batch.stats
         if len(batch.pairs) > 1:
             cols = {'dx_px': 4, 'dy_px': 5, 'dx_um': 6, 'dy_um': 7, 'phi_deg': 9, 'phi_mrad': 10, 'scale_ratio': 11}
-            for label, pick in (('평균', 0), ('표준편차 (ddof=1)', 1)):
+            n_text = stats_count_text(len(batch.pairs) - batch.excluded, batch.excluded)
+            for label, pick in ((f'평균 ({n_text})', 0), (f'표준편차 (ddof=1, {n_text})', 1)):
                 row = [label] + [''] * (len(CSV_HEADERS) - 1)
                 for key, col in cols.items():
                     if key in stats and stats[key][pick] is not None:
                         row[col] = f'{stats[key][pick]:.5f}'
                 w.writerow(row)
+        for warning in batch.warnings:
+            w.writerow([_csv_text(f'경고: {warning}')] + [''] * (len(CSV_HEADERS) - 1))
