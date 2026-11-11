@@ -22,6 +22,9 @@ PyOpenGL-accelerate>=3.1.10
 numpy>=2.4.3
 # Wafer Contour / Vector Map의 보간에 사용
 scipy>=1.17.1
+# 이미지 2장 이동량 분석(core/image_shift.py)의 bmp/png/jpg/tiff(8·16비트) 읽기.
+# matplotlib이 이미 의존하는 패키지라 새로 설치되는 것은 없다.
+Pillow>=12.1.1
 
 # ── 내보내기 ──────────────────────────────────────────────────────────
 # Excel 리포트(Raw Data / Quality Report)
