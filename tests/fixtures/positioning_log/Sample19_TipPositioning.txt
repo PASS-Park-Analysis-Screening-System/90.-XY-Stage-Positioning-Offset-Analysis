@@ -1,0 +1,2 @@
+Slot	Location	Coarse Focus (um)	Coarse Success	Coarse Score (%)	Coarse Match PX (pxl)	Coarse Match PY (pxl)	Coarse Match X (um)	Coarse Match Y (um)	Fine Focus (um)	Fine Success	Fine Score (%)	Fine Match PX (pxl)	Fine Match PY (pxl)	Fine Match X (um)	Fine Match Y (um)	Tip X (um)	Tip Y (um)	
+19	Center	6594.69	TRUE	100.00	1225.32	389.53	1.82	72.14	6600.88	TRUE	99.85	1225.07	389.69	1.74	72.09	

@@ -20,6 +20,7 @@
 │   │   ├── exporter.py       # CSV, Excel Export
 │   │   ├── pdf_generator.py  # PDF 리포트 생성
 │   │   ├── llm_report.py     # LLM 원인 분석용 Markdown (report_schema: xy-stage-llm-report/1)
+│   │   ├── positioning_log.py # 비전 보정 로그(SamplePositioning·TipPositioning) ↔ HZ1_O 대조
 │   │   └── settings.py       # 사용자 설정 관리
 │   ├── charts/               # 시각화 모듈
 │   │   ├── basic.py          # 범용 차트 (Matplotlib)
@@ -232,6 +233,20 @@ overall = pass_x and pass_y
 
 ---
 
+### 7.1 비전 보정 로그 대조 (`core/positioning_log.py`)
+
+Lot 폴더 `Debug/SamplePositioning/<Sample>_SamplePositioning.txt`(Die마다 한 행: Stage X/Y, Coarse/Fine
+Match·Move·Optical Shift, Tip X/Y, Tip Pos X/Y)와 `Debug/TipPositioning/<Sample>_TipPositioning.txt`
+(Tip Positioning마다 한 행, Tip X/Y 칸이 비면 Fine Match X/Y)를 탭 구분으로 읽는다 (열 이름의 단위·대소문자
+무시, 남는 열·빈 줄 허용, 인코딩은 CSV와 같은 순서). 행은 측정 순서로 Die에 짝짓되 Point 0 행(샘플 정렬
+기준점)은 빼고, 명령 좌표에 회전·평행이동을 맞춘 뒤 X/Y UL 좌표와 300 µm 안에서 가장 가까운 Die가 같은지
+확인한다. 어긋나면 그 Lot은 짝짓지 않고 이유를 남긴다. 단계(도착 오차, 거친·정밀 보정, 정밀 잔차, Optical
+Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면 피팅(Sx, θx, θy, Sy와 t), Range, HZ1_O와의 상관을
+Lot별·Die별 Lot 평균으로 계산하고, 최종 착지의 유의한 성분(|t| ≥ 3, Die 8개 이상)을 같은 성분(|t| ≥ 3,
+크기 ≥ 0.5배, |r| ≥ 0.5)을 가진 가장 앞 단계에 돌린다. 어느 단계에도 없으면 '비전 정렬 이후(카메라→Tip 착지)'.
+결과는 회차 결과의 `positioning_log`에 담겨 Advanced → Positioning Log 탭과 AI 분석용 리포트의
+'비전 보정 로그 대조' 절이 같이 쓴다.
+
 ## 8. 성능 및 비동기 처리
 
 | 작업 | 처리 방식 | 이유 |
@@ -243,6 +258,7 @@ overall = pass_x and pass_y
 | TIFF 찾기·읽기 | `QThread (TiffLoadThread)` | 더블클릭 때 폴더 목록·TIFF 읽기 |
 | 진행 표시 | `BusyOverlay` + 상태 표시줄 `QProgressBar` | 폴더 확인 n/m, Lot n/m(전체는 폴더 확인 결과로 미리 앎), 초당 10번까지 |
 | 회차 요약 (`summarize_runs`) | `DataLoaderThread` | 화면 갱신 시간을 줄인다. Spec이 바뀌었으면 화면 스레드가 다시 계산 |
+| 비전 보정 로그 대조 (`positioning_log`) | `DataLoaderThread`(화면에 보일 회차) + Lot 스레드 8개, 다른 회차는 Positioning Log 탭이 보일 때 파이썬 스레드 1개 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2개라 모든 회차를 미리 읽지 않는다 |
 | Comparison 탭 차트 | 처음 보일 때 그림 | 가려진 탭은 미뤘다가 보일 때 한 번 (같은 결과면 다시 안 그림) |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |

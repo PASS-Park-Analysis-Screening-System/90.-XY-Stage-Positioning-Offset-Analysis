@@ -904,6 +904,78 @@ def _whatif_text(a: _Analysis, whatifs, spec_range, spec_stddev) -> str:
     return result_text(combine_verdicts(*(m['result'] for m in axes)), verdict_reference(*axes))
 
 
+def _positioning(results) -> str:
+    """비전 보정 로그(SamplePositioning·TipPositioning)와 최종 착지 대조 (선택 회차)."""
+    from core.positioning_log import COEF_NAMES, COEF_UNIT, ensure_analysis
+    lines = ['## 비전 보정 로그 대조 (Positioning Log)',
+             'Lot 폴더 Debug/SamplePositioning(Die마다 Coarse/Fine Match·Move, Optical Shift, Tip Pos)과 '
+             'Debug/TipPositioning 로그를 최종 착지(HZ1_O 편차)와 대조한다. 각 Workflow의 선택 회차, '
+             'Lot이 여럿이면 Die별 Lot 평균으로 피팅. 안정화 Die는 뺀다. 계수: X축 ∂/∂x = Sx (ppm), '
+             '∂/∂y = θx (µrad), Y축 ∂/∂x = θy (µrad), ∂/∂y = Sy (ppm). t = 값/SE. '
+             'r = Die별 값과 같은 축 최종 착지의 상관. 로그 값의 부호 기준은 장비 정의를 따른다.']
+    for r in results:
+        # 로더가 담은 분석을 쓴다. 없으면(화면에서 보지 않은 회차) 내보내기 스레드에서 순서대로 읽는다
+        a = ensure_analysis(r, workers=1)
+        lines += ['', f"### {_name(r)} (회차 {r.get('round', '')})"]
+        lines.append(f"- 상태: {a.get('message', '')}")
+        for lot in a.get('lots') or []:
+            m = lot.get('mapping') or {}
+            if lot['status'] == 'ok' and m.get('rotation_deg') is not None:
+                lines.append(f"- {lot['lot']}: 로그 {m['rows']}행 ↔ Die {m['dies']}개 짝지음 "
+                             f"(정렬 회전 {m['rotation_deg']:+.3f}°, 원점 차 "
+                             f"{m['offset_um'][0]:+.0f} / {m['offset_um'][1]:+.0f} µm, "
+                             f"최대 잔차 {m['max_residual_um']:.1f} µm)")
+            elif lot['status'] != 'ok':
+                lines.append(f"- {lot['lot']}: 제외 — {'; '.join(lot['problems'][:3])}")
+        mean = a.get('mean')
+        if mean:
+            rows = []
+            for row in mean['stages']:
+                cells = [row['label'], row['axis']]
+                for name in COEF_NAMES[row['axis']]:
+                    e = row['coef'].get(name)
+                    cells += ([f"{name} {_zero(e['value'], 2):+.2f} {COEF_UNIT[name]}",
+                               _num(e['t'], '.1f', True)] if e else ['—', '—'])
+                cells += [_num(row['range']), _num(row['r'], '.2f', True), row['k']]
+                rows.append(cells)
+            lines.append(_table(['단계', '축', '∂/∂x', 't', '∂/∂y', 't', 'Range (µm)', 'r (HZ1_O)',
+                                 'Die'], rows))
+            verdict = a.get('verdict') or {}
+            lines += [f'- 판정 {DERIVED}: {text}' for text in verdict.get('lines', [])]
+            if verdict.get('rule'):
+                lines.append(f"- {verdict['rule']}")
+            ok_lots = [lot for lot in a['lots'] if lot['status'] == 'ok']
+            if len(ok_lots) >= 2:
+                lot_rows = []
+                for lot in ok_lots:
+                    final = {row['axis']: row['coef'] for row in lot['stages']
+                             if row['stage'] == 'final'}
+                    cells = [lot['lot']]
+                    for axis in AXES:
+                        for name in COEF_NAMES[axis]:
+                            e = (final.get(axis) or {}).get(name)
+                            cells.append('—' if not e else
+                                         f"{_zero(e['value'], 2):+.2f} (t {_num(e['t'], '.1f', True)})")
+                    spans = sorted({t['span'] for t in (lot['verdict'] or {}).get('terms', [])})
+                    cells.append(', '.join(spans) or '—')
+                    lot_rows.append(cells)
+                lines += ['Lot별 최종 착지 평면 계수와 판정 구간 (같은 규칙):',
+                          _table(['Lot', 'X Sx (ppm)', 'X θx (µrad)', 'Y θy (µrad)', 'Y Sy (ppm)',
+                                  '구간'], lot_rows)]
+        tips = a.get('tips') or []
+        if tips:
+            lines += ['#### Tip Positioning',
+                      _table(['Lot', '위치', 'Tip X (µm)', 'Tip Y (µm)', '출처', 'Fine Score (%)',
+                              '스테이지 Y (mm)'],
+                             [[t.get('lot', ''), t.get('location', ''), _num(t.get('tip_x'), '.2f', True),
+                               _num(t.get('tip_y'), '.2f', True), t.get('source', ''),
+                               _num(t.get('fine_score'), '.2f'), _num(t.get('stage_y'), '.1f', True)]
+                              for t in tips])]
+        summary = a.get('tip_summary') or {}
+        lines += [f'- {text}' for text in summary.get('lines') or []]
+    return '\n'.join(lines)
+
+
 def _change_log(results) -> str:
     lines = ['## 회차 변경 이력 (사용자 기입)',
              '회차마다 바꾼 모듈·설정·조건을 적는다.', '',
@@ -1089,6 +1161,8 @@ def _request(results, spec_limits, spec_deviation) -> str:
              '  - drift / warm-up (Lot 순서에 따른 변화)',
              '  - Lot 교대·주기 패턴 (Lot 간 비율, 홀짝 차이, lag-1 자기상관)',
              '  - 측정·비전 잡음 (Die×Lot 잔여, Die 안 StdDev)',
+             '  - 위치 결정 단계 (비전 보정 로그 대조: 도착·비전 보정·정밀 잔차·Optical Shift·'
+             'Tip Positioning 중 어디에 같은 성분이 있는지, 어디에도 없으면 카메라→Tip 착지 구간)',
              '- 이상치(*)는 Range·StdDev·판정에 포함되어 있습니다.']
     if reference:
         lines.append(f"- {', '.join(reference)}: 판정이 '{REFERENCE_LABEL}'입니다. Repeat이 1개라 "
@@ -1116,6 +1190,7 @@ def build_llm_report(recipe_results: list, spec_limits: dict = None,
         _conditions(results, spec_limits, spec_deviation),
         _summary(results, spec_limits, spec_deviation),
         _clues(results, spec_limits, spec_deviation),
+        _positioning(results),
         _run_comparison(results, spec_limits, spec_deviation),
         _change_log(results),
         _appendix(results, raw_csv),

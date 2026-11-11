@@ -841,6 +841,10 @@ class UIBuilderMixin:
         self.chart_widgets['3D Y'] = surface_y
         self.chart_widgets['3D X+Y'] = surface_mag
         _add_chart('Advanced', '3D Surface', surface_tabs, register=False)
+        # 비전 보정 로그 대조 (SamplePositioning·TipPositioning ↔ HZ1_O)
+        _add_chart('Advanced', 'Positioning Log', self._build_positioning_widget(), register=False)
+        self._inner_tabs['Advanced'].currentChanged.connect(self._flush_positioning_chart)
+        self.chart_category_tabs.currentChanged.connect(self._flush_positioning_chart)
 
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:
