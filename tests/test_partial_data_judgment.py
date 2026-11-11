@@ -86,7 +86,8 @@ def test_outlier_method_does_not_change_judgment():
 
 @pytest.mark.parametrize('dies, repeats, expected', [
     (range(1, 3), range(1, 11), None),      # Site 0001을 빼면 1 Die
-    (range(1, 23), range(1, 2), None),      # 1 Repeat
+    # 1 Repeat: 1.1.4부터 판정하되 '참고 (1 Repeat)'로 표시한다 (사용자 결정. 표시는 test_single_lot)
+    (range(1, 23), range(1, 2), True),
     (range(2, 3), range(1, 2), None),       # 값 하나 (Range 0)
     (range(1, 2), range(1, 11), None),      # 안정화 Die만
     (range(1, 4), range(1, 3), True),       # 최소 크기 2 × 2
@@ -295,7 +296,8 @@ def test_step_without_result_clears_previous_verdict(window):
 
 
 def test_step_button_shows_fail_when_other_axis_is_not_judged(window):
-    rows = (_table(axes=('Y',)) + _table(repeats=range(1, 2), axes=('X',)))
+    # 판정하지 않는 축: 1.1.4부터 1 Repeat은 참고 판정이라, Die가 1개(Site 0001 제외)인 축으로 만든다
+    rows = (_table(axes=('Y',)) + _table(dies=range(1, 3), axes=('X',)))
     next(r for r in rows if r['method'] == 'Y' and r['site_id'].startswith('0005'))['value'] += 9000
     _show(window, rows)
     window._compute_all_step_pass_states()

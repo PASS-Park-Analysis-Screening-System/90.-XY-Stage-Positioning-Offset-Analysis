@@ -18,9 +18,9 @@ import logging
 import math
 
 from core.checklist import (EXPECTED_DIES, EXPECTED_REPEATS, analysis_warnings,
-                            combine_verdicts, compute_axis_metrics, result_text,
+                            combine_verdicts, compute_axis_metrics, cpk_text, result_text,
                             summarize_runs)
-from core.die_analysis import (compute_affine_transform, compute_deviation_matrix,
+from core.die_analysis import (REFERENCE_LABEL, compute_affine_transform, compute_deviation_matrix,
                                extract_die_number, extract_die_positions,
                                filter_stabilization_die, stabilization_die)
 from core.statistics import filter_by_method, is_usable
@@ -43,6 +43,7 @@ RAW_CSV_COLUMNS = ['workflow', 'run', 'lot_order', 'lot', 'die', 'x_mm', 'y_mm',
 AXES = ('X', 'Y')
 DERIVED = '(파생)'
 _NO_DATA_ERRORS = ('No data loaded', 'No data found')
+SINGLE_LOT_TEXT = 'Lot 1개라 계산 안 함'
 _SCIPY_WARNED = []
 
 
@@ -325,7 +326,9 @@ def _conditions(results, spec_limits, spec_deviation) -> str:
         '- Range: 분석 대상 편차의 최댓값 − 최솟값 (µm).',
         '- StdDev: 분석 대상 편차의 표본 표준편차 (n−1, µm).',
         '- 판정: 축마다 Range ≤ spec_range 이고 StdDev ≤ spec_stddev 이면 PASS. '
-        'X, Y 중 하나라도 FAIL이면 Workflow FAIL. Spec이 없거나 2 Die × 2 Repeat 미만이면 —.',
+        'X, Y 중 하나라도 FAIL이면 Workflow FAIL. Spec이 없거나 Die 2개 미만이면 —. '
+        'Repeat이 1개(Die 2개 이상)면 같은 규칙으로 판정하되 "참고 (1 Repeat)"로 표시한다: '
+        'Die 간 편차만 보며 반복성(Repeat 간 변동)은 알 수 없다. Cpk도 같은 표시.',
         '- Avg (nm): 측정값(raw)의 평균. 레시피마다 기준점 차이(bias)가 섞여 있어 '
         'Workflow끼리 비교할 수 없다. 병진(Offset) 변화는 같은 Workflow의 회차 간 Avg 변화로만 본다.',
         '- Cpk: 편차 기준(평균 0)으로 min(|LSL|, USL) / (3σ). σ는 측정값(raw, nm)의 '
@@ -347,18 +350,21 @@ def _summary(results, spec_limits, spec_deviation) -> str:
             m = metrics[axis]
             rows.append((0 if m['result'] is False else 1 if m['result'] is None else 2,
                          order, axis, [
-                             _name(r), r.get('round', ''), axis, result_text(m['result']),
+                             _name(r), r.get('round', ''), axis,
+                             result_text(m['result'], m['reference']),
                              _num(m['range']), _num(m['spec_range']),
                              _margin_text(m['range'], m['spec_range']),
                              _num(m['stddev']), _num(m['spec_stddev']),
                              _margin_text(m['stddev'], m['spec_stddev']),
-                             _num(m['avg'], '.1f'), _num(m['cpk'], '.2f'),
+                             _num(m['avg'], '.1f'), cpk_text(m['cpk'], m['reference']),
                              f"{m['die_count']} × {m['repeat_count']}", m['stats'].get('count', 0),
                              len(warns)]))
             for key, label in (('range', 'Range'), ('stddev', 'StdDev')):
                 diff, pct = _margin(m[key], m[f'spec_{key}'])
                 if diff is not None and diff > 0:
-                    note = '' if m['result'] is False else ' — 판정 —(최소 크기 미달), FAIL로 세지 않음'
+                    note = ('' if m['result'] is False else ' — 판정 —(최소 크기 미달), FAIL로 세지 않음')
+                    if m['reference']:
+                        note += f' — {REFERENCE_LABEL} 판정'
                     exceeded.append(f"- {_name(r)} {axis} {label}: {m[key]:.3f} µm "
                                     f"(Spec {m[f'spec_{key}']:.3f} µm, {diff:+.3f} µm, "
                                     f"Spec 대비 {pct:.1f}%){note}")
@@ -555,6 +561,9 @@ def _systematic(a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
                 _num(d['rest_share'] * 100, '.1f'), _num(d['die_expect'] * 100, '.1f'),
                 f"{_f_text(d['die_f'])} ({_pvalue_text(d['die_p'])})",
                 '—' if d['lot_f'] is None else f"{_f_text(d['lot_f'])} ({_pvalue_text(d['lot_p'])})"])
+        elif len(a.devs[axis]['repeat_labels']) == 1:
+            # Lot 1개: Die마다 칸이 하나라 Die 안 변동이 없다. Lot 항도 없다 (분해하지 않는다)
+            decomp_rows.append([axis, f'{SINGLE_LOT_TEXT} (Die마다 값 1개)'] + ['—'] * 6)
         else:
             decomp_rows.append([axis, '—'] + ['—'] * 6)
         plane_rows.append([
@@ -706,7 +715,7 @@ def _temporal(a: _Analysis) -> list:
         row = [idx, lot]
         for axis in AXES:
             mean, std = col.get((axis, lot), (None, None))
-            row += [_num(mean, '.3f', True), _num(std)]
+            row += [_num(_zero(mean, 3), '.3f', True), _num(std)]
         rows.append(row)
     lines = ['#### 시간(Repeat 순서)',
              'Lot 순서 = 측정 순서(Start Time → Repeat No → 폴더 이름)로 매긴 번호. '
@@ -717,7 +726,9 @@ def _temporal(a: _Analysis) -> list:
         pts = [(idx, col[(axis, lot)][0]) for idx, lot in order
                if col.get((axis, lot), (None,))[0] is not None]
         slope, r2 = _fit_line([p[0] for p in pts], [p[1] for p in pts])
-        if slope is not None:
+        if len(pts) == 1:
+            lines.append(f'- {axis} drift·Lot 교대 패턴 {DERIVED}: {SINGLE_LOT_TEXT}')
+        elif slope is not None:
             lines.append(f'- {axis} drift {DERIVED}: Lot 평균 편차를 Lot 순서에 최소제곱 직선으로 맞춘 '
                          f'기울기 {_zero(slope, 4):+.4f} µm/Lot (R² {r2:.2f}), '
                          f'마지막 Lot − 첫 Lot = {_zero(pts[-1][1] - pts[0][1], 3):+.3f} µm')
@@ -783,7 +794,8 @@ def _clues(results, spec_limits, spec_deviation) -> str:
         a = _Analysis(r)
         lines += ['', f"### {_name(r)} (회차 {r.get('round', '')})"]
         if not a.data:
-            lines.append('- 분석할 데이터가 없음')
+            detail = r.get('no_rows_detail')
+            lines.append('- 분석할 데이터가 없음' + (f' ({detail})' if detail else ''))
             continue
         spec_range, spec_stddev = _spec(r, spec_deviation)
         metrics = _metrics(r, spec_limits, spec_deviation)
@@ -813,8 +825,8 @@ def _run_comparison(results, spec_limits, spec_deviation) -> str:
             rows.append([run['run'] + (' ⚠' if run['warnings'] else ''), run['lot_count'],
                          _num(x['range']), _num(x['stddev']), _num(x['avg'], '.1f'),
                          _num(y['range']), _num(y['stddev']), _num(y['avg'], '.1f'),
-                         f"{_num(x['cpk'], '.2f')} / {_num(y['cpk'], '.2f')}",
-                         result_text(run['result']), _first_repeat_text(source)])
+                         f"{cpk_text(x['cpk'], x['reference'])} / {cpk_text(y['cpk'], y['reference'])}",
+                         result_text(run['result'], run.get('reference')), _first_repeat_text(source)])
             if a.fitted():
                 af = a.af
                 wx, wy = a.whatif_plane('X'), a.whatif_plane('Y')
@@ -1016,6 +1028,8 @@ def _request(results, spec_limits, spec_deviation) -> str:
     any_fail = any(_metrics(r, spec_limits, spec_deviation)[axis]['result'] is False
                    for r in results for axis in AXES)
     multi_run = any(len(_runs_of(r)) >= 2 for r in results)
+    reference = [_name(r) for r in results
+                 if any(m['reference'] for m in _metrics(r, spec_limits, spec_deviation).values())]
     if any_fail:
         goals = ['1. 어떤 Workflow·축의 어떤 Spec 항목(Range, StdDev)이 얼마나(µm, Spec 대비 %) '
                  '초과했는지 정리해 주세요.',
@@ -1052,6 +1066,10 @@ def _request(results, spec_limits, spec_deviation) -> str:
              '  - Lot 교대·주기 패턴 (Lot 간 비율, 홀짝 차이, lag-1 자기상관)',
              '  - 측정·비전 잡음 (Die×Lot 잔여, Die 안 StdDev)',
              '- 이상치(*)는 Range·StdDev·판정에 포함되어 있습니다.']
+    if reference:
+        lines.append(f"- {', '.join(reference)}: 판정이 '{REFERENCE_LABEL}'입니다. Repeat이 1개라 "
+                     'Die 간 편차로만 판정했고 반복성·drift·Lot 간 변동은 알 수 없습니다. '
+                     '이 Workflow의 반복성에 대해서는 결론 내지 마세요.')
     if multi_run:
         lines.append('- "회차 변경 이력" 표가 비어 있으면 회차 간 차이의 원인(무엇을 바꿨는지)은 추정하지 말고, '
                      '숫자가 어떻게 바뀌었는지만 적으세요.')

@@ -270,12 +270,25 @@ def compute_deviation_matrix(data: list, method: str = 'X',
 # 판정에 필요한 최소 크기. 이보다 작으면 Range, StdDev가 Stage 성능을 나타내지 못한다.
 MIN_JUDGE_DIES = 2
 MIN_JUDGE_REPEATS = 2
+# Repeat이 이 수뿐이면(1 Repeat) 판정은 하되 '참고 판정'으로 표시한다 (사용자 결정, 1.1.4).
+# Die 간 편차만 보므로 반복성은 알 수 없다. Die가 MIN_JUDGE_DIES보다 적으면 여전히 '—'.
+REFERENCE_REPEATS = 1
+REFERENCE_LABEL = '참고 (1 Repeat)'
 
 
 def below_minimum_size(deviation: dict) -> bool:
-    """행렬이 판정 최소 크기보다 작은가 (라벨이 없는 행렬은 크기를 모르므로 작은 것으로 본다)."""
+    """행렬이 판정 최소 크기보다 작은가 (라벨이 없는 행렬은 크기를 모르므로 작은 것으로 본다).
+
+    1 Repeat은 작지 않다 — 참고 판정이다 (is_reference_size).
+    """
     return (len(deviation.get('die_labels') or []) < MIN_JUDGE_DIES
-            or len(deviation.get('repeat_labels') or []) < MIN_JUDGE_REPEATS)
+            or len(deviation.get('repeat_labels') or []) < REFERENCE_REPEATS)
+
+
+def is_reference_size(deviation: dict) -> bool:
+    """판정은 하지만 참고로만 볼 크기인가: Die 2개 이상 × Repeat 1개."""
+    return (not below_minimum_size(deviation)
+            and len(deviation.get('repeat_labels') or []) < MIN_JUDGE_REPEATS)
 
 
 def evaluate_deviation_pass(stats: dict, deviation: dict,
@@ -295,11 +308,12 @@ def evaluate_deviation_pass(stats: dict, deviation: dict,
 
     Returns:
         True(PASS) / False(FAIL) / None(데이터 없음, 최소 크기 미달 또는 spec 미정의 → '미분석')
+        1 Repeat(Die 2개 이상)도 PASS/FAIL을 돌려준다. 참고 판정 표시는 is_reference_size로 정한다.
         spec_range/spec_stddev 중 하나라도 None이면 None을 반환해, 부분 spec에서
         float<=None 비교로 TypeError가 나는 것을 원천 차단한다.
     """
     # 값은 있어도 Site ID를 해석하지 못하면 행렬이 비어 Range가 0이다. 그것은 PASS가 아니다.
-    # 값이 하나뿐인 행렬도 Range가 0이므로 최소 크기에 못 미치면 판정하지 않는다.
+    # 값이 하나뿐인 행렬도 Range가 0이므로 최소 크기(Die 2개)에 못 미치면 판정하지 않는다.
     if (stats.get('count', 0) == 0 or below_minimum_size(deviation)
             or spec_range is None or spec_stddev is None):
         return None

@@ -106,7 +106,10 @@ class StatCard(QFrame):
         self.lbl_basis.setToolTip("")
 
     def update_stats(self, avg, rng, std, cpk, is_pass: bool = None,
-                     spec_r=None, spec_s=None, warned: bool = False):
+                     spec_r=None, spec_s=None, warned: bool = False,
+                     reference: bool = False):
+        """reference: 1 Repeat 참고 판정 — 판정 값은 보이되 ⚠와 '1 Repeat 참고 판정'을 붙인다."""
+        reference = bool(reference) and is_pass is not None
         # 측정이 없는 축은 값이 None이다
         self.lbl_avg.setText("—" if avg is None else f"{avg:.3f}")
         self.lbl_rng.setText("—" if rng is None else f"{rng:.3f}")
@@ -116,6 +119,9 @@ class StatCard(QFrame):
         # None은 판정하지 않은 축이다 → 판정과 같은 '—'.
         cpk_unavailable = isinstance(cpk, float) and math.isnan(cpk)
         self.lbl_cpk.setText("—" if cpk is None else "N/A" if cpk_unavailable else f"{cpk:.2f}")
+        if reference and cpk is not None:
+            self.lbl_cpk.setText(self.lbl_cpk.text() + " (참고)")
+        self.lbl_cpk.setToolTip("1 Repeat이라 Cpk도 참고값입니다" if reference else "")
 
         # Spec 대비 표기. 판정하지 않은 값에는 ✓나 ▲를 붙이지 않는다
         if is_pass is None and spec_r is not None and spec_s is not None:
@@ -130,10 +136,20 @@ class StatCard(QFrame):
         self.lbl_std_spec.setStyleSheet(
             f"font-size: 9pt; color: {std_color}; min-width: 90px;")
 
+        self.badge.setToolTip(
+            "Repeat이 1개라 Die 간 편차로만 판정했습니다. 반복성은 알 수 없어 참고용입니다 "
+            "(정식 판정은 2 Repeat 이상)." if reference else "")
         if is_pass is None:
             self.badge.setText("—")
             self.badge.setStyleSheet(
                 f"background: gray; color: {BG}; font-weight: bold; "
+                f"padding: 4px; border-radius: 4px; font-size: 10pt;"
+            )
+        elif reference:
+            # 1.1.3의 '⚠ PASS'와 같은 표기에 이유를 붙인다. 색은 판정 색 (PASS는 경고 주황)
+            self.badge.setText(f"⚠ {'PASS' if is_pass else 'FAIL'} · 1 Repeat 참고 판정")
+            self.badge.setStyleSheet(
+                f"background: {ORANGE if is_pass else RED}; color: {BG}; font-weight: bold; "
                 f"padding: 4px; border-radius: 4px; font-size: 10pt;"
             )
         elif is_pass:

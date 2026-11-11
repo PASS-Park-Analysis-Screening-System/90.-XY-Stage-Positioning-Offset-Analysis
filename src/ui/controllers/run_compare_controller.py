@@ -10,7 +10,7 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QTableWidgetItem
 
 import charts as viz
-from core.checklist import result_text
+from core.checklist import cpk_text, result_text
 from core.recipe_scanner import compare_recipes, run_view
 from ui.theme import BG, GREEN, RED, ORANGE
 from ui.controllers.step_controller import wait_cursor
@@ -115,8 +115,8 @@ class RunCompareMixin:
             cells = [f"{run['run']}{mark}", str(run['lot_count']),
                      _num(x['range'], '.3f'), _num(x['stddev'], '.3f'), _num(x['avg'], '.1f'),
                      _num(y['range'], '.3f'), _num(y['stddev'], '.3f'), _num(y['avg'], '.1f'),
-                     f"{_num(x['cpk'], '.2f')} / {_num(y['cpk'], '.2f')}",
-                     result_text(run['result'])]
+                     f"{cpk_text(x['cpk'], x['reference'])} / {cpk_text(y['cpk'], y['reference'])}",
+                     result_text(run['result'], run.get('reference'))]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignCenter)

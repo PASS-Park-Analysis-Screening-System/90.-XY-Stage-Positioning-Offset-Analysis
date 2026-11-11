@@ -218,7 +218,7 @@ class GuideDialog(QDialog):
                 "<tr><td>1. 스캔 데이터 수집</td><td>CSV 폴더에서 원시 수치 로드</td></tr>"
                 "<tr><td>2. Deviation Matrix 계산</td><td>overall_range, overall_stddev 산출</td></tr>"
                 "<tr><td>3. Spec값과 비교</td><td>overall_range ≤ spec_range <b>and</b> overall_stddev ≤ spec_stddev</td></tr>"
-                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 또는 Repeat 2개 미만, Spec 미정의</b> → — (판정 안 함, Cpk도 —). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시</td></tr>"
+                "<tr><td>4. 최종 판정</td><td><b>두 조건 모두 충족</b> → ✅ PASS / <b>하나라도 초과</b> → ❌ FAIL / <b>Die 2개 미만, Spec 미정의</b> → — (판정 안 함, Cpk도 —). <b>Repeat 1개</b> → 판정·Cpk를 내되 ⚠ 1 Repeat 참고 판정으로 표시(반복성 미확인). 경고가 있는 PASS는 카드에 ⚠ PASS로 표시</td></tr>"
                 "</table>"
                 "<h3>5.2 Spec 설정 값 의미</h3>"
                 "<table>"
@@ -263,7 +263,7 @@ class GuideDialog(QDialog):
                 "<li>LLM 답은 이 파일의 숫자만 근거로 한 추정입니다. 장비 사실 확인과 결론은 담당자가 합니다.</li>"
                 "</ul>"
                 "<h3>5.6 Cpk와 Spec Range 연계 해석</h3>"
-                "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die·Repeat 2개 미만) Cpk도 —로 표시합니다.</p>"
+                "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die 2개 미만) Cpk도 —로 표시합니다. 1 Repeat 참고 판정이면 Cpk에도 (참고)를 붙입니다.</p>"
             )
         }
 

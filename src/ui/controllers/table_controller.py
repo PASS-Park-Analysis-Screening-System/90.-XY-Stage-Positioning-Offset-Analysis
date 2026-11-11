@@ -4,7 +4,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from ui.color_helpers import _heatmap_diverging, _heatmap_single, _contrast_fg
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
-from core.die_analysis import filter_stabilization_die
+from core.die_analysis import filter_stabilization_die, is_reference_size
+from core.checklist import result_text
 from core.statistics import (classify_row, axis_reference_means,
                              spec_anomaly_enabled, ANOMALY_FAILED,
                              ANOMALY_OUTLIER, ANOMALY_SPEC)
@@ -70,6 +71,7 @@ class TableMixin:
 
             x_range = x_std = y_range = y_std = None
             px = py = None
+            ref_x = ref_y = False
 
             if data:
                 dx = compute_deviation_matrix(data, 'X')
@@ -90,6 +92,9 @@ class TableMixin:
                     y_range = y_std = None
                 px = evaluate_deviation_pass(sx, dx, spec_r, spec_s)
                 py = evaluate_deviation_pass(sy, dy, spec_r, spec_s)
+                # 1 Repeat은 판정하되 참고로 표시한다
+                ref_x = px is not None and is_reference_size(dx)
+                ref_y = py is not None and is_reference_size(dy)
 
             def _chk_item(val, spec):
                 """체크리스트 수치 셀 — 값만, Spec 초과면 빨간 배경, 볼드."""
@@ -109,16 +114,16 @@ class TableMixin:
                 it.setToolTip(TOOLTIP_CHK)
                 return it
 
-            def _flag_item(flag):
+            def _flag_item(flag, reference=False):
                 if flag is None:
                     it = QTableWidgetItem('—')
                     it.setBackground(QColor(BG3)); it.setForeground(QColor(FG2))
-                elif flag:
-                    it = QTableWidgetItem('PASS')
-                    it.setBackground(QColor(GREEN)); it.setForeground(QColor(BG))
                 else:
-                    it = QTableWidgetItem('FAIL')
-                    it.setBackground(QColor(RED)); it.setForeground(QColor(BG))
+                    it = QTableWidgetItem(result_text(flag, reference))
+                    it.setBackground(QColor(GREEN if flag else RED)); it.setForeground(QColor(BG))
+                    if reference:
+                        it.setToolTip('Repeat이 1개라 Die 간 편차로만 판정한 참고 판정입니다 '
+                                      '(반복성 미확인, 정식 판정은 2 Repeat 이상)')
                 it.setTextAlignment(Qt.AlignCenter)
                 return it
 
@@ -137,8 +142,8 @@ class TableMixin:
             t.setItem(ROW_X_STD,   col, _chk_item(x_std,   None if not_judged_x else spec_s))
             t.setItem(ROW_Y_STD,   col, _chk_item(y_std,   None if not_judged_y else spec_s))
             # Result
-            t.setItem(ROW_X_RESULT, col, _flag_item(px))
-            t.setItem(ROW_Y_RESULT, col, _flag_item(py))
+            t.setItem(ROW_X_RESULT, col, _flag_item(px, ref_x))
+            t.setItem(ROW_Y_RESULT, col, _flag_item(py, ref_y))
             # 통계 상세 (그룹 헤더 다음)
             t.setItem(ROW_R,      col, _stat_item(c.get('round', '—')))
             t.setItem(ROW_N,      col, _stat_item(c.get('data_count', '—')))

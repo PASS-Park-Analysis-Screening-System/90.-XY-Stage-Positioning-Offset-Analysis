@@ -12,7 +12,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from charts.basic import _extract_site_data
 from core import filter_by_method, filter_stabilization_die, filter_valid_only
-from core.checklist import basis_warnings, build_checklist, result_text
+from core.checklist import basis_warnings, build_checklist, cpk_text, result_text
 from core.recipe_scanner import is_run_style, run_label
 
 
@@ -66,8 +66,8 @@ def _add_title_page(pdf: PdfPages, root_folder: str, comparison: list,
                 ha='center', fontsize=12, fontweight='bold')
         rows = [[r['recipe'], r['axis'], f"{r['die_count']} x {r['repeat_count']}",
                  _text(r['avg'], '.3f'), _text(r['range'], '.3f'), _text(r['stddev'], '.3f'),
-                 '—' if r['cpk'] is None else 'N/A' if r['cpk'] != r['cpk'] else f"{r['cpk']:.2f}",
-                 result_text(r['result'])] for r in checklist]
+                 cpk_text(r['cpk'], r['reference']),
+                 result_text(r['result'], r['reference'])] for r in checklist]
         table = ax.table(cellText=rows,
                          colLabels=['Recipe', 'Axis', 'Die x Repeat', 'Avg (nm)',
                                     'Dev Range (um)', 'Dev StdDev (um)', 'Cpk', 'Result'],

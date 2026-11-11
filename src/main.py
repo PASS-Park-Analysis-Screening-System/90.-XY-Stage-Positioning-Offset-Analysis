@@ -105,6 +105,7 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
         self._dev_y = {}
         self._loader_thread = None
         self.step_pass_states = {}  # {idx: True/False/None}
+        self.step_reference_states = {}  # {idx: 1 Repeat 참고 판정 여부}
         self._trend_data_x = []  # 현재 Step의 X trend 원본 (Lot 필터용)
         self._trend_data_y = []  # 현재 Step의 Y trend 원본
         self._trend_spec = None  # Spec 한계선용

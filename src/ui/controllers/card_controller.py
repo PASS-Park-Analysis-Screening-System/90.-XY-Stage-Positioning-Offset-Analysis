@@ -20,7 +20,8 @@ class CardMixin:
         custom = getattr(self, '_die_filter_is_custom', False)
         for card, m in ((self.card_x, mx), (self.card_y, my)):
             card.update_stats(m['avg'], m['range'], m['stddev'], m['cpk'], m['result'],
-                              spec_r=m['spec_range'], spec_s=m['spec_stddev'], warned=warned)
+                              spec_r=m['spec_range'], spec_s=m['spec_stddev'], warned=warned,
+                              reference=m['reference'])
             card.set_basis(m['die_count'], m['repeat_count'], custom)
 
         # Step 버튼은 Summary와 같은 분석 기준으로 _compute_all_step_pass_states에서만

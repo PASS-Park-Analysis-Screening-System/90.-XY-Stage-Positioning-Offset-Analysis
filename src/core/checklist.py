@@ -4,10 +4,11 @@ core/checklist.py — 체크리스트 지표의 단일 출처
 분석 시트와 같은 기준(안정화 Die 제외, 첫 리핏 제외)으로 Avg, Dev Range, Dev StdDev,
 Cpk, 판정을 계산한다. Step 카드, Excel, PDF가 모두 이 함수를 써서 값이 어긋나지 않게 한다.
 """
-from core.die_analysis import (MIN_JUDGE_DIES, MIN_JUDGE_REPEATS, STABILIZATION_DIE_IDX,
+from core.die_analysis import (MIN_JUDGE_DIES, MIN_JUDGE_REPEATS, REFERENCE_LABEL,
+                               REFERENCE_REPEATS, STABILIZATION_DIE_IDX,
                                below_minimum_size, compute_deviation_matrix,
                                evaluate_deviation_pass, extract_die_number,
-                               filter_stabilization_die)
+                               filter_stabilization_die, is_reference_size)
 from core.statistics import compute_cpk, compute_statistics, filter_by_method, is_usable
 
 # 분석 시트의 기준
@@ -34,6 +35,7 @@ def compute_axis_metrics(data: list, axis: str, recipe_name: str,
     # 판정하지 않는 축(None)은 Cpk도 없다('—'). 값이 합격처럼 읽히면 안 된다.
     # 판정은 있는데 계산할 수 없으면(σ=0, Limit 없음) compute_cpk가 NaN을 돌려주어 N/A다.
     # 측정이 없는 축은 0이 아니라 '값 없음'이다. 0.000으로 나가면 정상처럼 보인다.
+    # 1 Repeat(Die 2개 이상)은 판정·Cpk를 내되 참고(reference)로 표시한다.
     has_data = bool(deviation['die_labels'])
     result = evaluate_deviation_pass(stats, deviation, spec_range, spec_stddev)
     cpk = (None if result is None
@@ -47,6 +49,7 @@ def compute_axis_metrics(data: list, axis: str, recipe_name: str,
         'stddev': deviation['overall_stddev'] if has_data else None,
         'cpk': cpk,
         'result': result,
+        'reference': result is not None and is_reference_size(deviation),
         'spec_range': spec_range,
         'spec_stddev': spec_stddev,
         'die_count': len(deviation['die_labels']),
@@ -92,8 +95,13 @@ def basis_warnings(result: dict) -> list:
             messages.append(f'{axis}축 측정값이 없습니다 (행 없음, 값 또는 Site ID를 읽지 못함)')
         elif below_minimum_size(dev):
             messages.append(f'{axis}축 {dies} Die × {repeats} Repeat는 최소 '
-                            f'{MIN_JUDGE_DIES} × {MIN_JUDGE_REPEATS}에 못 미쳐 판정하지 않습니다 '
+                            f'{MIN_JUDGE_DIES} × {REFERENCE_REPEATS}에 못 미쳐 판정하지 않습니다 '
                             f'(기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
+        elif is_reference_size(dev):
+            messages.append(f'{axis}축 {dies} Die × {repeats} Repeat — Repeat이 '
+                            f'{MIN_JUDGE_REPEATS}개 미만이라 판정·Cpk는 참고용입니다 '
+                            f'(Die 간 편차만 봄, 반복성은 알 수 없음. '
+                            f'기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
         elif (dies, repeats) != (EXPECTED_DIES, EXPECTED_REPEATS):
             messages.append(f'{axis}축 {dies} Die × {repeats} Repeat로 분석합니다 '
                             f'(기준 {EXPECTED_DIES} × {EXPECTED_REPEATS})')
@@ -118,11 +126,23 @@ def analysis_warnings(result: dict) -> list:
         result.get('load_errors') or []) + list(result.get('data_warnings') or [])
 
 
-def result_text(result) -> str:
-    """판정 값을 표시 문자열로 바꾼다 (Spec 미정의, 데이터 없음, 최소 크기 미달은 '—')."""
+def result_text(result, reference: bool = False) -> str:
+    """판정 값을 표시 문자열로 바꾼다 (Spec 미정의, 데이터 없음, 최소 크기 미달은 '—').
+
+    reference: 1 Repeat 참고 판정이면 'PASS 참고 (1 Repeat)'처럼 표시한다.
+    """
     if result is None:
         return '—'
-    return 'PASS' if result else 'FAIL'
+    text = 'PASS' if result else 'FAIL'
+    return f'{text} {REFERENCE_LABEL}' if reference else text
+
+
+def cpk_text(cpk, reference: bool = False, fmt: str = '.2f') -> str:
+    """Cpk 표시 문자열: 판정 없음 '—', 계산 불가 'N/A', 참고 판정이면 '(참고)'를 붙인다."""
+    if cpk is None:
+        return '—'
+    text = 'N/A' if cpk != cpk else format(cpk, fmt)
+    return f'{text} (참고)' if reference else text
 
 
 def combine_verdicts(*results):
@@ -156,6 +176,7 @@ def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict 
             'x': axes['X'],
             'y': axes['Y'],
             'result': combine_verdicts(axes['X']['result'], axes['Y']['result']),
+            'reference': axes['X']['reference'] or axes['Y']['reference'],
             'warnings': analysis_warnings(run),
         })
     return summary

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QCheckBox
 from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
                   filter_stabilization_die, stabilization_die)
-from core.die_analysis import select_display_rows
+from core.die_analysis import is_reference_size, select_display_rows
 from core.checklist import analysis_warnings, combine_verdicts
 from core import compute_statistics, filter_by_method
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
@@ -44,6 +44,7 @@ class StepMixin:
                 w.deleteLater()
         self.step_buttons.clear()
         self.step_pass_states = {}
+        self.step_reference_states = {}
 
         lbl = QLabel("Workflow:")
         lbl.setStyleSheet("font-size: 10pt;")
@@ -66,6 +67,7 @@ class StepMixin:
     def _compute_all_step_pass_states(self):
         """scan complete 후 모든 Step Pass/Fail 일괄 계산 후 버튼 색상 즉시 반영."""
         dev_spec = self.settings.get('spec_deviation', {})
+        self.step_reference_states = {}     # 1 Repeat 참고 판정 여부 (판정과 함께 다시 계산)
         for i, result in enumerate(self.recipe_results):
             # Summary 체크리스트·분석 시트와 같은 21 Die 기준 (안정화 Die 제외)
             data = filter_stabilization_die(result.get('raw_data', []))
@@ -73,6 +75,7 @@ class StepMixin:
             ds = dev_spec.get(short, {})
             spec_r = ds.get('spec_range')
             spec_s = ds.get('spec_stddev')
+            self.step_reference_states[i] = False
             if not data:
                 self.step_pass_states[i] = None
                 continue
@@ -84,6 +87,11 @@ class StepMixin:
             px = evaluate_deviation_pass(sx, dx, spec_r, spec_s)
             py = evaluate_deviation_pass(sy, dy, spec_r, spec_s)
             self.step_pass_states[i] = combine_verdicts(px, py)
+            # 1 Repeat 참고 판정: 판정 색은 그대로 두고 ⚠를 붙인다 (카드의 '⚠ PASS'와 같은 표기)
+            self.step_reference_states[i] = (
+                self.step_pass_states[i] is not None
+                and ((px is not None and is_reference_size(dx))
+                     or (py is not None and is_reference_size(dy))))
         self._refresh_step_buttons()
 
 
@@ -302,7 +310,22 @@ class StepMixin:
                 else:
                     btn.setProperty('step', True)      # 파란색
 
+            self._set_step_marker(i, btn)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+    def _set_step_marker(self, i, btn):
+        """1 Repeat 참고 판정이면 버튼 이름 앞에 ⚠를 붙인다 (색은 판정 색 그대로)."""
+        if i >= len(getattr(self, 'recipes', [])):
+            return
+        recipe = self.recipes[i]
+        text = f"Step {recipe['index']}: {recipe['short_name']}"
+        reference = (getattr(self, 'step_reference_states', None) or {}).get(i)
+        btn.setText(f"⚠ {text}" if reference else text)
+        btn.setToolTip(
+            "1 Repeat 참고 판정 — Repeat이 1개라 Die 간 편차로만 판정했습니다 (반복성 미확인).\n"
+            if reference else "")
+        btn.setToolTip(btn.toolTip()
+                       + "색상은 Summary 체크리스트 판정입니다 (안정화 Die 제외, Die 필터와 무관)")
 
 
