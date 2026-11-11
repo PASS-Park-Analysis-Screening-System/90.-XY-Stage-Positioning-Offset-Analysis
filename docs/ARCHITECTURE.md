@@ -238,14 +238,19 @@ overall = pass_x and pass_y
 Lot 폴더 `Debug/SamplePositioning/<Sample>_SamplePositioning.txt`(Die마다 한 행: Stage X/Y, Coarse/Fine
 Match·Move·Optical Shift, Tip X/Y, Tip Pos X/Y)와 `Debug/TipPositioning/<Sample>_TipPositioning.txt`
 (Tip Positioning마다 한 행, Tip X/Y 칸이 비면 Fine Match X/Y)를 탭 구분으로 읽는다 (열 이름의 단위·대소문자
-무시, 남는 열·빈 줄 허용, 인코딩은 CSV와 같은 순서). 행은 측정 순서로 Die에 짝짓되 Point 0 행(샘플 정렬
-기준점)은 빼고, 명령 좌표에 회전·평행이동을 맞춘 뒤 X/Y UL 좌표와 300 µm 안에서 가장 가까운 Die가 같은지
-확인한다. 어긋나면 그 Lot은 짝짓지 않고 이유를 남긴다. 단계(도착 오차, 거친·정밀 보정, 정밀 잔차, Optical
-Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면 피팅(Sx, θx, θy, Sy와 t), Range, HZ1_O와의 상관을
-Lot별·Die별 Lot 평균으로 계산하고, 최종 착지의 유의한 성분(|t| ≥ 3, Die 8개 이상)을 같은 성분(|t| ≥ 3,
-크기 ≥ 0.5배, |r| ≥ 0.5)을 가진 가장 앞 단계에 돌린다. 어느 단계에도 없으면 '비전 정렬 이후(카메라→Tip 착지)'.
-결과는 회차 결과의 `positioning_log`에 담겨 Advanced → Positioning Log 탭과 AI 분석용 리포트의
-'비전 보정 로그 대조' 절이 같이 쓴다.
+무시, 같은 이름이 되는 열은 µm 열 우선, 남는 열·빈 줄 허용, UTF-16 BOM 다음 CSV와 같은 순서의 인코딩).
+로그 파일이 여럿이면 CSV 이름 앞부분과 같은 것을 쓰고, 맞는 것이 없으면 불일치. 로그 Slot과 CSV 메타 Slot No가
+둘 다 있으면 같아야 한다. 폴더·파일이 없으면 '로그 없음', 그 밖의 읽기 오류(네트워크·잠김)는 한 번 더 읽고
+'읽지 못함'으로 따로 알리며 담아 두지 않는다. 행은 측정 순서로 Die에 짝짓되 Point 0 행(샘플 정렬 기준점)은
+빼고, 명령 좌표에 회전·평행이동을 맞춘 뒤 X/Y UL 좌표와 300 µm 안에서 가장 가까운 Die가 같은지 확인한다
+(맞춘 회전이 1°를 넘으면 대칭 배치로 잘못 맞은 것으로 보고 불일치). 단계(도착 오차, 거친·정밀 보정, 정밀 잔차,
+Optical Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면 피팅(Sx, θx, θy, Sy와 t; 좌표 퍼짐 5 mm
+미만·공선이면 그 계수는 —), Range, HZ1_O와의 상관(값 그대로 r과 계수별 부분 잔차 r)을 Lot별·Die별 Lot 평균으로
+계산한다. 최종 착지의 유의한 성분(|t| ≥ 3, Die 8개 이상)을, 같은 계수가 |t| ≥ 3, 크기 ≥ 0.5배, 부분 잔차
+|r| ≥ 0.5이고 부호(단계)·부호(최종) = 부호(r)인 단계(Die 8개 이상) 중 가장 앞 단계에 돌린다(같은·반대 부호를
+적는다). 어느 단계에도 없으면 '비전 정렬 이후(카메라→Tip 착지)'. 데이터 로드는 로그를 읽지 않는다.
+Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결과의 `positioning_log`에 담고, AI 분석용 리포트의
+'비전 보정 로그 대조' 절은 담긴 분석을 쓰거나 내보내기 스레드에서 읽는다.
 
 ## 8. 성능 및 비동기 처리
 
@@ -258,7 +263,7 @@ Lot별·Die별 Lot 평균으로 계산하고, 최종 착지의 유의한 성분(
 | TIFF 찾기·읽기 | `QThread (TiffLoadThread)` | 더블클릭 때 폴더 목록·TIFF 읽기 |
 | 진행 표시 | `BusyOverlay` + 상태 표시줄 `QProgressBar` | 폴더 확인 n/m, Lot n/m(전체는 폴더 확인 결과로 미리 앎), 초당 10번까지 |
 | 회차 요약 (`summarize_runs`) | `DataLoaderThread` | 화면 갱신 시간을 줄인다. Spec이 바뀌었으면 화면 스레드가 다시 계산 |
-| 비전 보정 로그 대조 (`positioning_log`) | `DataLoaderThread`(화면에 보일 회차) + Lot 스레드 8개, 다른 회차는 Positioning Log 탭이 보일 때 파이썬 스레드 1개 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2개라 모든 회차를 미리 읽지 않는다 |
+| 비전 보정 로그 대조 (`positioning_log`) | Positioning Log 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 내보내기는 그 스레드에서 순서대로 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2~3개라 데이터 로드에서는 읽지 않는다 |
 | Comparison 탭 차트 | 처음 보일 때 그림 | 가려진 탭은 미뤘다가 보일 때 한 번 (같은 결과면 다시 안 그림) |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |
