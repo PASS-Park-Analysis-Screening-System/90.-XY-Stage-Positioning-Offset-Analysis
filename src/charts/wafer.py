@@ -18,6 +18,7 @@ RECIPE_COLORS = ['#2196F3', '#4CAF50', '#FF9800', '#E91E63',
                  '#9C27B0', '#00BCD4', '#795548', '#607D8B']
 
 from core import DIE_POSITIONS, get_die_position
+from core.die_analysis import DIE_PITCH_MM
 import math
 from matplotlib.patches import Circle
 from matplotlib.colors import Normalize
@@ -222,6 +223,15 @@ def plot_xy_scatter(x_dev_result: dict, y_dev_result: dict,
 
 
 
+def _standard_positions_mm() -> list:
+    """측정 좌표가 없을 때의 표준 배치 [(die_idx, (x_mm, y_mm)), ...].
+
+    DIE_POSITIONS는 Site 격자 칸 단위다. mm로 바꾸지 않고 µm 축(±150000)에 그리면
+    21개가 모두 (0, 0) 근처 6000 µm 안에 겹쳐 보였다. 표의 첫 칸은 Site 0002(die_idx 1)다.
+    """
+    return [(i + 1, (x * DIE_PITCH_MM, y * DIE_PITCH_MM)) for i, (x, y) in enumerate(DIE_POSITIONS)]
+
+
 def plot_die_position_map(dynamic_positions: dict = None,
                           wafer_radius_um: float = 150_000) -> Figure:
     """21 Die 좌표 배치 참조도.
@@ -239,8 +249,7 @@ def plot_die_position_map(dynamic_positions: dict = None,
         die_indices = sorted(dynamic_positions.keys())
         positions = [(i, dynamic_positions[i]) for i in die_indices]
     else:
-        # 표의 첫 칸은 Site 0002(die_idx 1)다
-        positions = [(i + 1, pos) for i, pos in enumerate(DIE_POSITIONS)]
+        positions = _standard_positions_mm()
 
     # mm → µm 변환하여 표시
     positions_um = [(idx, (x * 1000, y * 1000)) for idx, (x, y) in positions]
@@ -312,7 +321,8 @@ def plot_die_position_map(dynamic_positions: dict = None,
     ax.set_aspect('equal')
     ax.set_xlabel('X (µm)', color='#aaa')
     ax.set_ylabel('Y (µm)', color='#aaa')
-    ax.set_title(f'Die Position Map ({len(positions_um)} Dies)',
+    ax.set_title(f'Die Position Map ({len(positions_um)} Dies)' if dynamic_positions
+                 else f'Die Position Map (표준 배치 {len(positions_um)} Dies — 측정 좌표 없음)',
                  color='#89b4fa', fontsize=12)
     ax.tick_params(colors='#777')
     for s in ax.spines.values():
@@ -361,8 +371,7 @@ def plot_die_position_map_mini(dynamic_positions: dict = None,
         die_indices = sorted(dynamic_positions.keys())
         positions = [(i, dynamic_positions[i]) for i in die_indices]
     else:
-        # 표의 첫 칸은 Site 0002(die_idx 1)다
-        positions = [(i + 1, pos) for i, pos in enumerate(DIE_POSITIONS)]
+        positions = _standard_positions_mm()
 
     # mm → µm
     positions_um = [(idx, (x * 1000, y * 1000)) for idx, (x, y) in positions]
@@ -400,7 +409,8 @@ def plot_die_position_map_mini(dynamic_positions: dict = None,
     ax.set_xlim(-wafer_radius_um * 1.08, wafer_radius_um * 1.08)
     ax.set_ylim(-wafer_radius_um * 1.08, wafer_radius_um * 1.08)
     ax.set_aspect('equal')
-    ax.set_title(f'Die Position ({len(positions_um)})',
+    ax.set_title(f'Die Position ({len(positions_um)})' if dynamic_positions
+                 else f'Die Position (표준 배치 {len(positions_um)})',
                  color='#89b4fa', fontsize=9, pad=4)
     ax.tick_params(colors='#555', labelsize=6)
     for s in ax.spines.values():

@@ -1,9 +1,10 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 import copy
 import logging
 import time
 import traceback
-from core.csv_loader import ScanSession, is_dir
+from core.csv_loader import ScanSession, is_dir, scan_self_lot
 from core.recipe_scanner import (build_recipe, compare_recipes, normalize_spec_names,
                                  recipes_from_mapping, scan_recipes)
 from core.workflow_map import common_source_folder, compute_prefill
@@ -27,6 +28,8 @@ RUN_COMPARE_TAB = 'Run Comparison'
 
 FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
                     "어느 Workflow의 데이터인지 지정해 주세요.")
+SELF_LOT_REASON = ("선택한 폴더가 Lot 폴더입니다 (Lot 1개, X/Y 측정 CSV가 바로 있음). "
+                   "어느 Workflow의 데이터인지 지정해 주세요.")
 
 
 def detect_scan_target(folder, spec_keys, remembered, session):
@@ -41,8 +44,15 @@ def detect_scan_target(folder, spec_keys, remembered, session):
     """
     if not is_dir(folder, session):
         return {'action': 'invalid'}
-    recipes = scan_recipes(folder, session=session)
     mismatched = []
+    # 고른 폴더 자체가 Lot 폴더면 하위 폴더(Capture, Debug, Info, Log)를 Recipe로 찾지 않는다.
+    # Info·Debug/Analysis의 CSV는 같은 메타를 가져 0행 Recipe가 됐다
+    if scan_self_lot(folder, session):
+        if not spec_keys:
+            return {'action': 'none'}
+        return {'action': 'dialog', 'reason': SELF_LOT_REASON, 'mismatched': [],
+                'prefill': compute_prefill(spec_keys, folder, remembered, session)}
+    recipes = scan_recipes(folder, session=session)
     if not recipes:
         # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
         # Workflow를 지정해 분석할 수 있게 한다
@@ -60,6 +70,24 @@ def detect_scan_target(folder, spec_keys, remembered, session):
                   f"Spec 이름과 다른 폴더:\n{mis_list}")
     return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched,
             'prefill': compute_prefill(spec_keys, folder, remembered, session)}
+
+
+def _detail(result) -> str:
+    """0행 결과의 이유 (찾은 폴더 기준). 없으면 빈 문자열."""
+    detail = result.get('no_rows_detail')
+    return f" — {detail}" if detail else ''
+
+
+def empty_result_lines(results) -> list:
+    """화면에 보이는 회차가 0행인 Workflow마다 한 줄 (대화상자용)."""
+    lines = []
+    for r in results or []:
+        if r.get('raw_data'):
+            continue
+        label = r.get('short_name') or r.get('recipe', '')
+        reason = r.get('no_rows_detail') or r.get('error') or '읽은 행 0개'
+        lines.append(f"• {label} (회차 {r.get('round', '')}): {reason}")
+    return lines
 
 
 class ScanMixin:
@@ -593,11 +621,12 @@ class ScanMixin:
             label = r.get('short_name') or r.get('recipe', '')
 
             if r.get('error'):
-                self.logger.error(f"  ❌ {label}: {r['error']}")
+                self.logger.error(f"  ❌ {label}: {r['error']}{_detail(r)}")
                 clean = False
             for run in r.get('run_results') or []:
                 if run.get('error') and run.get('round') != r.get('round'):
-                    self.logger.error(f"  ❌ {label} 회차 {run.get('round', '')}: {run['error']}")
+                    self.logger.error(f"  ❌ {label} 회차 {run.get('round', '')}: "
+                                      f"{run['error']}{_detail(run)}")
                     clean = False
 
             for msg in r.get('load_errors', []):
@@ -646,6 +675,31 @@ class ScanMixin:
             self.logger.info(
                 "  ℹ 측정 실패 행은 분석·차트에서 제외되었습니다. "
                 "장비 원본 데이터 확인이 필요합니다.")
+
+    def _warn_empty_results(self, results, total):
+        """0행 Workflow를 조용히 빈 화면으로 두지 않는다: System Log ❌와 대화상자로 알린다.
+
+        대화상자는 기다리지 않는다(open). 화면 그리기와 버튼 복구가 막히지 않게 한다.
+        """
+        lines = empty_result_lines(results)
+        if not lines:
+            return
+        self.logger.error(f"  ❌ 분석할 수 있는 행이 0개인 Workflow {len(lines)}개 "
+                          f"(전체 {len(results)}개 중) — 위 ❌ 줄 참고")
+        head = ("분석할 데이터를 하나도 읽지 못했습니다." if total == 0
+                else "분석할 수 있는 행이 0개인 Workflow가 있습니다.")
+        box = QMessageBox(QMessageBox.Icon.Warning, "데이터 없음",
+                          head + "\n\n" + "\n".join(lines)
+                          + "\n\n폴더 구조를 확인하세요 (System Log 참고).", parent=self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        previous = self.__dict__.get('_empty_result_box')
+        if previous is not None:
+            try:
+                previous.close()    # 지난 스캔의 알림은 닫는다
+            except RuntimeError:
+                pass                # 사용자가 이미 닫아 지워졌다
+        self._empty_result_box = box
+        box.open()
 
     def _render_recipe_comparison_charts(self, announce=True):
         """Recipe 간 비교 차트(Boxplot·Trend·Heatmap). 회차를 바꾸면 다시 그린다.
@@ -718,6 +772,7 @@ class ScanMixin:
 
         self._log_data_quality(results)
         self._log_runs(results)
+        self._warn_empty_results(results, total)
         self._update_summary_table(comparison, results)
 
         # 모든 Step Pass/Fail 일괄 계산 → 버튼 색상 즉시 반영
@@ -761,7 +816,8 @@ class ScanMixin:
         self._render_recipe_comparison_charts()
 
         self.statusBar().showMessage(
-            f"✅ {len(self.recipes)}개 Recipe | {total}개 데이터 | Step 클릭 → 상세 분석")
+            f"✅ {len(self.recipes)}개 Recipe | {total}개 데이터 | Step 클릭 → 상세 분석" if total
+            else f"❌ {len(self.recipes)}개 Recipe | 0개 데이터 — 분석할 행 없음 (System Log 참고)")
 
         if len(self.recipe_results) >= 2 or any(r.get('runs') for r in self.recipe_results):
             self.logger.info("  ℹ 비교 차트(Comparison 탭)는 탭을 열 때 그립니다")

@@ -12,12 +12,13 @@ cache를 넘겨 결과를 재사용한다. cache는 dict이거나 ScanSession이
 
 import os
 
-from core.csv_loader import ScanSession, is_dir, list_dir
+from core.csv_loader import ScanSession, is_dir, list_dir, scan_self_lot
 from core.recipe_scanner import build_recipe, is_run_style, match_spec_key
 
 NOTE_REMEMBERED = '지난번 선택'
 NOTE_ROOT = '선택한 폴더 — 어느 Workflow인지 확인 후 체크하세요'
 _FLAT_SUFFIX = ' · (root)'   # 폴더 바로 아래에 Lot이 있다는 표시
+_SELF_LOT_SUFFIX = ' (선택한 폴더가 Lot 폴더)'   # 폴더 자체가 Lot 하나라는 표시
 
 
 def clean_path(text: str) -> str:
@@ -77,6 +78,9 @@ def cached_status(path: str, cache):
 def _read_folder_status(path: str, session=None):
     if not is_dir(path, session):
         return False, '❌ 폴더 없음'
+    # 폴더 자체가 Lot 폴더면 Lot 1개다 (로드도 build_recipe(..., allow_self=True)로 같게 본다)
+    if scan_self_lot(path, session):
+        return True, f'✅ Lot 1개{_SELF_LOT_SUFFIX}'
     try:
         recipe = (build_recipe(path) if session is None
                   else build_recipe(path, session=session))
@@ -159,10 +163,10 @@ def compute_prefill(spec_keys, root: str = '', remembered: dict = None,
             continue
         prefill[key] = {'path': '', 'enabled': False, 'note': ''}
 
-    # 루트가 곧 Lot 폴더 묶음인 경우 (예: 1..14 Lot만 있는 Vision Pattern 폴더).
-    # 하위 폴더에 Lot이 있는 보통 루트는 여기에 해당하지 않는다
+    # 루트가 곧 Lot 폴더 묶음인 경우 (예: 1..14 Lot만 있는 Vision Pattern 폴더)나
+    # 루트 자체가 Lot 폴더 하나인 경우. 하위 폴더에 Lot이 있는 보통 루트는 여기에 해당하지 않는다
     ok, text = describe_folder(root, cache) if has_root else (False, '')
-    if ok and text.endswith(_FLAT_SUFFIX):
+    if ok and text.endswith((_FLAT_SUFFIX, _SELF_LOT_SUFFIX)):
         for key in spec_keys:
             if key not in matched:
                 prefill[key] = {'path': root, 'enabled': False, 'note': NOTE_ROOT}

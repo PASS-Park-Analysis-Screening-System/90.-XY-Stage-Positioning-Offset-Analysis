@@ -36,7 +36,7 @@ class ScanSession:
     (스캔 스레드, 대화상자의 행 확인, 로드 스레드가 서로의 중지에 영향을 주지 않는다).
     """
 
-    _SHARED = ('status', 'dirs', 'listings', 'lots', 'rounds', 'errors')
+    _SHARED = ('status', 'dirs', 'listings', 'lots', 'own', 'rounds', 'errors')
 
     def __init__(self, progress=None, _shared=None):
         if _shared is None:
@@ -45,6 +45,7 @@ class ScanSession:
             self.dirs = {}       # isdir 결과 (폴더인 것만)
             self.listings = {}   # 폴더 목록 [(이름, 폴더 여부), ...]
             self.lots = {}       # scan_lot_folders 결과 (모든 하위 폴더를 확인한 것만)
+            self.own = {}        # scan_self_lot 결과 (고른 폴더 자체가 Lot인지, 읽기 성공한 것만)
             self.rounds = {}     # build_recipe의 라운드 목록
             self.errors = {}     # 확인하지 못한 폴더 경로 → 오류 문구 (다시 확인해 성공하면 지운다)
         else:
@@ -651,6 +652,65 @@ def _copy_lots(lots: list) -> list:
     return [dict(lot, tiff_files=list(lot['tiff_files'])) for lot in lots]
 
 
+def _lot_entry(name: str, full_path: str, file_info: dict) -> dict:
+    """_is_data_folder 결과로 Lot 목록 항목을 만든다."""
+    return {
+        'lot_name': name,
+        'path': full_path,
+        'lot_number': _extract_folder_number(name),
+        'has_x_csv': file_info['x_csv'] is not None,
+        'has_y_csv': file_info['y_csv'] is not None,
+        'has_summary': file_info['summary_csv'] is not None,
+        'x_csv': file_info['x_csv'],
+        'y_csv': file_info['y_csv'],
+        'summary_csv': file_info['summary_csv'],
+        'tiff_count': len(file_info['tiff_files']),
+        'tiff_files': file_info['tiff_files'],
+        'head': file_info.get('head'),    # 측정 순서 정렬에만 쓰고 지운다
+    }
+
+
+def is_measured_lot(lot: dict) -> bool:
+    """X/Y 측정 CSV가 있는 Lot 폴더인가 (Info·Debug/Analysis처럼 메타만 같은 CSV 폴더는 아니다)."""
+    return bool(lot.get('x_csv') or lot.get('y_csv'))
+
+
+def scan_self_lot(path: str, session: Optional[ScanSession] = None) -> list:
+    """고른 폴더 자체가 Lot 폴더(X/Y 측정 CSV가 바로 있는 폴더)면 그 폴더 하나를 Lot 목록으로.
+
+    실데이터의 Lot 폴더(예: 46LKD105SJE61)에는 *_X_UL.csv, *_Y_UL.csv, TIFF가 바로 있고
+    Capture, Debug, Info, Log 하위 폴더가 있다. Info와 Debug/Analysis의 CSV도 같은
+    'Lot ID' 메타를 가져 하위 폴더 쪽을 Lot으로 오인했다 (측정 CSV가 없어 0행이 됐다).
+    측정 CSV가 없거나 읽지 못하면 빈 목록이다 (보통 구조로 다시 찾는다).
+    """
+    if not path:
+        return []
+    key = session_key(path) if session is not None else None
+    if key is not None and key in session.own:
+        return _copy_lots(session.own[key])
+    try:
+        names = [name for name, folder in list_dir(path, session) if not folder]
+    except OSError:
+        return []
+    # 측정 CSV 이름이 없으면 파일을 열지 않는다 (네트워크 폴더에서 루트마다 읽지 않게)
+    if not any(n.upper().endswith(('_X_UL.CSV', '_Y_UL.CSV')) for n in names):
+        if key is not None:
+            session.own[key] = []
+        return []
+    info = _with_retry(lambda: _is_data_folder(path, session), session)
+    if isinstance(info, OSError):
+        return []
+    lots = []
+    if info and is_measured_lot(info):
+        lot = _lot_entry(os.path.basename(os.path.normpath(path)), path, info)
+        lot['index'] = 1
+        lot.pop('head', None)
+        lots.append(lot)
+    if key is not None:
+        session.own[key] = _copy_lots(lots)
+    return lots
+
+
 def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None,
                      failures: Optional[list] = None) -> list:
     """데이터 폴더 자동 탐지 + 정렬
@@ -729,22 +789,7 @@ def scan_lot_folders(root_path: str, session: Optional[ScanSession] = None,
             if file_info is None:
                 continue
 
-            lot_number = _extract_folder_number(name)
-
-            folders.append({
-                'lot_name': name,
-                'path': full_path,
-                'lot_number': lot_number,
-                'has_x_csv': file_info['x_csv'] is not None,
-                'has_y_csv': file_info['y_csv'] is not None,
-                'has_summary': file_info['summary_csv'] is not None,
-                'x_csv': file_info['x_csv'],
-                'y_csv': file_info['y_csv'],
-                'summary_csv': file_info['summary_csv'],
-                'tiff_count': len(file_info['tiff_files']),
-                'tiff_files': file_info['tiff_files'],
-                'head': file_info.get('head'),    # 측정 순서 정렬에만 쓰고 지운다
-            })
+            folders.append(_lot_entry(name, full_path, file_info))
     finally:
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
@@ -945,12 +990,14 @@ def batch_load(root_path: str,
                errors: Optional[list] = None,
                warnings: Optional[list] = None,
                info: Optional[dict] = None,
-               session: Optional[ScanSession] = None) -> list:
+               session: Optional[ScanSession] = None,
+               self_lot: bool = False) -> list:
     """batch_load_rows와 같다. session.lot_progress가 있으면 Lot마다·회차 끝에 알린다."""
     notify = getattr(session, 'lot_progress', None)
     try:
         return batch_load_rows(root_path, lot_range, axis, metric_col, errors, warnings, info,
-                               session, (lambda: notify('lot', root_path)) if notify else None)
+                               session, (lambda: notify('lot', root_path)) if notify else None,
+                               self_lot=self_lot)
     finally:
         if notify is not None:
             _notify_safely(notify, 'round', root_path)
@@ -972,7 +1019,8 @@ def batch_load_rows(root_path: str,
                     warnings: Optional[list] = None,
                     info: Optional[dict] = None,
                     session: Optional[ScanSession] = None,
-                    on_loaded=None) -> list:
+                    on_loaded=None,
+                    self_lot: bool = False) -> list:
     """유연한 범위 지정 배치 로드 — Analysis csv combine.exe 완전 대체
 
     Args:
@@ -987,8 +1035,10 @@ def batch_load_rows(root_path: str,
               'unreadable_values' = 측정값을 읽지 못한 행 수,
               'first_repeat_excluded' = 제외한 첫 리핏 폴더 이름,
               'first_repeat_unverified' = 폴더가 11개 이상인데 첫 리핏을 확인하지 못한 폴더 수,
-              'no_measurement_folders' = X/Y 측정 CSV가 없어 건너뛴 폴더 이름 목록).
+              'no_measurement_folders' = X/Y 측정 CSV가 없어 건너뛴 폴더 이름 목록,
+              'loaded_lots' = 읽으려 한 Lot 폴더 이름 목록).
         session: ScanSession — 이미 확인한 Lot 목록을 다시 읽지 않는다. 중지하면 ScanCancelled
+        self_lot: root_path 자체가 Lot 폴더다 (사용자가 Lot 폴더 하나를 고른 경우, scan_self_lot)
 
     Returns:
         [{'lot_name': 'Lot401', 'lot_index': 1, 'filename': 'Lot4_X_UL.csv',
@@ -998,7 +1048,10 @@ def batch_load_rows(root_path: str,
           'value': 2976.074, 'value_valid': True}, ...]
     """
     scan_failures = []
-    lots = scan_lot_folders(root_path, session, scan_failures)
+    if self_lot:
+        lots = scan_self_lot(root_path, session)
+    else:
+        lots = scan_lot_folders(root_path, session, scan_failures)
     # 확인하지 못한 Lot 폴더는 결과에서 빠졌을 수 있다. 조용히 넘기면 정상처럼 보인다
     for path, message in scan_failures:
         if errors is not None:
@@ -1022,6 +1075,8 @@ def batch_load_rows(root_path: str,
         lots = _exclude_first_repeat(
             [l for l in lots if l.get('x_csv') or l.get('y_csv')], info)
 
+    if info is not None:
+        info['loaded_lots'] = [l['lot_name'] for l in lots]
     results = []
     loaded = _load_lots_parallel(lots, session, on_loaded)
     if session is not None:

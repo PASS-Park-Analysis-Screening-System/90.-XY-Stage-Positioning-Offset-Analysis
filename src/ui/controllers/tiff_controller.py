@@ -22,9 +22,11 @@ def find_tiffs_for_row(round_path, lot_name, site_id):
     except (OSError, TypeError, ValueError):
         return [], '', "TIFF 탐색 실패: round_path 없음"
 
-    # ① lot_name으로 해당 Lot 폴더 찾기
+    # ① lot_name으로 해당 Lot 폴더 찾기. 고른 폴더 자체가 Lot이면(Lot 1개) 그 폴더다
     lot_folder = None
-    for name, folder in round_entries:
+    if os.path.basename(os.path.normpath(round_path)) == lot_name:
+        lot_folder = round_path
+    for name, folder in ([] if lot_folder else round_entries):
         if folder and (name == lot_name or lot_name in name or name in lot_name):
             lot_folder = os.path.join(round_path, name)
             break

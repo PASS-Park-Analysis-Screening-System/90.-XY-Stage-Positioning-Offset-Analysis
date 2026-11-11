@@ -18,8 +18,8 @@ import math
 import logging
 import traceback
 import collections
-from core.csv_loader import (scan_lot_folders, batch_load, is_dir, list_dir,
-                             session_key, ScanCancelled)
+from core.csv_loader import (scan_lot_folders, scan_self_lot, is_measured_lot, batch_load,
+                             is_dir, list_dir, session_key, ScanCancelled)
 from core import (compute_statistics, compute_trend,
                       detect_outliers_by_axis, compute_repeatability,
                       compute_group_statistics, filter_by_method,
@@ -74,15 +74,29 @@ def default_round_name(round_names, preferred: str = '1st'):
     return sorted(names)[0]
 
 
+SELF_LOT_ROUND = '(root)'
+
+
+def _self_lot_rounds(path: str, session=None) -> list:
+    """고른 폴더 자체가 Lot 폴더면 라운드 '(root)' 하나 (Lot = 그 폴더). 아니면 빈 목록."""
+    if not scan_self_lot(path, session):
+        return []
+    return [{'name': SELF_LOT_ROUND, 'path': path, 'lot_count': 1, 'self_lot': True}]
+
+
 def _find_rounds(path: str, session=None) -> list:
-    """폴더의 라운드 목록. 폴더가 아니거나 Lot이 없으면 빈 목록."""
+    """폴더의 라운드 목록. 폴더가 아니거나 Lot이 없으면 빈 목록.
+
+    X/Y 측정 CSV가 있는 Lot이 하나도 없는 폴더는 라운드가 아니다. 실데이터 Lot 폴더 안의
+    Info, Debug/Analysis는 같은 메타의 CSV만 있어 Lot처럼 보였고 0행 Recipe가 됐다.
+    """
     if not is_dir(path, session):
         return []
     # 1차: Recipe 폴더 바로 아래에 Lot 폴더가 있는지 확인 (플랫 구조)
     #      서버 데이터: Recipe/Lot102, Recipe/Lot103, ...
     rounds = []
     direct_lots = scan_lot_folders(path, session)
-    if direct_lots:
+    if any(is_measured_lot(lot) for lot in direct_lots):
         rounds.append({
             'name': '(root)',
             'path': path,
@@ -95,7 +109,7 @@ def _find_rounds(path: str, session=None) -> list:
         for sub in subs:
             sub_path = os.path.join(path, sub)
             lots = scan_lot_folders(sub_path, session)
-            if lots:
+            if any(is_measured_lot(lot) for lot in lots):
                 rounds.append({
                     'name': sub,
                     'path': sub_path,
@@ -104,18 +118,24 @@ def _find_rounds(path: str, session=None) -> list:
     return rounds
 
 
-def build_recipe(path: str, name: str = None, session=None):
+def build_recipe(path: str, name: str = None, session=None, allow_self: bool = False):
     """폴더 하나를 Recipe dict로 만든다. Lot 데이터가 없으면 None.
 
     폴더 바로 아래에 Lot이 있으면 라운드 '(root)' 하나, 아니면 하위 폴더(1st/2nd 등)
     중 Lot이 있는 것을 라운드로 삼는다. index는 폴더명 앞 숫자(없으면 0)이며,
     여러 Recipe를 묶는 쪽에서 1..N으로 다시 매긴다.
     session(ScanSession)을 주면 같은 폴더는 한 번만 읽는다.
+    allow_self: 사용자가 고른 폴더(스캔 루트, Workflow 행)다. 그 폴더 자체가 Lot 폴더면
+                Lot 1개짜리 라운드 '(root)'로 본다. 스캔 루트 아래 하위 폴더에는 쓰지 않는다
+                (Lot 폴더 묶음의 각 Lot이 Recipe가 되면 안 된다).
     """
     if not path:
         return None
     key = session_key(path) if session is not None else None
-    if key is not None and key in session.rounds:
+    own = _self_lot_rounds(path, session) if allow_self else []
+    if own:
+        rounds = own
+    elif key is not None and key in session.rounds:
         rounds = [dict(r) for r in session.rounds[key]]
     else:
         rounds = _find_rounds(path, session)
@@ -235,7 +255,7 @@ def recipes_from_mapping(mapping, spec_order=None, session=None):
             problems.append((spec_name, path, '폴더 없음'))
             continue
         try:
-            recipe = build_recipe(path, spec_name, session=session)
+            recipe = build_recipe(path, spec_name, session=session, allow_self=True)
         except OSError as e:
             problems.append((spec_name, path, f'폴더를 읽을 수 없음 ({e.strerror or e})'))
             continue
@@ -295,6 +315,26 @@ def summarize_failed_measurements(data: list) -> dict:
     }
 
 
+def no_rows_detail(path: str, load_info: dict = None, load_errors: list = None) -> str:
+    """읽은 행이 0개인 이유를 찾은 것 기준으로 설명한다 (System Log·대화상자에 그대로 쓴다)."""
+    load_info = load_info or {}
+    skipped = load_info.get('no_measurement_folders') or []
+    loaded = load_info.get('loaded_lots')
+    if skipped and not loaded:
+        reason = (f"Lot으로 보인 폴더 {len(skipped)}개({', '.join(skipped[:5])}"
+                  f"{' 외' if len(skipped) > 5 else ''})에 X/Y 측정 CSV(*_X_UL.csv, *_Y_UL.csv)가 "
+                  f"없습니다 (메타만 같은 Info·Debug 폴더일 수 있음)")
+    elif load_errors:
+        reason = f'Lot 폴더를 읽지 못했습니다 ({len(load_errors)}건, System Log 참고)'
+    elif loaded:
+        reason = (f"Lot 폴더 {len(loaded)}개({', '.join(loaded[:5])}"
+                  f"{' 외' if len(loaded) > 5 else ''})의 측정 CSV에 데이터 행이 없습니다")
+    else:
+        reason = 'X/Y 측정 CSV가 있는 Lot 폴더를 찾지 못했습니다'
+    return (f'읽은 행 0개 — {path}: {reason}. '
+            'Lot 폴더(*_X_UL.csv가 바로 있는 폴더)나 그 상위 폴더를 고르세요.')
+
+
 def load_recipe_data(recipe: dict, round_name: str = '1st',
                      lot_range=None, axis='both', session=None) -> dict:
     """단일 Recipe의 데이터 로드 + 분석
@@ -325,15 +365,19 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
     load_errors = []
     data_warnings = []
     load_info = {}
+    load_kwargs = {'self_lot': True} if round_info.get('self_lot') else {}
     data = batch_load(round_info['path'], lot_range=lot_range, axis=axis,
                       errors=load_errors, warnings=data_warnings,
-                      info=load_info, session=session)
+                      info=load_info, session=session, **load_kwargs)
     if not data:
         return {'recipe': recipe['name'],
                 'short_name': recipe.get('short_name', recipe['name']),
                 'round': round_info['name'],
+                'round_path': round_info['path'],
                 'raw_data': [], 'error': 'No data loaded',
+                'no_rows_detail': no_rows_detail(round_info['path'], load_info, load_errors),
                 'load_errors': load_errors, 'data_warnings': data_warnings,
+                'no_measurement_folders': load_info.get('no_measurement_folders', []),
                 'failed_measurements': {'count': 0}}
 
     # raw_data는 22 Die 원본을 유지한다. 통계·트렌드·이상치는 분석 시트와 같은
