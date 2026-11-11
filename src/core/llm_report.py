@@ -912,11 +912,17 @@ def _positioning(results) -> str:
              'Debug/TipPositioning 로그를 최종 착지(HZ1_O 편차)와 대조한다. 각 Workflow의 선택 회차, '
              'Lot이 여럿이면 Die별 Lot 평균으로 피팅. 안정화 Die는 뺀다. 계수: X축 ∂/∂x = Sx (ppm), '
              '∂/∂y = θx (µrad), Y축 ∂/∂x = θy (µrad), ∂/∂y = Sy (ppm). t = 값/SE. '
-             'r = Die별 값과 같은 축 최종 착지의 상관. 로그 값의 부호 기준은 장비 정의를 따른다.']
+             'r 전체 = Die별 값과 같은 축 최종 착지의 상관, r 항 = 그 계수만 남긴 부분 잔차끼리의 상관 '
+             '(판정에 쓴다). — = 정할 수 없음(좌표 퍼짐 부족·공선). 로그 값의 부호 기준은 장비 정의를 따른다.']
     for r in results:
-        # 로더가 담은 분석을 쓴다. 없으면(화면에서 보지 않은 회차) 내보내기 스레드에서 순서대로 읽는다
-        a = ensure_analysis(r, workers=1)
         lines += ['', f"### {_name(r)} (회차 {r.get('round', '')})"]
+        # Positioning Log 탭에서 읽은 분석을 쓴다. 없으면 내보내기 스레드에서 순서대로 읽는다.
+        # 한 Workflow의 실패가 리포트 전체를 막지 않게 한다
+        try:
+            a = ensure_analysis(r, workers=1)
+        except Exception as e:
+            lines.append(f'- 상태: 로그 대조 실패 ({type(e).__name__}: {e})')
+            continue
         lines.append(f"- 상태: {a.get('message', '')}")
         for lot in a.get('lots') or []:
             m = lot.get('mapping') or {}
@@ -936,10 +942,14 @@ def _positioning(results) -> str:
                     e = row['coef'].get(name)
                     cells += ([f"{name} {_zero(e['value'], 2):+.2f} {COEF_UNIT[name]}",
                                _num(e['t'], '.1f', True)] if e else ['—', '—'])
-                cells += [_num(row['range']), _num(row['r'], '.2f', True), row['k']]
+                r_terms = row.get('r_terms') or {}
+                names = COEF_NAMES[row['axis']]
+                cells += [_num(row['range']), _num(row['r'], '.2f', True),
+                          _num(r_terms.get(names[0]), '.2f', True),
+                          _num(r_terms.get(names[1]), '.2f', True), row['k']]
                 rows.append(cells)
-            lines.append(_table(['단계', '축', '∂/∂x', 't', '∂/∂y', 't', 'Range (µm)', 'r (HZ1_O)',
-                                 'Die'], rows))
+            lines.append(_table(['단계', '축', '∂/∂x', 't', '∂/∂y', 't', 'Range (µm)', 'r 전체',
+                                 'r ∂/∂x 항', 'r ∂/∂y 항', 'Die'], rows))
             verdict = a.get('verdict') or {}
             lines += [f'- 판정 {DERIVED}: {text}' for text in verdict.get('lines', [])]
             if verdict.get('rule'):

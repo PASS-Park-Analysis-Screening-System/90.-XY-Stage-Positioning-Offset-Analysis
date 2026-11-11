@@ -15,9 +15,9 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core.positioning_log import (NO_LOG_TEXT, analyze_result, attach_analysis, find_logs,
-                                  map_rows_to_dies, parse_sample_positioning,
-                                  parse_tip_positioning, tip_summary)
+from core.positioning_log import (NO_LOG_TEXT, analyze_result, find_logs, map_rows_to_dies,
+                                  parse_sample_positioning, parse_tip_positioning,
+                                  store_analysis, tip_summary)
 from core.recipe_scanner import load_all_recipes, recipes_from_mapping
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'positioning_log'
@@ -215,7 +215,7 @@ def test_mismatched_lot_is_excluded_with_reason(tmp_path):
 
 def test_missing_logs(tmp_path):
     result = load(make_lot(tmp_path / 'vp', sample_log=None, tip_log=None))
-    assert find_logs(result['round_path']) == {'sample': None, 'tip': None}
+    assert find_logs(result['round_path']) == {'sample': None, 'tip': None, 'problems': []}
     analysis = analyze_result(result)
     assert analysis['status'] == 'no_logs' and analysis['message'] == NO_LOG_TEXT
     assert analysis['lots'][0]['status'] == 'no_log'
@@ -236,7 +236,7 @@ def test_multiple_lots_per_lot_and_die_mean(tmp_path):
     analysis = analyze_result(load(root))
     assert [lot['status'] for lot in analysis['lots']] == ['ok', 'ok', 'no_log']
     assert analysis['status'] == 'partial' and analysis['mean']['lots'] == 2
-    assert 'Lot 1개 제외' in analysis['message']
+    assert analysis['message'] == 'Lot 2개 대조 (제외: 로그 없음 1개)'
     # Lot마다 편차 기준(회차 평균)이 같아 Die별 Lot 평균의 θx는 Lot별 θx와 같다
     per_lot = [row(lot['stages'], 'final', 'X')['coef']['θx']['value']
                for lot in analysis['lots'][:2]]
@@ -246,13 +246,18 @@ def test_multiple_lots_per_lot_and_die_mean(tmp_path):
     assert len(analysis['tips']) == 3       # Tip 로그는 세 Lot 모두 있다
 
 
-def test_attach_stores_on_matching_run(tmp_path):
+def test_store_on_matching_run_but_not_read_errors(tmp_path):
     result = load(make_lot(tmp_path / 'vp'))
     run = dict(result)
     result['run_results'] = [run, dict(result, round='other')]
-    analysis = attach_analysis(result)
+    analysis = analyze_result(result)
+    assert store_analysis(result, analysis) is True
     assert result['positioning_log'] is analysis and run['positioning_log'] is analysis
     assert 'positioning_log' not in result['run_results'][1]
+    fresh = dict(result)
+    fresh.pop('positioning_log')
+    broken = dict(analysis, lots=[dict(analysis['lots'][0], status='error')])
+    assert store_analysis(fresh, broken) is False and 'positioning_log' not in fresh
 
 
 # ── Tip Positioning 위치가 여럿 ───────────────────────────────────
@@ -338,17 +343,19 @@ def test_llm_report_without_logs_says_so():
 
 # ── 로더 스레드·화면 ─────────────────────────────────────────────
 
-def test_loader_thread_attaches_analysis(tmp_path):
+def test_loader_thread_does_not_read_logs(tmp_path, monkeypatch):
+    """데이터 로드는 로그를 읽지 않는다 (네트워크 왕복을 늘리지 않게). 탭이 보일 때 읽는다."""
+    from core import positioning_log
     from ui.workers.data_loader_thread import DataLoaderThread
+    monkeypatch.setattr(positioning_log, 'find_logs',
+                        lambda *a, **k: pytest.fail('로드 중에 로그를 읽었다'))
     lot = make_lot(tmp_path / 'vp')
     recipes, _ = recipes_from_mapping([('Vision Pattern', str(lot))], ['Vision Pattern'])
     thread = DataLoaderThread('', recipes=recipes)
-    got, texts = [], []
+    got = []
     thread.finished.connect(lambda results, _c, _e: got.append(results))
-    thread.progress.connect(texts.append)
     thread.run()        # 화면 없이 그대로 돈다
-    assert got and got[0][0]['positioning_log']['status'] == 'ok'
-    assert '비전 보정 로그 읽는 중…' in texts
+    assert got and 'positioning_log' not in got[0][0]
 
 
 @pytest.fixture
@@ -374,7 +381,7 @@ def _show_tab(window):
 
 
 def test_positioning_tab_shows_table_verdict_and_chart(window, real_result):
-    attach_analysis(real_result)
+    store_analysis(real_result, analyze_result(real_result))
     window._update_positioning_log(real_result)
     assert window.poslog_table.rowCount() == 16
     assert window.poslog_table.item(14, 0).text() == '최종 착지 (HZ1_O 편차)'
@@ -407,3 +414,221 @@ def test_positioning_tab_without_logs(window):
     assert window.poslog_label.text() == NO_LOG_TEXT
     window._update_positioning_log({'raw_data': []})
     assert window.poslog_label.text() == '분석할 데이터가 없음'
+
+
+# ── 리뷰 반영 (c4ee4f1) ─────────────────────────────────────────
+
+def _positions():
+    from core.die_analysis import extract_die_positions, filter_stabilization_die
+    data = filter_stabilization_die(load_sites_result()['raw_data'])
+    return {f'Die{i + 1}': p for i, p in extract_die_positions(data).items()}
+
+
+def _plane_values(positions, theta, sx, noise, seed):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    return {d: theta * 1e-3 * y + sx * 1e-3 * x + float(rng.normal(0, noise))
+            for d, (x, y) in sorted(positions.items())}
+
+
+def test_opposite_sign_term_is_not_hidden_by_shared_sx():
+    """HIGH 재현: 최종 θx +5.27, Coarse Match θx −3.12이고 값 그대로의 r +0.70은 공통 Sx에서 온다.
+    판정은 부분 잔차 r(θx 항)을 쓰고 부호 관계를 적는다 (예전: r +0.70으로 '같은 성분' 판정)."""
+    from core.positioning_log import judge, stage_table
+    positions = _positions()
+    values = {'final': {'X': _plane_values(positions, 5.27, 10.0, 0.02, 1)},
+              'coarse_match': {'X': _plane_values(positions, -3.12, 10.0, 0.02, 2)}}
+    table = stage_table(values, positions)
+    coarse = row(table, 'coarse_match', 'X')
+    assert coarse['r'] == pytest.approx(0.70, abs=0.05)              # 공통 Sx 때문
+    assert coarse['r_terms']['θx'] == pytest.approx(-1.0, abs=0.02)  # θx 성분끼리는 반대
+    verdict = judge(table)
+    theta = next(t for t in verdict['terms'] if t['term'] == 'θx')
+    assert theta['details'][0]['same_sign'] is False and theta['details'][0]['r'] < 0
+    line = next(l for l in verdict['lines'] if l.startswith('Y 위치에 비례하는 X 오차(θx)'))
+    assert '(반대 부호, r -0.99)' in line and '같은 부호' not in line
+    assert '반대 부호로 연관' in line
+
+
+def test_sign_inconsistent_partial_correlation_does_not_carry():
+    from core.positioning_log import judge
+    final = {'stage': 'final', 'axis': 'X', 'k': 21, 'r': None, 'r_terms': {}, 'range': 1.0,
+             'coef': {'Sx': {'value': 0.1, 'se': 1, 't': 0.1},
+                      'θx': {'value': 5.0, 'se': 0.1, 't': 50.0}}}
+    stage = {'stage': 'coarse_match', 'axis': 'X', 'k': 21, 'r': 0.8, 'range': 1.0,
+             'r_terms': {'Sx': 0.1, 'θx': 0.8},          # 계수는 반대 부호인데 r은 + → 다른 데서 온 상관
+             'coef': {'Sx': {'value': 0.1, 'se': 1, 't': 0.1},
+                      'θx': {'value': -4.0, 'se': 0.5, 't': -8.0}}}
+    verdict = judge([stage, final])
+    assert verdict['terms'][0]['carriers'] == []
+    assert '최종 착지(HZ1_O)에만 있음' in verdict['lines'][0]
+    few = dict(stage, k=5, r_terms={'Sx': 0.1, 'θx': -0.9})     # 로그 단계도 Die 8개 이상 필요
+    assert judge([few, final])['terms'][0]['carriers'] == []
+    ok = dict(stage, r_terms={'Sx': 0.1, 'θx': -0.9})
+    assert judge([ok, final])['terms'][0]['carriers'] == ['coarse_match']
+
+
+def test_real_sample19_verdict_unchanged_with_partial_r(real_result):
+    analysis = analyze_result(real_result)
+    fine = row(analysis['mean']['stages'], 'fine_move', 'X')
+    assert abs(fine['r_terms']['θx']) < 0.5
+    x_term = next(t for t in analysis['verdict']['terms'] if t['term'] == 'θx')
+    assert x_term['carriers'] == [] and x_term['span'] == '비전 정렬 이후(카메라→Tip 착지)'
+
+
+def test_collinear_or_narrow_layout_gives_no_coefficient():
+    from core.positioning_log import judge, plane_fit, stage_table
+    line = {f'Die{i}': (10.0 * i, 10.0 * i + 0.01 * i * i) for i in range(2, 23)}   # 거의 한 직선
+    values = {d: 0.004 * y for d, (x, y) in line.items()}
+    fit = plane_fit(values, line)
+    assert fit['dx'] is None and fit['dy'] is None
+    narrow = {f'Die{i}': (1.0 * (i % 3), 10.0 * i) for i in range(2, 23)}           # X 퍼짐 < 5 mm
+    fit = plane_fit({d: 0.004 * y for d, (x, y) in narrow.items()}, narrow)
+    assert fit['dx'] is None and fit['dy']['value'] == pytest.approx(4.0)
+    table = stage_table({'final': {'X': {d: 0.005 * y for d, (x, y) in line.items()}}}, line)
+    assert row(table, 'final', 'X')['coef'] == {'Sx': None, 'θx': None}
+    verdict = judge(table)
+    assert verdict['terms'] == [] and '정할 수 없는 계수' in verdict['lines'][0]
+
+
+def test_mapping_rejects_rotated_symmetric_match():
+    sites = _sites()
+    rows = parse_sample_positioning(str(SAMPLE_LOG))
+    turned = [dict(r, stage_x=-r['stage_y'], stage_y=r['stage_x']) for r in rows]   # 90° 돈 배치
+    mapping = map_rows_to_dies(turned, sites)
+    assert mapping['status'] == 'mismatch'
+    assert '맞춘 회전' in mapping['problems'][0] and '1°를 넘어' in mapping['problems'][0]
+
+
+def test_log_choice_prefers_csv_prefix_and_rejects_ambiguous(tmp_path):
+    lot = make_lot(tmp_path / 'a')
+    folder = lot / 'Debug' / 'SamplePositioning'
+    shutil.copy(SAMPLE_LOG, folder / 'Other7_SamplePositioning.txt')
+    logs = find_logs(str(lot), csv_prefix='sample19')
+    assert os.path.basename(logs['sample']) == 'Sample19_SamplePositioning.txt'
+    assert analyze_result(load(lot))['status'] == 'ok'
+
+    lot2 = make_lot(tmp_path / 'b')
+    folder2 = lot2 / 'Debug' / 'SamplePositioning'
+    (folder2 / 'Sample19_SamplePositioning.txt').rename(folder2 / 'A1_SamplePositioning.txt')
+    shutil.copy(SAMPLE_LOG, folder2 / 'B2_SamplePositioning.txt')
+    analysis = analyze_result(load(lot2))
+    assert analysis['lots'][0]['status'] == 'mismatch'
+    assert 'SamplePositioning 로그가 2개인데 CSV 이름(sample19)과 맞는 것이 없음' in \
+        analysis['lots'][0]['problems'][0]
+
+
+def test_slot_mismatch_is_reported(tmp_path):
+    lot = make_lot(tmp_path / 'vp')
+    for name in ('SAMPLE19_X_UL.csv', 'SAMPLE19_Y_UL.csv'):
+        path = lot / name
+        path.write_text(path.read_text(encoding='utf-8').replace('Slot No,19', 'Slot No,20'),
+                        encoding='utf-8')
+    analysis = analyze_result(load(lot))
+    assert analysis['status'] == 'mismatch'
+    assert analysis['lots'][0]['problems'] == ['로그 Slot 19 ≠ CSV Slot No 20 (다른 샘플의 로그)']
+
+
+def test_network_error_is_not_reported_as_missing_and_not_cached(tmp_path, monkeypatch):
+    from core import csv_loader, positioning_log
+    monkeypatch.setattr(csv_loader, 'FOLDER_RETRY_DELAY', 0)
+    result = load(make_lot(tmp_path / 'vp'))
+    real = positioning_log.list_dir
+    calls = []
+
+    def flaky(path, *args):
+        if os.path.basename(path).lower() == 'debug':
+            calls.append(path)
+            raise OSError(64, '지정된 네트워크 이름을 더 이상 사용할 수 없습니다')
+        return real(path, *args)
+    monkeypatch.setattr(positioning_log, 'list_dir', flaky)
+    analysis = analyze_result(result)
+    assert len(calls) == 2                                   # 한 번 더 읽어 본다
+    assert analysis['status'] == 'error' and analysis['lots'][0]['status'] == 'error'
+    assert analysis['message'].startswith('로그를 읽지 못함')
+    assert NO_LOG_TEXT not in analysis['message']
+    assert store_analysis(result, analysis) is False and 'positioning_log' not in result
+
+
+def test_locked_file_and_utf16_bom(tmp_path, monkeypatch):
+    from core import positioning_log
+    utf16 = tmp_path / 'u_SamplePositioning.txt'
+    utf16.write_bytes(SAMPLE_LOG.read_text(encoding='utf-8').encode('utf-16'))
+    assert parse_sample_positioning(str(utf16))[0]['coarse_match_x'] == -2.39
+    monkeypatch.setattr(positioning_log, '_read_file_bytes', lambda path: b'')
+    with pytest.raises(positioning_log.LogReadError, match='잠김 또는 권한'):
+        parse_sample_positioning(str(SAMPLE_LOG))
+    analysis = analyze_result(load(make_lot(tmp_path / 'vp')))
+    assert analysis['status'] == 'error'
+    assert '파일을 열 수 없음 (잠김 또는 권한): Sample19_SamplePositioning.txt' in analysis['message']
+
+
+def test_duplicate_header_prefers_micrometre_column(tmp_path):
+    path = tmp_path / 'd_SamplePositioning.txt'
+    path.write_text('Slot\tPoint\tCoarse Match X (pxl)\tCoarse Match X (um)\tStage X (um)\tStage Y (um)\n'
+                    '19\t1\t812.0\t-2.39\t1\t2\n', encoding='utf-8')
+    assert parse_sample_positioning(str(path))[0]['coarse_match_x'] == -2.39
+
+
+def test_tip_slope_needs_two_locations_and_span():
+    near = [{'tip_x': 1.0, 'tip_y': 72.0, 'location': 'A', 'stage_y': 0.0},
+            {'tip_x': 1.1, 'tip_y': 72.0, 'location': 'B', 'stage_y': 5.0}]
+    summary = tip_summary(near)
+    assert summary['slope_x'] is None
+    assert any('Y 범위 5 mm' in l and '10 mm 이상 필요' in l for l in summary['lines'])
+    one_place = [{'tip_x': 1.0 + k, 'tip_y': 72.0, 'location': 'Center', 'stage_y': y}
+                 for k, y in enumerate((0.0, 50.0))]
+    assert tip_summary(one_place)['slope_x'] is None
+    from core.positioning_log import _location_y
+    assert _location_y('Top+5', []) is None and _location_y('y-120', []) == -120.0
+
+
+def test_llm_section_survives_a_failing_workflow(real_result, monkeypatch):
+    from core import positioning_log
+    from core.llm_report import build_llm_report
+
+    def boom(*_a, **_k):
+        raise RuntimeError('깨진 로그')
+    monkeypatch.setattr(positioning_log, 'analyze_result', boom)
+    md = build_llm_report([real_result], SPEC_LIM, SPEC_DEV)
+    assert '- 상태: 로그 대조 실패 (RuntimeError: 깨진 로그)' in md
+    assert '## LLM 분석 요청' in md
+
+
+def test_stale_read_does_not_block_and_same_analysis_is_not_redrawn(window, real_result,
+                                                                    monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from core.positioning_log import run_key
+    old = window._data_generation
+    window._data_generation = old + 1           # 그사이 다시 스캔했다
+    window._poslog_result = real_result
+    window._poslog_reading = (run_key(real_result), old, 999)    # 지난 세대의 읽기가 아직 돈다
+    _show_tab(window)                                            # 새 세대 읽기는 막히지 않는다
+    assert window._poslog_reading is not None and window._poslog_reading[1] == old + 1
+    window._on_positioning_done(real_result, {'status': 'no_logs'}, (old, 999))   # 늦은 결과
+    assert 'positioning_log' not in real_result
+    deadline = time.monotonic() + 15
+    while 'positioning_log' not in real_result:
+        assert time.monotonic() < deadline
+        QApplication.processEvents()
+        time.sleep(0.01)
+    QApplication.processEvents()
+    assert window.poslog_table.rowCount() == 16
+    drawn = []
+    monkeypatch.setattr(window, '_render_positioning', lambda a: drawn.append(a))
+    window._update_positioning_log(real_result)                  # 같은 분석: 다시 그리지 않는다
+    assert drawn == []
+
+
+def test_finished_read_is_stored_on_every_copy_of_the_run(window, real_result):
+    from core.positioning_log import run_key
+    copy = dict(real_result)                 # run_view가 만든 사본처럼
+    other = dict(real_result, round='other')
+    window.recipe_results = [dict(real_result, run_results=[real_result, other])]
+    window._poslog_result = copy
+    analysis = analyze_result(real_result)
+    window._on_positioning_done(real_result, analysis, (window._data_generation, 1))
+    assert copy['positioning_log'] is analysis
+    assert window.recipe_results[0]['run_results'][0]['positioning_log'] is analysis
+    assert 'positioning_log' not in other
+    assert run_key(copy) == run_key(real_result)

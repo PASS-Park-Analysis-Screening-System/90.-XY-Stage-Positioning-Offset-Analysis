@@ -8,7 +8,6 @@ import threading
 from PySide6.QtCore import QThread, Signal
 from core.checklist import summarize_runs
 from core.csv_loader import ScanCancelled, ScanSession, session_key
-from core.positioning_log import attach_analysis
 from core.recipe_scanner import load_all_recipes, compare_recipes
 from ui.workers.progress_throttle import Throttle
 
@@ -98,11 +97,6 @@ class DataLoaderThread(QThread):
                                        session=self.session)
             with self._lock:
                 self._emit_count(self.total_lots, final=True)
-            # 비전 보정 로그 대조 (Positioning Log 탭·AI 분석용 리포트). 화면에 보일 회차만 읽는다.
-            # 다른 회차는 그 회차를 볼 때 화면이 작업 스레드로 읽는다 (네트워크 왕복을 줄인다)
-            self.progress.emit("비전 보정 로그 읽는 중…")
-            for result in results:
-                attach_analysis(result, self.session)
             if self.run_specs is not None and any(r.get('run_results') for r in results):
                 self.progress.emit("회차 요약 계산 중…")
                 spec_limits, spec_deviation = self.run_specs
