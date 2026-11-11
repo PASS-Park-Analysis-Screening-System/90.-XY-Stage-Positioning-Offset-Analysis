@@ -63,6 +63,14 @@ QPushButton[step_active_fail="true"] {{
     border-radius: 4px; border: 3px solid #ffffff;
 }}
 QPushButton[step_active_fail="true"]:hover {{ background: #cc241d; }}
+QPushButton[step_ref_pass="true"] {{
+    background: {ORANGE}; color: {BG}; font-weight: bold; padding: 8px 14px;
+    border-radius: 4px; border: 2px solid transparent;
+}}
+QPushButton[step_active_ref_pass="true"] {{
+    background: {ORANGE}; color: {BG}; font-weight: bold; padding: 7px 13px;
+    border-radius: 4px; border: 3px solid #ffffff;
+}}
 QLineEdit {{
     background: {BG3}; color: {FG}; border: 1px solid #45475a;
     padding: 4px 8px; border-radius: 4px;

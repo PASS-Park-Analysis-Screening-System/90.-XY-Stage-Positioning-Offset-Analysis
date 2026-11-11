@@ -3,11 +3,10 @@ from contextlib import contextmanager
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QCheckBox
 from functools import partial
-from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
-                  filter_stabilization_die, stabilization_die)
-from core.die_analysis import is_reference_size, select_display_rows
-from core.checklist import analysis_warnings, combine_verdicts
-from core import compute_statistics, filter_by_method
+from core import extract_die_positions, filter_stabilization_die, stabilization_die
+from core.die_analysis import select_display_rows
+from core.checklist import (analysis_warnings, combine_verdicts, compute_axis_metrics,
+                            verdict_reference)
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 
 
@@ -67,31 +66,22 @@ class StepMixin:
     def _compute_all_step_pass_states(self):
         """scan complete 후 모든 Step Pass/Fail 일괄 계산 후 버튼 색상 즉시 반영."""
         dev_spec = self.settings.get('spec_deviation', {})
+        spec_limits = self.settings.get('spec_limits', {})
         self.step_reference_states = {}     # 1 Repeat 참고 판정 여부 (판정과 함께 다시 계산)
         for i, result in enumerate(self.recipe_results):
             # Summary 체크리스트·분석 시트와 같은 21 Die 기준 (안정화 Die 제외)
             data = filter_stabilization_die(result.get('raw_data', []))
             short = result.get('short_name', '')
-            ds = dev_spec.get(short, {})
-            spec_r = ds.get('spec_range')
-            spec_s = ds.get('spec_stddev')
             self.step_reference_states[i] = False
             if not data:
                 self.step_pass_states[i] = None
                 continue
-            dx = compute_deviation_matrix(data, 'X')
-            dy = compute_deviation_matrix(data, 'Y')
-            sx = compute_statistics(filter_by_method(data, 'X'))
-            sy = compute_statistics(filter_by_method(data, 'Y'))
-            # PASS/FAIL 판정은 core.evaluate_deviation_pass 단일 출처를 사용 (CardMixin과 동일).
-            px = evaluate_deviation_pass(sx, dx, spec_r, spec_s)
-            py = evaluate_deviation_pass(sy, dy, spec_r, spec_s)
-            self.step_pass_states[i] = combine_verdicts(px, py)
-            # 1 Repeat 참고 판정: 판정 색은 그대로 두고 ⚠를 붙인다 (카드의 '⚠ PASS'와 같은 표기)
-            self.step_reference_states[i] = (
-                self.step_pass_states[i] is not None
-                and ((px is not None and is_reference_size(dx))
-                     or (py is not None and is_reference_size(dy))))
+            # 판정은 체크리스트와 같은 core.compute_axis_metrics 단일 출처 (CardMixin과 동일)
+            axes = [compute_axis_metrics(data, axis, short, spec_limits, dev_spec)
+                    for axis in ('X', 'Y')]
+            self.step_pass_states[i] = combine_verdicts(*(m['result'] for m in axes))
+            # 1 Repeat 참고 판정: PASS는 주황, FAIL은 빨강에 ⚠ (카드와 같은 규칙)
+            self.step_reference_states[i] = verdict_reference(*axes)
         self._refresh_step_buttons()
 
 
@@ -286,13 +276,17 @@ class StepMixin:
 
             # 모든 property 초기화
             for prop in ('active_step', 'step', 'step_pass', 'step_fail',
-                         'step_active_pass', 'step_active_fail'):
+                         'step_active_pass', 'step_active_fail',
+                         'step_ref_pass', 'step_active_ref_pass'):
                 btn.setProperty(prop, False)
 
+            reference = bool((getattr(self, 'step_reference_states', None) or {}).get(i))
             if i == active:
                 # 활성 Step: Pass/Fail 색상 + 흰 테두리
                 if not has_data:
                     btn.setProperty('active_step', True)   # 파란색 + 흰 테두리
+                elif is_pass is True and reference:
+                    btn.setProperty('step_active_ref_pass', True)  # 주황 + 흰 테두리 (참고 PASS)
                 elif is_pass is True:
                     btn.setProperty('step_active_pass', True)  # 초록 + 흰 테두리
                 elif is_pass is False:
@@ -303,6 +297,8 @@ class StepMixin:
                 # 비활성 Step: Pass/Fail만 표시
                 if not has_data:
                     btn.setProperty('step', True)      # 파란색
+                elif is_pass is True and reference:
+                    btn.setProperty('step_ref_pass', True)  # 주황색 (참고 PASS)
                 elif is_pass is True:
                     btn.setProperty('step_pass', True) # 초록색
                 elif is_pass is False:
@@ -315,7 +311,7 @@ class StepMixin:
             btn.style().polish(btn)
 
     def _set_step_marker(self, i, btn):
-        """1 Repeat 참고 판정이면 버튼 이름 앞에 ⚠를 붙인다 (색은 판정 색 그대로)."""
+        """1 Repeat 참고 판정이면 버튼 이름 앞에 ⚠를 붙인다 (색: 참고 PASS 주황, 참고 FAIL 빨강)."""
         if i >= len(getattr(self, 'recipes', [])):
             return
         recipe = self.recipes[i]

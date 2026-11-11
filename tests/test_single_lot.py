@@ -14,11 +14,14 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QColor
+
 from core.checklist import basis_warnings, build_checklist, result_text
 from core.csv_loader import ScanSession, scan_lot_folders, scan_self_lot
 from core.recipe_scanner import (build_recipe, load_all_recipes, load_recipe_data,
                                  recipes_from_mapping, scan_recipes)
 from core.workflow_map import NOTE_ROOT, compute_prefill, describe_folder
+from ui.theme import GREEN, ORANGE, RED
 
 SPECS = ['Vision Pattern', 'In-Die Align']
 SPEC_DEV = {k: {'spec_range': 2.0, 'spec_stddev': 0.4} for k in SPECS}
@@ -147,7 +150,9 @@ def test_auto_scan_of_lot_folder_offers_it_as_one_lot(tmp_path):
 def test_auto_scan_without_specs_does_not_invent_a_recipe(tmp_path):
     from ui.controllers.scan_controller import detect_scan_target
     lot = make_real_lot(tmp_path / 'Vision Pattern')
-    assert detect_scan_target(str(lot), [], {}, ScanSession()) == {'action': 'none'}
+    target = detect_scan_target(str(lot), [], {}, ScanSession())
+    assert target == {'action': 'none',
+                      'message': '선택한 폴더는 Lot 폴더입니다 — Spec 설정 후 Workflow별 선택으로 지정하세요'}
 
 
 def test_parent_of_lot_folders_is_unchanged(tmp_path):
@@ -221,7 +226,12 @@ def test_folder_with_only_metadata_csv_is_not_a_recipe(tmp_path):
 
     assert scan_recipes(str(lot)) == []
     assert describe_folder(str(lot)) == (False, '❌ Lot 데이터 없음')
-    assert detect_scan_target(str(lot), SPECS, {}, ScanSession()) == {'action': 'none'}
+    target = detect_scan_target(str(lot), SPECS, {}, ScanSession())
+    assert target['action'] == 'none'
+    # 측정 CSV 없는 폴더만 있어 뺀 폴더는 System Log에 ℹ로 남긴다
+    infos = [text for level, text in target['notes'] if level == 'info']
+    assert any('Debug' in t and 'Analysis' in t and '제외' in t for t in infos)
+    assert any(t.endswith('(Info)') for t in infos)
     _recipes, problems = recipes_from_mapping([('Vision Pattern', str(lot))], SPECS)
     assert problems == [('Vision Pattern', str(lot), 'Lot 데이터 없음')]
 
@@ -278,6 +288,7 @@ def test_empty_lot_gives_log_error_and_dialog(window, tmp_path):
     assert boxes and '분석할 데이터를 하나도 읽지 못했습니다' in boxes[-1].text()
     assert '46LKD105SJE61' in boxes[-1].text()
     assert window.statusBar().currentMessage().startswith('❌')
+    assert '⚠ 전체 로드 완료: 0개 데이터' in logged and '✅ 전체 로드 완료' not in logged
     for b in boxes:
         b.close()
 
@@ -382,10 +393,16 @@ def test_screen_marks_reference_verdict(window, spread, verdict):
         assert card.lbl_basis.text().startswith('21 Die × 1 Repeat')
     assert window.step_pass_states[0] is (verdict == 'PASS')
     assert window.step_buttons[0].text() == '⚠ Step 1: Vision Pattern'
-    assert window.step_buttons[0].property('step_active_pass' if verdict == 'PASS'
+    # 색 규칙: 참고 PASS 주황, 참고 FAIL 빨강 (카드·Step 버튼·Summary가 같다)
+    assert window.step_buttons[0].property('step_active_ref_pass' if verdict == 'PASS'
                                            else 'step_active_fail') is True
+    assert window.step_buttons[0].property('step_active_pass') is not True
+    expected = QColor(ORANGE if verdict == 'PASS' else RED)
     for row in (ROW_X_RESULT, ROW_Y_RESULT):
         assert window.sum_table.item(row, 0).text() == f'{verdict} {REFERENCE}'
+        assert window.sum_table.item(row, 0).background().color() == expected
+    # Die Average 표: 1 Repeat이라 Die 안 StdDev·Range는 '—' (0.000 아님)
+    assert [window.die_x_table.item(0, c).text() for c in (2, 3)] == ['—', '—']
 
 
 def test_screen_keeps_dash_and_plain_pass(window):
@@ -400,6 +417,8 @@ def test_screen_keeps_dash_and_plain_pass(window):
     assert not window.card_x.lbl_cpk.text().endswith('(참고)')
     assert window.step_buttons[0].text() == 'Step 1: Vision Pattern'
     assert window.sum_table.item(ROW_X_RESULT, 0).text() == 'PASS'
+    assert window.sum_table.item(ROW_X_RESULT, 0).background().color() == QColor(GREEN)
+    assert window.die_x_table.item(0, 2).text() != '—'
 
 
 def test_real_lot_folder_flow_on_screen(window, tmp_path):
@@ -423,7 +442,8 @@ def test_excel_marks_reference_verdict(tmp_path, spread, verdict):
     header = [c.value for c in ws[1]]
     rows = [dict(zip(header, [c.value for c in r])) for r in ws.iter_rows(min_row=2)]
     assert [r['Result'] for r in rows] == [f'{verdict} {REFERENCE}'] * 2
-    assert all(str(r['Cpk']).endswith('(참고)') for r in rows)
+    assert [r['판정 기준'] for r in rows] == [REFERENCE] * 2
+    assert all(isinstance(r['Cpk'], float) for r in rows)       # Cpk는 숫자 그대로
     basis = load_workbook(path)['Analysis Basis']
     assert any('참고용' in str(c.value) for row in basis.iter_rows() for c in row)
 
@@ -437,6 +457,7 @@ def test_excel_keeps_numbers_for_normal_data(tmp_path):
                         spec_limits=SPEC_LIM, spec_deviation=SPEC_DEV)
     ws = load_workbook(path)['Checklist']
     assert [ws.cell(row=r, column=10).value for r in (2, 3)] == ['PASS', 'PASS']
+    assert [ws.cell(row=r, column=11).value for r in (2, 3)] == ['정규', '정규']
     assert all(isinstance(ws.cell(row=r, column=9).value, float) for r in (2, 3))
 
 
@@ -497,3 +518,247 @@ def test_llm_report_keeps_normal_verdict_text():
     md = build_llm_report([_result(_rows(range(1, 23), range(1, 11)))], SPEC_LIM, SPEC_DEV)
     assert REFERENCE not in md.split('## 분석 조건')[1].split('## 결과 요약')[1]
     assert 'Lot 1개라 계산 안 함' not in md
+
+
+# ── 리뷰 반영 (79f3829/bdbf82c) ──────────────────────────────────────
+
+def _plain_lot(folder, name, repeat, dies=range(1, 23), axes='XY', spread=500.0, tiffs=True):
+    """메타 머리글 + 22 Site의 단순 Lot 폴더."""
+    folder.mkdir(parents=True, exist_ok=True)
+    lot = folder / name
+    lot.mkdir()
+    meta = META.format(sample=SAMPLE, repeat=repeat, lot=name)
+    for axis in axes:
+        rows = [r for k, r in enumerate(_site_rows(axis, spread), 1) if k in dies]
+        (lot / f'{SAMPLE}_{axis}_UL.csv').write_bytes((meta + HEADER + ''.join(rows)).encode())
+    if tiffs:
+        (lot / f'{SAMPLE}_0004_X004_Y000_0001_Height.tiff').write_bytes(b'')
+    return lot
+
+
+def test_tiff_lookup_prefers_lot_subfolder_with_the_same_name_as_the_round(tmp_path):
+    """회차 폴더 '1' 안에 Lot '1'이 있으면 하위 폴더 R/1/1에서 찾는다 (R/1이 아니다)."""
+    from ui.controllers.tiff_controller import find_tiffs_for_row
+    run = tmp_path / 'R' / '1'
+    _plain_lot(run, '1', 1)
+    _plain_lot(run, '11', 2)        # 이름이 겹치는 Lot보다 같은 이름이 먼저
+    matched, folder, message = find_tiffs_for_row(str(run), '1', '0004_X004_Y000')
+    assert message == '' and folder == str(run / '1')
+    assert len(matched) == 1
+    # Lot 폴더 하나를 고른 경우(self_lot)만 회차 폴더 자체를 쓴다
+    lot = make_real_lot(tmp_path / 'vp')
+    _m, folder, _ = find_tiffs_for_row(str(lot), 'Info', '0004_X004_Y000', self_lot=True)
+    assert folder == str(lot)
+
+
+def test_self_lot_result_carries_flag_for_tiff_lookup(tmp_path):
+    _recipes, results = _load_mapped(make_real_lot(tmp_path / 'vp'))
+    assert results[0]['self_lot'] is True
+    _recipes, results = _load_mapped(_plain_lot(tmp_path / 'set', 'L1', 1).parent)
+    assert results[0]['self_lot'] is False
+
+
+def _stray_root(tmp_path):
+    """폴더 자체에도 X_UL CSV가 있는데 측정 Lot 하위 폴더가 3개 있다."""
+    root = tmp_path / 'Vision Pattern'
+    for k in range(1, 4):
+        _plain_lot(root, f'Sample{k}', k)
+    (root / f'{SAMPLE}_X_UL.csv').write_bytes(
+        (META.format(sample=SAMPLE, repeat=1, lot='x') + HEADER + ''.join(_site_rows('X', 1)))
+        .encode())
+    return root
+
+
+def test_stray_csv_does_not_hide_measured_lots(tmp_path):
+    from ui.controllers.scan_controller import FLAT_ROOT_REASON, detect_scan_target
+    root = _stray_root(tmp_path)
+    session = ScanSession()
+
+    assert scan_self_lot(str(root), session) == []
+    assert describe_folder(str(root), session) == (True, '✅ Lot 3개 · (root)')
+    target = detect_scan_target(str(root), SPECS, {}, session)
+    assert target['action'] == 'dialog' and target['reason'] == FLAT_ROOT_REASON
+    warns = [text for level, text in target['notes'] if level == 'warn']
+    assert warns == [f'폴더 자체에도 측정 CSV가 있어 무시함: {root / (SAMPLE + "_X_UL.csv")}']
+    recipes, results = _load_mapped(root, session)
+    assert recipes[0]['rounds'][0]['lot_count'] == 3 and not recipes[0]['rounds'][0].get('self_lot')
+    assert recipes[0]['notes'] == warns
+    assert sorted({r['lot_name'] for r in results[0]['raw_data']}) == ['Sample1', 'Sample2',
+                                                                       'Sample3']
+
+
+def test_root_with_stray_csv_keeps_its_recipes(tmp_path):
+    from ui.controllers.scan_controller import detect_scan_target
+    root = tmp_path / 'data'
+    for k in range(1, 3):
+        _plain_lot(root / 'Vision Pattern' / '1st', f'L{k}', k)
+        _plain_lot(root / 'In-Die Align' / '1st', f'L{k}', k)
+    (root / f'{SAMPLE}_Y_UL.csv').write_bytes(
+        (META.format(sample=SAMPLE, repeat=1, lot='x') + HEADER + ''.join(_site_rows('Y', 1)))
+        .encode())
+
+    target = detect_scan_target(str(root), SPECS, {}, ScanSession())
+
+    assert target['action'] == 'load'
+    assert [r['name'] for r in target['recipes']] == ['In-Die Align', 'Vision Pattern']
+    assert [lvl for lvl, _t in target['notes']] == ['warn']
+
+
+def test_lot_count_counts_only_measured_lots(tmp_path):
+    root = tmp_path / 'set'
+    for k in range(1, 4):
+        _plain_lot(root, f'S{k}', k)
+    (root / 'S99').mkdir()
+    (root / 'S99' / 'Summary.csv').write_text('Lot ID,L\nRepeat No,1\n\n' + HEADER, encoding='utf-8')
+    assert build_recipe(str(root))['rounds'][0]['lot_count'] == 3
+    assert describe_folder(str(root)) == (True, '✅ Lot 3개 · (root)')
+
+
+def test_unreadable_self_lot_is_reported(tmp_path, monkeypatch):
+    from core import csv_loader
+    lot = make_real_lot(tmp_path / 'vp')
+    recipe = build_recipe(str(lot), 'Vision Pattern', allow_self=True)
+    real = csv_loader._is_data_folder
+
+    def broken(path, *args):
+        if os.path.normcase(os.path.normpath(path)) == os.path.normcase(str(lot)):
+            raise OSError(64, '지정된 네트워크 이름을 더 이상 사용할 수 없습니다')
+        return real(path, *args)
+
+    monkeypatch.setattr(csv_loader, '_is_data_folder', broken)
+    monkeypatch.setattr(csv_loader, 'FOLDER_RETRY_DELAY', 0)
+    session, failures = ScanSession(), []
+    assert scan_self_lot(str(lot), session, failures) == []
+    assert failures and failures[0][0] == str(lot)
+    assert str(lot) in session.errors
+
+    result = load_recipe_data(recipe, round_name='(root)')
+    assert result['raw_data'] == []
+    assert any('Lot 폴더 확인 실패' in e for e in result['load_errors'])
+    assert '읽지 못했습니다' in result['no_rows_detail']
+
+
+def test_empty_result_dialog_is_capped(window):
+    # 화면 전체 흐름(_on_scan_complete)에 0행 Recipe를 7개 넘게 넣으면 pytest 안에서만
+    # 스택 오버플로가 난다 (90a7deb에서도 같음, 이 수정과 무관). 대화상자 함수만 부른다
+    from PySide6.QtWidgets import QMessageBox
+    results = [{'recipe': f'R{k}', 'short_name': f'R{k}', 'round': '(root)', 'raw_data': [],
+                'error': 'No data loaded', 'no_rows_detail': f'읽은 행 0개 — R{k}'}
+               for k in range(10)]
+    window._warn_empty_results(results, 0)
+
+    boxes = [b for b in window.findChildren(QMessageBox) if b.windowTitle() == '데이터 없음']
+    text = boxes[-1].text()
+    assert text.count('• R') == 8 and '… 외 2개' in text
+    assert '0개인 Workflow 10개' in str(window.logger.export_rows())     # System Log에는 전부
+    for b in boxes:
+        b.close()
+
+
+def _mixed_rows():
+    """X는 1 Repeat(PASS 참고), Y는 10 Repeat이고 Spec을 넘는다(정규 FAIL)."""
+    x = [r for r in _rows(range(1, 23), [1], 0.3) if r['method'] == 'X']
+    y = [r for r in _rows(range(1, 23), range(1, 11), 5.0) if r['method'] == 'Y']
+    return x + y
+
+
+def test_mixed_axes_firm_fail_has_no_reference_marker(window):
+    from core.checklist import combine_verdicts, summarize_runs, verdict_reference
+    checks = {c['axis']: c for c in build_checklist([_result(_mixed_rows())], SPEC_LIM, SPEC_DEV)}
+    assert (checks['X']['result'], checks['X']['reference']) == (True, True)
+    assert (checks['Y']['result'], checks['Y']['reference']) == (False, False)
+    assert combine_verdicts(checks['X']['result'], checks['Y']['result']) is False
+    assert verdict_reference(checks['X'], checks['Y']) is False
+
+    _show(window, _mixed_rows())
+    assert window.step_pass_states[0] is False
+    assert window.step_buttons[0].text() == 'Step 1: Vision Pattern'      # ⚠ 없음
+    assert window.step_buttons[0].property('step_active_fail') is True
+
+    plain = _result(_rows(range(1, 23), range(1, 11)))
+    run = summarize_runs(dict(plain, run_results=[_result(_mixed_rows()), plain]),
+                         SPEC_LIM, SPEC_DEV)[0]
+    assert run['result'] is False and run['reference'] is False
+
+
+def test_reference_rule_for_combined_verdicts():
+    from core.checklist import verdict_reference
+
+    def m(result, reference):
+        return {'result': result, 'reference': reference}
+    assert verdict_reference(m(True, True), m(True, False)) is True        # 참고 PASS
+    assert verdict_reference(m(False, True), m(True, False)) is True       # FAIL 축이 모두 참고
+    assert verdict_reference(m(False, True), m(False, False)) is False     # 정규 FAIL이 있다
+    assert verdict_reference(m(None, False), m(True, True)) is False       # 판정 없음
+
+
+def _two_runs(first_rows, second_rows):
+    first = dict(_result(first_rows), round='1')
+    second = dict(_result(second_rows), round='2')
+    return dict(second, run_results=[first, second])
+
+
+def test_llm_report_marks_reference_in_what_if_and_run_changes():
+    from core.llm_report import build_llm_report
+    one_repeat_fail = _rows(range(1, 23), [1], 5.0)
+    firm_fail = _rows(range(1, 23), range(1, 11), 5.0)
+    md = build_llm_report([_two_runs(one_repeat_fail, firm_fail)], SPEC_LIM, SPEC_DEV)
+
+    assert f'- 1 → 2: FAIL {REFERENCE} → FAIL' in md
+    assert f'- FAIL 회차: 1 ({REFERENCE}), 2' in md
+    run_rows = [l for l in md.splitlines() if l.startswith('| 1 | ')]
+    assert any(f'FAIL {REFERENCE}' in l for l in run_rows)          # 회차 표·what-if 판정
+
+    md_one = build_llm_report([_result(one_repeat_fail)], SPEC_LIM, SPEC_DEV)
+    whatif = [l for l in md_one.splitlines() if '(what-if 추정' in l and '현재' in l]
+    assert whatif and all(f'현재 FAIL {REFERENCE} → ' in l for l in whatif)
+
+
+def test_llm_spatial_with_one_repeat_has_no_zero_stddev():
+    from core.llm_report import build_llm_report
+    md = build_llm_report([_result(_rows(range(1, 23), [1], 0.3))], SPEC_LIM, SPEC_DEV)
+    spatial = md.split('#### 공간(Die)')[1].split('#### 시간')[0]
+    die_rows = [l for l in spatial.splitlines() if l.startswith('| Die')][1:]
+    assert die_rows and all(l.split('|')[7].strip() == '—' and l.split('|')[8].strip() == '—'
+                            for l in die_rows)
+    assert 'X StdDev·Range(Die 안): Lot 1개라 계산 안 함' in spatial
+    assert '평균 StdDev' not in spatial
+    md_ten = build_llm_report([_result(_rows(range(1, 23), range(1, 11)))], SPEC_LIM, SPEC_DEV)
+    assert '평균 StdDev' in md_ten.split('#### 공간(Die)')[1]
+
+
+def test_run_comparison_table_and_chart_mark_reference_runs(window):
+    import matplotlib
+    matplotlib.use('Agg')
+    from charts.comparison import plot_run_comparison_metrics
+    from core.checklist import summarize_runs
+    runs = summarize_runs(_two_runs(_rows(range(1, 23), [1], 0.3),
+                                    _rows(range(1, 23), range(1, 11))), SPEC_LIM, SPEC_DEV)
+    assert [(r['result'], r['reference']) for r in runs] == [(True, True), (True, False)]
+
+    fig = plot_run_comparison_metrics(runs, 2.0, 0.4)
+    labels = [t.get_text() for t in fig.axes[1].get_xticklabels()]
+    assert labels == ['1 (참고)', '2']
+    legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+    assert any('참고 (1 Repeat)' in t for t in legend)
+
+    result = dict(_two_runs(_rows(range(1, 23), [1], 0.3), _rows(range(1, 23), range(1, 11))),
+                  runs=runs, default_run='2')
+    window.recipes = [{'name': 'Vision Pattern', 'short_name': 'Vision Pattern', 'index': 1,
+                       'rounds': []}]
+    window._build_nav()
+    window.recipe_results = [result]
+    window.current_recipe_idx = 0
+    window._update_run_compare()
+    table = window.run_compare_table
+    assert table.item(0, table.columnCount() - 1).text() == f'PASS {REFERENCE}'
+    assert table.item(0, table.columnCount() - 1).background().color() == QColor(ORANGE)
+    assert table.item(1, table.columnCount() - 1).background().color() == QColor(GREEN)
+
+
+def test_die_pitch_matches_real_coordinates():
+    """서버 실데이터 150개 CSV: Site 격자 1칸 = 20 mm (Site X 2 → 40 mm)."""
+    from core.die_analysis import DIE_PITCH_MM
+    assert DIE_PITCH_MM == 20.0
+    xs = {sx: sx * 20000 - 2540.83 for sx, _sy in SITES}      # 실데이터와 같은 좌표식
+    assert xs[2] - xs[0] == pytest.approx(DIE_PITCH_MM * 2 * 1000)

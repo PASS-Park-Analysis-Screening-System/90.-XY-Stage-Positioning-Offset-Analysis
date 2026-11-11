@@ -175,9 +175,12 @@ from core import DIE_POSITIONS, get_die_position
 
 def plot_run_comparison_metrics(runs: list, spec_range=None, spec_stddev=None,
                                 title: str = '') -> Figure:
-    """회차별 Dev Range·Dev StdDev (X/Y 2행). runs는 core.checklist.summarize_runs 결과."""
+    """회차별 Dev Range·Dev StdDev (X/Y 2행). runs는 core.checklist.summarize_runs 결과.
+
+    1 Repeat 참고 판정 회차는 속이 빈 마커와 x축 이름의 '(참고)'로 표시한다.
+    """
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    labels = [str(r['run']) for r in runs]
+    labels = [f"{r['run']} (참고)" if r.get('reference') else str(r['run']) for r in runs]
     xs = list(range(len(runs)))
     for row, axis in enumerate(('x', 'y')):
         ax = axes[row]
@@ -189,6 +192,13 @@ def plot_run_comparison_metrics(runs: list, spec_range=None, spec_stddev=None,
                 ax.plot([p[0] for p in pts], [p[1] for p in pts], marker + '-', color=color,
                         linewidth=2, markersize=5,
                         label=f"Dev {'Range' if key == 'range' else 'StdDev'}")
+            ref = [(x, v) for x, v, r in zip(xs, values, runs)
+                   if v is not None and r[axis].get('reference')]
+            if ref:
+                ax.plot([p[0] for p in ref], [p[1] for p in ref], marker, linestyle='none',
+                        markersize=8, markerfacecolor='white', markeredgecolor=color,
+                        markeredgewidth=2, zorder=3,
+                        label=f"{'Range' if key == 'range' else 'StdDev'} 참고 (1 Repeat)")
             if spec is not None:
                 ax.axhline(spec, color=color, linestyle='--', linewidth=1,
                            label=f"Spec {'Range' if key == 'range' else 'StdDev'} {spec}")

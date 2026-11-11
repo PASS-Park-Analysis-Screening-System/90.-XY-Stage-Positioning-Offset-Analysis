@@ -6,9 +6,12 @@ import traceback
 from core.tiff_loader import load_tiff
 
 
-def find_tiffs_for_row(round_path, lot_name, site_id):
+def find_tiffs_for_row(round_path, lot_name, site_id, self_lot=False):
     """site_id를 포함하는 TIFF 파일을 해당 Lot 폴더에서 탐색한다 (작업 스레드에서 부른다).
 
+    self_lot: 회차 폴더 자체가 Lot이다 (사용자가 Lot 폴더 하나를 고른 경우). 그때만 회차 폴더를
+    바로 쓴다. 아니면 하위 폴더에서 이름이 같은 Lot을 먼저, 그다음 이름이 겹치는 Lot을 찾는다
+    (회차 폴더 '1' 안의 Lot '1'처럼 이름이 같아도 하위 폴더가 Lot이다).
     Debug/Capture 하위폴더는 제외하고 루트 파일만 검색합니다.
     os.scandir은 목록과 함께 파일·폴더 여부를 주므로 항목마다 따로 묻지 않는다
     (네트워크 폴더는 TIFF가 40개 넘게 있어 그만큼 왕복이 늘었다).
@@ -22,14 +25,18 @@ def find_tiffs_for_row(round_path, lot_name, site_id):
     except (OSError, TypeError, ValueError):
         return [], '', "TIFF 탐색 실패: round_path 없음"
 
-    # ① lot_name으로 해당 Lot 폴더 찾기. 고른 폴더 자체가 Lot이면(Lot 1개) 그 폴더다
-    lot_folder = None
-    if os.path.basename(os.path.normpath(round_path)) == lot_name:
-        lot_folder = round_path
-    for name, folder in ([] if lot_folder else round_entries):
-        if folder and (name == lot_name or lot_name in name or name in lot_name):
+    # ① lot_name으로 해당 Lot 폴더 찾기: 같은 이름 먼저, 그다음 이름이 겹치는 폴더
+    lot_folder = round_path if self_lot else None
+    folders = [] if self_lot else [name for name, folder in round_entries if folder]
+    for name in folders:
+        if name == lot_name:
             lot_folder = os.path.join(round_path, name)
             break
+    else:
+        for name in folders:
+            if lot_name in name or name in lot_name:
+                lot_folder = os.path.join(round_path, name)
+                break
     if not lot_folder:
         lot_folder = round_path
 
@@ -54,16 +61,17 @@ class TiffLoadThread(QThread):
     """더블클릭한 행의 TIFF를 찾고 읽는다. 네트워크 폴더에서 화면이 멈추지 않게 한다."""
     done = Signal(object)
 
-    def __init__(self, round_path, lot_name, site_id, parent=None):
+    def __init__(self, round_path, lot_name, site_id, parent=None, self_lot=False):
         super().__init__(parent)
         self.round_path, self.lot_name, self.site_id = round_path, lot_name, site_id
+        self.self_lot = self_lot
 
     def run(self):
         out = {'lot_name': self.lot_name, 'site_id': self.site_id, 'results': [],
                'failures': [], 'error': '', 'no_pspylib': False}
         try:
             out['matched'], out['lot_folder'], out['message'] = find_tiffs_for_row(
-                self.round_path, self.lot_name, self.site_id)
+                self.round_path, self.lot_name, self.site_id, self_lot=self.self_lot)
             if out['matched']:
                 try:
                     import pspylib.tiff.reader  # noqa: F401
@@ -97,8 +105,11 @@ class TiffMixin:
             return
 
         round_path = ''
+        self_lot = False
         if 0 <= self.current_recipe_idx < len(self.recipe_results):
-            round_path = self.recipe_results[self.current_recipe_idx].get('round_path', '')
+            current = self.recipe_results[self.current_recipe_idx]
+            round_path = current.get('round_path', '')
+            self_lot = bool(current.get('self_lot'))
         if not round_path:
             self.logger.warn("TIFF 탐색 실패: round_path 없음")
             self.statusBar().showMessage(f"⚠ TIFF 없음: {lot_name}/{site_id} (log 확인)")
@@ -106,7 +117,7 @@ class TiffMixin:
 
         # 폴더 목록과 TIFF 읽기는 작업 스레드가 한다 (네트워크 폴더에서 화면이 멈추지 않게)
         self.statusBar().showMessage(f"TIFF 찾는 중... {lot_name}/{site_id}")
-        thread = TiffLoadThread(round_path, lot_name, site_id)
+        thread = TiffLoadThread(round_path, lot_name, site_id, self_lot=self_lot)
         # 읽는 사이 다시 스캔하면 결과가 바뀐다. 그때의 세대를 붙여 늦은 결과를 버린다
         thread.generation = getattr(self, '_scan_generation', 0)
         thread.done.connect(self._on_tiff_loaded)

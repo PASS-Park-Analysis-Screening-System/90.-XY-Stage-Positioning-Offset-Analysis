@@ -12,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core.checklist import build_checklist, compute_axis_metrics
-from core.die_analysis import (DIE_POSITIONS, compute_affine_transform,
+from core.die_analysis import (DIE_PITCH_MM, DIE_POSITIONS, compute_affine_transform,
                                compute_deviation_matrix, extract_die_positions,
                                filter_stabilization_die, get_die_position)
 from core.exporter import (collect_anomalies, export_combined_csv,
@@ -269,7 +269,7 @@ def _affine_inputs(tx, ty, sx, sy, theta):
     for site in SITES[1:]:
         die = int(site[:4])
         ix, iy = _site_xy(site)
-        x_mm, y_mm = ix * 10.0 + 4.3, iy * 10.0 + 5.7
+        x_mm, y_mm = ix * DIE_PITCH_MM + 4.3, iy * DIE_PITCH_MM + 5.7   # 실데이터 격자 간격
         x_um, y_um = x_mm * 1000.0, y_mm * 1000.0
         positions[die - 1] = (x_mm, y_mm)
         x_stats.append({'die': f'Die{die}', 'avg': tx + sx * x_um - theta * y_um})

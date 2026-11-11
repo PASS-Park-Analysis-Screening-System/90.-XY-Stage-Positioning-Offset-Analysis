@@ -19,8 +19,9 @@ import math
 
 from core.checklist import (EXPECTED_DIES, EXPECTED_REPEATS, analysis_warnings,
                             combine_verdicts, compute_axis_metrics, cpk_text, result_text,
-                            summarize_runs)
+                            summarize_runs, verdict_reference)
 from core.die_analysis import (REFERENCE_LABEL, compute_affine_transform, compute_deviation_matrix,
+                               is_reference_size,
                                extract_die_number, extract_die_positions,
                                filter_stabilization_die, stabilization_die)
 from core.statistics import filter_by_method, is_usable
@@ -543,8 +544,9 @@ def _systematic(a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
             if rng is None:
                 continue
             verdict = _would_pass(rng, std, spec_range, spec_stddev)
+            ref = is_reference_size(a.devs[axis])      # 같은 데이터라 1 Repeat이면 참고
             change = ('' if verdict is None or verdicts.get(axis) is None
-                      else f" (현재 {result_text(verdicts[axis])} → {result_text(verdict)})")
+                      else f" (현재 {result_text(verdicts[axis], ref)} → {result_text(verdict, ref)})")
             extra = f', 평면 피팅에서 빠진 Die {missing}개는 그대로' if missing else ''
             lines.append(f'- {axis} {title} (what-if 추정, 같은 데이터로 피팅한 값이라 낙관적) {DERIVED}: '
                          f'Range {rng:.3f} µm, StdDev {std:.3f} µm{change}{extra}')
@@ -623,21 +625,28 @@ def _spatial(a: _Analysis) -> list:
                   key=lambda x: int(x[3:]))
     stats = {axis: {d['die']: d for d in devs[axis]['die_stats']} for axis in AXES}
     zone, radius, rule = _zones(a, dies)
+    # Repeat(Lot)이 1개면 Die마다 값이 하나라 Die 안 StdDev·Range를 계산하지 않는다 (0.000 아님)
+    single = {axis: len(devs[axis]['repeat_labels']) < 2 for axis in AXES}
     rows = []
     for d in dies:
         x, y = coords.get(d, (None, None))
         row = [d, _num(x, '.1f'), _num(y, '.1f'), _num(radius.get(d), '.1f'), zone.get(d, '—')]
         for axis in AXES:
             s = stats[axis].get(d)
-            row += ([_num(s['avg'], '.3f', True), _num(s['stddev']), _num(s['range'])]
-                    if s else ['—'] * 3)
+            if s and single[axis]:
+                row += [_num(s['avg'], '.3f', True), '—', '—']
+            else:
+                row += ([_num(s['avg'], '.3f', True), _num(s['stddev']), _num(s['range'])]
+                        if s else ['—'] * 3)
             row.append(_num(a.residual(axis, d), '.3f', True))
         rows.append(row)
     lines = ['#### 공간(Die)',
              _table(['Die', 'X (mm)', 'Y (mm)', '반경 (mm)', '구역',
                      'X 평균 편차', 'X StdDev', 'X Range', f'X 평면 잔차 {DERIVED}',
                      'Y 평균 편차', 'Y StdDev', 'Y Range', f'Y 평면 잔차 {DERIVED}'], rows),
-             f'단위 µm. 평면 잔차 = Die 평균 편차 − 평면 피팅값. 구역 규칙: {rule}.', '']
+             f'단위 µm. 평면 잔차 = Die 평균 편차 − 평면 피팅값. 구역 규칙: {rule}.'
+             + ''.join(f' {axis} StdDev·Range(Die 안): {SINGLE_LOT_TEXT}.'
+                       for axis in AXES if single[axis] and stats[axis]), '']
     for axis in AXES:
         cells = a.cells(axis)
         if not cells:
@@ -666,9 +675,11 @@ def _spatial(a: _Analysis) -> list:
             for z in ('Center', 'Edge'):
                 members = [stats[axis][d] for d in stats[axis] if zone.get(d) == z]
                 if members:
+                    std_part = ('' if single[axis] else
+                                f', 평균 StdDev {sum(m["stddev"] for m in members) / len(members):.3f} µm')
                     parts.append(f'{z} {len(members)}개: 평균 |편차| '
-                                 f'{sum(abs(m["avg"]) for m in members) / len(members):.3f} µm, '
-                                 f'평균 StdDev {sum(m["stddev"] for m in members) / len(members):.3f} µm')
+                                 f'{sum(abs(m["avg"]) for m in members) / len(members):.3f} µm'
+                                 + std_part)
             lines.append(f'- {axis} Edge/Center {DERIVED}: ' + ' / '.join(parts))
     return lines
 
@@ -770,7 +781,7 @@ def _quality(result, a: _Analysis, spec_range, spec_stddev, verdicts) -> list:
             rng, std, n = a.whatif_no_outliers(axis)
             verdict = _would_pass(rng, std, spec_range, spec_stddev)
             lines.append(f'  - 이상치 셀 {n}개를 뺀다면 {axis} (what-if) {DERIVED}: Range {_num(rng)} µm, '
-                         f'StdDev {_num(std)} µm → {result_text(verdict)}'
+                         f'StdDev {_num(std)} µm → {result_text(verdict, is_reference_size(a.devs[axis]))}'
                          f"{' (판정이 바뀜)' if verdict is True else ''}")
     failed = result.get('failed_measurements') or {}
     lines.append(f"- 측정 실패: {failed['text'] if failed.get('count') else '없음'}")
@@ -836,8 +847,7 @@ def _run_comparison(results, spec_limits, spec_deviation) -> str:
                                  f"{af['dx_dy_urad'] + af['dy_dx_urad']:+.2f}",
                                  f"{af['residual_x']:.3f}", f"{af['residual_y']:.3f}",
                                  f'{_num(wx[0])} / {_num(wx[1])}', f'{_num(wy[0])} / {_num(wy[1])}',
-                                 result_text(combine_verdicts(_would_pass(wx[0], wx[1], spec_range, spec_stddev),
-                                                     _would_pass(wy[0], wy[1], spec_range, spec_stddev)))])
+                                 _whatif_text(a, (wx, wy), spec_range, spec_stddev)])
             else:
                 sys_rows.append([run['run']] + ['—'] * 11)
             if prev is not None:
@@ -847,11 +857,15 @@ def _run_comparison(results, spec_limits, spec_deviation) -> str:
                 deltas.append([f"{prev['run']} → {run['run']}",
                                d('x', 'range'), d('x', 'stddev'), d('x', 'avg', '.1f'),
                                d('y', 'range'), d('y', 'stddev'), d('y', 'avg', '.1f')])
-                if prev['result'] is not run['result']:
+                # 참고 판정 여부가 바뀌어도 판정이 바뀐 것이다 (FAIL 참고 → FAIL)
+                if ((prev['result'], bool(prev.get('reference')))
+                        != (run['result'], bool(run.get('reference')))):
                     changes.append(f"- {prev['run']} → {run['run']}: "
-                                   f"{result_text(prev['result'])} → {result_text(run['result'])}")
+                                   f"{result_text(prev['result'], prev.get('reference'))} → "
+                                   f"{result_text(run['result'], run.get('reference'))}")
             prev = run
-        fails = [run['run'] for run in runs if run['result'] is False]
+        fails = [run['run'] + (f' ({REFERENCE_LABEL})' if run.get('reference') else '')
+                 for run in runs if run['result'] is False]
         blocks += ['', f"### {_name(r)} (회차 {len(runs)}개, 선택 {r.get('round', '')})",
                    _table(['회차', 'Lot 수', 'X Range', 'X StdDev', 'X Avg (nm)', 'Y Range',
                            'Y StdDev', 'Y Avg (nm)', 'Cpk X/Y', '판정', '첫 리핏 제외'], rows),
@@ -878,6 +892,16 @@ def _run_comparison(results, spec_limits, spec_deviation) -> str:
         return ''
     return '\n'.join(['## 회차 비교', '회차별 값은 결과 요약과 같은 분석 기준. ⚠는 경고가 있는 회차.']
                      + blocks).rstrip()
+
+
+def _whatif_text(a: _Analysis, whatifs, spec_range, spec_stddev) -> str:
+    """회차별 what-if 판정 (X, Y 합침). 1 Repeat 축은 참고 판정 규칙(verdict_reference)을 따른다."""
+    axes = []
+    for axis, (rng, std, _missing) in zip(AXES, whatifs):
+        verdict = _would_pass(rng, std, spec_range, spec_stddev)
+        axes.append({'result': verdict,
+                     'reference': verdict is not None and is_reference_size(a.devs[axis])})
+    return result_text(combine_verdicts(*(m['result'] for m in axes)), verdict_reference(*axes))
 
 
 def _change_log(results) -> str:
@@ -1029,7 +1053,7 @@ def _request(results, spec_limits, spec_deviation) -> str:
                    for r in results for axis in AXES)
     multi_run = any(len(_runs_of(r)) >= 2 for r in results)
     reference = [_name(r) for r in results
-                 if any(m['reference'] for m in _metrics(r, spec_limits, spec_deviation).values())]
+                 if verdict_reference(*_metrics(r, spec_limits, spec_deviation).values())]
     if any_fail:
         goals = ['1. 어떤 Workflow·축의 어떤 Spec 항목(Range, StdDev)이 얼마나(µm, Spec 대비 %) '
                  '초과했는지 정리해 주세요.',

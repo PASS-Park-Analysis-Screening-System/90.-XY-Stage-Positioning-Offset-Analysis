@@ -675,30 +675,67 @@ def is_measured_lot(lot: dict) -> bool:
     return bool(lot.get('x_csv') or lot.get('y_csv'))
 
 
-def scan_self_lot(path: str, session: Optional[ScanSession] = None) -> list:
+def own_measurement_csv(path: str, session: Optional[ScanSession] = None) -> Optional[str]:
+    """폴더 바로 안에 있는 X/Y 측정 CSV 이름 (*_X_UL.csv 먼저). 없거나 읽지 못하면 None."""
+    try:
+        names = [name for name, folder in list_dir(path, session) if not folder]
+    except OSError:
+        return None
+    own = sorted(n for n in names if n.upper().endswith(('_X_UL.CSV', '_Y_UL.CSV')))
+    return own[0] if own else None
+
+
+def has_measured_sublots(path: str, session: Optional[ScanSession] = None,
+                         failures: Optional[list] = None) -> bool:
+    """바로 아래 하위 폴더 중 X/Y 측정 CSV가 있는 Lot이 있는가."""
+    return any(is_measured_lot(lot) for lot in scan_lot_folders(path, session, failures))
+
+
+def scan_self_lot(path: str, session: Optional[ScanSession] = None,
+                  failures: Optional[list] = None) -> list:
     """고른 폴더 자체가 Lot 폴더(X/Y 측정 CSV가 바로 있는 폴더)면 그 폴더 하나를 Lot 목록으로.
 
     실데이터의 Lot 폴더(예: 46LKD105SJE61)에는 *_X_UL.csv, *_Y_UL.csv, TIFF가 바로 있고
     Capture, Debug, Info, Log 하위 폴더가 있다. Info와 Debug/Analysis의 CSV도 같은
     'Lot ID' 메타를 가져 하위 폴더 쪽을 Lot으로 오인했다 (측정 CSV가 없어 0행이 됐다).
-    측정 CSV가 없거나 읽지 못하면 빈 목록이다 (보통 구조로 다시 찾는다).
+    측정 CSV가 없으면 빈 목록이다 (보통 구조로 다시 찾는다).
+    폴더 자체에 측정 CSV가 있어도 바로 아래에 측정 Lot 폴더가 있으면 Lot 묶음이다 (빈 목록).
+    읽지 못하면 빈 목록이고, 오류는 failures와 session.errors에 남긴다 (scan_lot_folders와 같다).
     """
     if not path:
         return []
     key = session_key(path) if session is not None else None
     if key is not None and key in session.own:
         return _copy_lots(session.own[key])
-    try:
-        names = [name for name, folder in list_dir(path, session) if not folder]
-    except OSError:
+
+    def report(error):
+        message = f'{type(error).__name__}: {error}'
+        logging.warning("폴더 확인 실패 (%s): %s", message, path)
+        if failures is not None:
+            failures.append((path, message))
+        if session is not None:
+            session.errors[path] = message
+
+    listing = _with_retry(lambda: list_dir(path, session), session)
+    if isinstance(listing, OSError):
+        if not isinstance(listing, (FileNotFoundError, NotADirectoryError)):
+            report(listing)
         return []
     # 측정 CSV 이름이 없으면 파일을 열지 않는다 (네트워크 폴더에서 루트마다 읽지 않게)
-    if not any(n.upper().endswith(('_X_UL.CSV', '_Y_UL.CSV')) for n in names):
+    if own_measurement_csv(path, session) is None:
         if key is not None:
             session.own[key] = []
         return []
+    sub_failures = []
+    if has_measured_sublots(path, session, sub_failures):
+        if key is not None and not sub_failures:
+            session.own[key] = []
+        return []
+    if failures is not None:
+        failures.extend(sub_failures)
     info = _with_retry(lambda: _is_data_folder(path, session), session)
     if isinstance(info, OSError):
+        report(info)
         return []
     lots = []
     if info and is_measured_lot(info):
@@ -706,7 +743,9 @@ def scan_self_lot(path: str, session: Optional[ScanSession] = None) -> list:
         lot['index'] = 1
         lot.pop('head', None)
         lots.append(lot)
-    if key is not None:
+    if session is not None:
+        session.errors.pop(path, None)
+    if key is not None and not sub_failures:
         session.own[key] = _copy_lots(lots)
     return lots
 
@@ -1049,7 +1088,7 @@ def batch_load_rows(root_path: str,
     """
     scan_failures = []
     if self_lot:
-        lots = scan_self_lot(root_path, session)
+        lots = scan_self_lot(root_path, session, scan_failures)
     else:
         lots = scan_lot_folders(root_path, session, scan_failures)
     # 확인하지 못한 Lot 폴더는 결과에서 빠졌을 수 있다. 조용히 넘기면 정상처럼 보인다

@@ -15,7 +15,7 @@ from core.statistics import is_usable
 
 # 21 Die 표준 좌표 (Site 좌표, 1칸 = DIE_PITCH_MM) — fallback 용.
 # 순서는 Site 0002 ~ 0022다. Site 0001은 안정화 측정이라 Site 0002와 같은 (0, 0)에 있다.
-DIE_PITCH_MM = 10.0
+DIE_PITCH_MM = 20.0   # 서버 실측 150개 CSV: Site 격자 1칸 = 20 mm (Site X 2 → 40 mm)
 STABILIZATION_DIE_IDX = 0   # Site 0001
 DIE_POSITIONS = [
     (0, 0),   (2, 0),   (4, 0),   (6, 0),   (2, 2),

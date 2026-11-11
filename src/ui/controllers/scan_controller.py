@@ -6,7 +6,8 @@ import time
 import traceback
 from core.csv_loader import ScanSession, is_dir, scan_self_lot
 from core.recipe_scanner import (build_recipe, compare_recipes, normalize_spec_names,
-                                 recipes_from_mapping, scan_recipes)
+                                 recipes_from_mapping, scan_recipes, stray_csv_note,
+                                 summary_only_notes)
 from core.workflow_map import common_source_folder, compute_prefill
 from ui.dialogs.workflow_folder_dialog import WorkflowFolderDialog
 from ui.workers.data_loader_thread import DataLoaderThread
@@ -30,6 +31,7 @@ FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습�
                     "어느 Workflow의 데이터인지 지정해 주세요.")
 SELF_LOT_REASON = ("선택한 폴더가 Lot 폴더입니다 (Lot 1개, X/Y 측정 CSV가 바로 있음). "
                    "어느 Workflow의 데이터인지 지정해 주세요.")
+SELF_LOT_NO_SPEC = "선택한 폴더는 Lot 폴더입니다 — Spec 설정 후 Workflow별 선택으로 지정하세요"
 
 
 def detect_scan_target(folder, spec_keys, remembered, session):
@@ -37,39 +39,55 @@ def detect_scan_target(folder, spec_keys, remembered, session):
 
     Returns:
         {'action': 'invalid'}                 — 폴더가 없다
-        {'action': 'none'}                    — Recipe 구조가 없다
+        {'action': 'none', 'message': str}    — Recipe 구조가 없다 (message는 이유, 없을 수 있음)
         {'action': 'load', 'recipes': [...]}  — 그대로 로드한다
         {'action': 'dialog', 'reason': str, 'mismatched': [...], 'prefill': {...}}
             — Workflow별 폴더 대화상자를 연다 (초기값도 여기서 계산해 대화상자가 바로 뜬다)
+        'notes': [(수준 'warn'|'info', 문구), ...] — System Log에 남길 안내 (없을 수 있음)
     """
     if not is_dir(folder, session):
         return {'action': 'invalid'}
     mismatched = []
-    # 고른 폴더 자체가 Lot 폴더면 하위 폴더(Capture, Debug, Info, Log)를 Recipe로 찾지 않는다.
-    # Info·Debug/Analysis의 CSV는 같은 메타를 가져 0행 Recipe가 됐다
-    if scan_self_lot(folder, session):
-        if not spec_keys:
-            return {'action': 'none'}
-        return {'action': 'dialog', 'reason': SELF_LOT_REASON, 'mismatched': [],
-                'prefill': compute_prefill(spec_keys, folder, remembered, session)}
-    recipes = scan_recipes(folder, session=session)
+    dropped = []
+    recipes = scan_recipes(folder, session=session, notes=dropped)
+    notes = [('info', text) for text in dropped]
     if not recipes:
+        # 고른 폴더 자체가 Lot 폴더면(측정 Lot 하위 폴더가 없을 때만) Lot 1개로 본다.
+        # 하위의 Capture, Debug, Info, Log는 Recipe가 아니다 (Info·Debug/Analysis는 메타만 같다)
+        if scan_self_lot(folder, session):
+            if not spec_keys:
+                return {'action': 'none', 'message': SELF_LOT_NO_SPEC}
+            return {'action': 'dialog', 'reason': SELF_LOT_REASON, 'mismatched': [],
+                    'prefill': compute_prefill(spec_keys, folder, remembered, session)}
         # 고른 폴더 자체가 Lot 묶음이면(예: 1..14 Lot만 있는 Vision Pattern 폴더)
         # Workflow를 지정해 분석할 수 있게 한다
-        if not (spec_keys and build_recipe(folder, session=session) is not None):
-            return {'action': 'none'}
+        flat = build_recipe(folder, session=session)
+        stray = stray_csv_note(folder, session) if flat is not None else None
+        if flat is None:
+            notes += [('info', text)
+                      for text in summary_only_notes(folder, session, include_subs=False)]
+        elif stray:
+            notes.append(('warn', stray))
+        if not (spec_keys and flat is not None):
+            return {'action': 'none', 'notes': notes}
         reason = FLAT_ROOT_REASON
     else:
+        stray = stray_csv_note(folder, session)
+        if stray:
+            notes.append(('warn', stray))
         # ─── 표준 Recipe 이름 검증 (Spec 설정 기준) ───
         # 일치하면 short_name을 정확한 Spec 키로 맞춘다 (판정·Cpk는 키를 정확히 찾는다)
         mismatched = normalize_spec_names(recipes, spec_keys) if spec_keys else []
         if not mismatched:
-            return {'action': 'load', 'recipes': recipes}
+            return {'action': 'load', 'recipes': recipes, 'notes': notes}
         mis_list = '\n'.join(f"  • {m}" for m in mismatched)
         reason = ("폴더명이 Spec 이름과 달라 Workflow별로 데이터 폴더를 지정해 주세요.\n"
                   f"Spec 이름과 다른 폴더:\n{mis_list}")
-    return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched,
+    return {'action': 'dialog', 'reason': reason, 'mismatched': mismatched, 'notes': notes,
             'prefill': compute_prefill(spec_keys, folder, remembered, session)}
+
+
+EMPTY_DIALOG_LINES = 8     # 0행 알림 창에 보일 Workflow 줄 수 (나머지는 '외 N개', System Log에 전부)
 
 
 def _detail(result) -> str:
@@ -331,6 +349,11 @@ class ScanMixin:
         """[화면 스레드] 폴더 확인 결과에 따라 대화상자를 열거나 로드를 시작한다."""
         for path, message in sorted(session.errors.items()):
             self.logger.warn(f"  ⚠ Lot 폴더 확인 실패 (로드할 때 다시 확인합니다): {path} — {message}")
+        for level, text in result.get('notes') or []:
+            if level == 'warn':
+                self.logger.warn(f"  ⚠ {text}")
+            else:
+                self.logger.info(f"  ℹ {text}")
         action = result['action']
         if action == 'invalid':
             if startup:
@@ -342,9 +365,10 @@ class ScanMixin:
             QMessageBox.warning(self, "경고", "유효한 폴더를 선택해주세요.")
             return
         if action == 'none':
-            self.logger.warn("Recipe 구조를 찾지 못했습니다.")
+            message = result.get('message') or "Recipe 구조를 찾지 못했습니다."
+            self.logger.warn(message)
             self.statusBar().showMessage("Recipe 구조 없음")
-            QMessageBox.information(self, "알림", "Recipe 구조를 찾지 못했습니다.")
+            QMessageBox.information(self, "알림", message)
             return
         if action == 'dialog':
             if result['mismatched']:
@@ -425,6 +449,8 @@ class ScanMixin:
 
         for r in recipes:
             self.logger.info(f"  {r['short_name']} ← {r['source_label']} ({r['source_path']})")
+            for note in r.get('notes') or []:
+                self.logger.warn(f"  ⚠ {r['short_name']}: {note}")
         source = common_source_folder([r['source_path'] for r in recipes])
         self._start_load(recipes, source, source_label='Workflow별 선택', session=session,
                          workflow_map=workflow_map)
@@ -688,6 +714,8 @@ class ScanMixin:
                           f"(전체 {len(results)}개 중) — 위 ❌ 줄 참고")
         head = ("분석할 데이터를 하나도 읽지 못했습니다." if total == 0
                 else "분석할 수 있는 행이 0개인 Workflow가 있습니다.")
+        if len(lines) > EMPTY_DIALOG_LINES:     # 줄이 많으면 창이 화면을 넘는다
+            lines = lines[:EMPTY_DIALOG_LINES] + [f"… 외 {len(lines) - EMPTY_DIALOG_LINES}개"]
         box = QMessageBox(QMessageBox.Icon.Warning, "데이터 없음",
                           head + "\n\n" + "\n".join(lines)
                           + "\n\n폴더 구조를 확인하세요 (System Log 참고).", parent=self)
@@ -768,7 +796,10 @@ class ScanMixin:
         # 경로 입력란은 스캔 뒤에 바뀔 수 있다. 내보내기는 이 값으로 출처를 적는다.
         self._scanned_folder = self._loader_thread.folder
         total = sum(len(r.get('raw_data', [])) for r in results)
-        self.logger.ok(f"✅ 전체 로드 완료: {total}개 데이터 ({elapsed:.1f}초 소요)")
+        if total:
+            self.logger.ok(f"✅ 전체 로드 완료: {total}개 데이터 ({elapsed:.1f}초 소요)")
+        else:
+            self.logger.warn(f"⚠ 전체 로드 완료: 0개 데이터 ({elapsed:.1f}초 소요)")
 
         self._log_data_quality(results)
         self._log_runs(results)

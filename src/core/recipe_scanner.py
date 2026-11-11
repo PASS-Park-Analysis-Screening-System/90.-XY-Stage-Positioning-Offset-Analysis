@@ -19,7 +19,7 @@ import logging
 import traceback
 import collections
 from core.csv_loader import (scan_lot_folders, scan_self_lot, is_measured_lot, batch_load,
-                             is_dir, list_dir, session_key, ScanCancelled)
+                             is_dir, list_dir, own_measurement_csv, session_key, ScanCancelled)
 from core import (compute_statistics, compute_trend,
                       detect_outliers_by_axis, compute_repeatability,
                       compute_group_statistics, filter_by_method,
@@ -77,6 +77,39 @@ def default_round_name(round_names, preferred: str = '1st'):
 SELF_LOT_ROUND = '(root)'
 
 
+def stray_csv_note(path: str, session=None):
+    """Lot 묶음 폴더 자체에도 측정 CSV가 있으면 무시한다는 안내 문구. 없으면 None."""
+    own = own_measurement_csv(path, session)
+    if own is None:
+        return None
+    return f'폴더 자체에도 측정 CSV가 있어 무시함: {os.path.join(path, own)}'
+
+
+def summary_only_notes(path: str, session=None, include_subs: bool = True) -> list:
+    """Lot처럼 보이지만 X/Y 측정 CSV가 없는 폴더만 있어 라운드가 되지 못한 폴더의 안내 문구.
+
+    path 자체와(include_subs면) 그 바로 아래 폴더를 본다 (_find_rounds와 같은 범위).
+    세션이 있으면 다시 읽지 않는다.
+    """
+    folders = [path]
+    if include_subs:
+        try:
+            folders += [os.path.join(path, n) for n, folder in list_dir(path, session) if folder]
+        except OSError:
+            pass
+    notes = []
+    for folder in folders:
+        # 측정 CSV가 바로 있는 폴더는 Lot이다. 그 안의 Info·Debug는 원래 있는 폴더라 알리지 않는다
+        if own_measurement_csv(folder, session) is not None:
+            continue
+        lots = scan_lot_folders(folder, session)
+        if lots and not any(is_measured_lot(lot) for lot in lots):
+            names = [lot['lot_name'] for lot in lots]
+            notes.append(f'측정 CSV(*_X_UL.csv, *_Y_UL.csv) 없는 폴더만 있어 제외: {folder} '
+                         f"({', '.join(names[:5])}{' 외' if len(names) > 5 else ''})")
+    return notes
+
+
 def _self_lot_rounds(path: str, session=None) -> list:
     """고른 폴더 자체가 Lot 폴더면 라운드 '(root)' 하나 (Lot = 그 폴더). 아니면 빈 목록."""
     if not scan_self_lot(path, session):
@@ -95,8 +128,9 @@ def _find_rounds(path: str, session=None) -> list:
     # 1차: Recipe 폴더 바로 아래에 Lot 폴더가 있는지 확인 (플랫 구조)
     #      서버 데이터: Recipe/Lot102, Recipe/Lot103, ...
     rounds = []
-    direct_lots = scan_lot_folders(path, session)
-    if any(is_measured_lot(lot) for lot in direct_lots):
+    # lot_count는 측정 CSV가 있는 Lot만 센다 (요약 전용 폴더는 Repeat이 아니다)
+    direct_lots = [lot for lot in scan_lot_folders(path, session) if is_measured_lot(lot)]
+    if direct_lots:
         rounds.append({
             'name': '(root)',
             'path': path,
@@ -108,8 +142,8 @@ def _find_rounds(path: str, session=None) -> list:
                       key=natural_key)
         for sub in subs:
             sub_path = os.path.join(path, sub)
-            lots = scan_lot_folders(sub_path, session)
-            if any(is_measured_lot(lot) for lot in lots):
+            lots = [lot for lot in scan_lot_folders(sub_path, session) if is_measured_lot(lot)]
+            if lots:
                 rounds.append({
                     'name': sub,
                     'path': sub_path,
@@ -146,6 +180,8 @@ def build_recipe(path: str, name: str = None, session=None, allow_self: bool = F
 
     if not rounds:
         return None
+    # 고른 폴더가 Lot 묶음인데 폴더 자체에도 측정 CSV가 있으면 그 CSV는 쓰지 않는다고 알린다
+    note = stray_csv_note(path, session) if allow_self and not own else None
 
     idx_match = re.match(r'^(\d+)', name)
 
@@ -160,15 +196,17 @@ def build_recipe(path: str, name: str = None, session=None, allow_self: bool = F
         'index': int(idx_match.group(1)) if idx_match else 0,
         'short_name': short,
         'rounds': rounds,
+        **({'notes': [note]} if note else {}),   # 안내가 있을 때만 (출력 형식 유지)
     }
 
 
-def scan_recipes(root_path: str, session=None) -> list:
+def scan_recipes(root_path: str, session=None, notes: list = None) -> list:
     """루트 폴더에서 Recipe 하위 구조 자동 탐지
 
     Args:
         root_path: 최상위 데이터 폴더 (예: ".../data")
         session: ScanSession — 읽은 결과를 대화상자·로드가 다시 쓴다
+        notes: 주면 측정 CSV 없는 폴더만 있어 뺀 하위 폴더 안내 문구가 쌓인다
 
     Returns:
         [{'name': '1. Vision Pattern Recognize', 'path': '...',
@@ -194,6 +232,9 @@ def scan_recipes(root_path: str, session=None) -> list:
             if not re.match(r'^\d+', name):
                 recipe['index'] = 10 ** 6 + len(recipes)
             recipes.append(recipe)
+        elif notes is not None and own_measurement_csv(recipe_path, session) is None:
+            # Lot 폴더(측정 CSV가 바로 있음)는 Recipe가 아니어도 정상이다 (Lot 묶음 루트)
+            notes.extend(summary_only_notes(recipe_path, session))
 
     recipes.sort(key=lambda x: x['index'])
     # 정렬 후 1..N 연속 번호로 재부여 → Step 라벨 유일성·연속성 보장
@@ -392,6 +433,7 @@ def load_recipe_data(recipe: dict, round_name: str = '1st',
         'short_name': recipe.get('short_name', recipe['name']),
         'round': round_info['name'],
         'round_path': round_info['path'],
+        'self_lot': bool(round_info.get('self_lot')),   # TIFF 찾기: 회차 폴더가 곧 Lot
         'raw_data': data,
         'load_errors': load_errors,
         'data_warnings': data_warnings,

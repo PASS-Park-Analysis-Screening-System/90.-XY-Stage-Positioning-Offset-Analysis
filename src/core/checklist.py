@@ -137,6 +137,13 @@ def result_text(result, reference: bool = False) -> str:
     return f'{text} {REFERENCE_LABEL}' if reference else text
 
 
+def basis_text(result, reference: bool = False) -> str:
+    """판정 기준 칸 (Excel): 참고 판정 '참고 (1 Repeat)', 정규 판정 '정규', 판정 없음 '—'."""
+    if result is None:
+        return '—'
+    return REFERENCE_LABEL if reference else '정규'
+
+
 def cpk_text(cpk, reference: bool = False, fmt: str = '.2f') -> str:
     """Cpk 표시 문자열: 판정 없음 '—', 계산 불가 'N/A', 참고 판정이면 '(참고)'를 붙인다."""
     if cpk is None:
@@ -152,6 +159,20 @@ def combine_verdicts(*results):
     if any(r is None for r in results):
         return None
     return True
+
+
+def verdict_reference(*axes) -> bool:
+    """축별 지표(compute_axis_metrics 결과)를 합친 판정이 참고 판정인가 (단일 규칙).
+
+    합친 판정이 FAIL이면 FAIL인 축이 모두 참고일 때만 참고다 (정규 축의 FAIL은 확정 FAIL).
+    합친 판정이 PASS이면 참고 축이 하나라도 있으면 참고다. 판정이 없으면 참고도 아니다.
+    """
+    combined = combine_verdicts(*(m['result'] for m in axes))
+    if combined is False:
+        return all(m['reference'] for m in axes if m['result'] is False)
+    if combined is True:
+        return any(m['reference'] for m in axes)
+    return False
 
 
 def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict = None) -> list:
@@ -176,7 +197,7 @@ def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict 
             'x': axes['X'],
             'y': axes['Y'],
             'result': combine_verdicts(axes['X']['result'], axes['Y']['result']),
-            'reference': axes['X']['reference'] or axes['Y']['reference'],
+            'reference': verdict_reference(axes['X'], axes['Y']),
             'warnings': analysis_warnings(run),
         })
     return summary

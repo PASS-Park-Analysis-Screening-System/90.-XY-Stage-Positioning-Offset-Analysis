@@ -28,3 +28,16 @@ def _contrast_fg(bg: QColor) -> QColor:
     """배경색 명도에 따라 검은색/흰색 글자 선택"""
     lum = 0.299*bg.red() + 0.587*bg.green() + 0.114*bg.blue()
     return QColor('#1e1e2e') if lum > 140 else QColor('#ffffff')
+
+
+def verdict_color(result, reference: bool = False):
+    """판정 색 (단일 규칙): PASS 초록, 참고 PASS 주황, FAIL·참고 FAIL 빨강. 판정 없음은 None.
+
+    카드·Step 버튼·Summary·회차 비교 표가 같은 규칙을 쓴다 (1 Repeat 참고 판정).
+    """
+    from ui.theme import GREEN, ORANGE, RED
+    if result is None:
+        return None
+    if not result:
+        return RED
+    return ORANGE if reference else GREEN

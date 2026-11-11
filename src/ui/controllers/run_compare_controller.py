@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QTableWidgetItem
 import charts as viz
 from core.checklist import cpk_text, result_text
 from core.recipe_scanner import compare_recipes, run_view
-from ui.theme import BG, GREEN, RED, ORANGE
+from ui.theme import BG, ORANGE
+from ui.color_helpers import verdict_color
 from ui.controllers.step_controller import wait_cursor
 
 
@@ -124,7 +125,8 @@ class RunCompareMixin:
                     item.setToolTip('\n'.join(run['warnings'][:8]))
                     item.setForeground(QBrush(QColor(ORANGE)))
                 if col == len(cells) - 1 and run['result'] is not None:
-                    item.setBackground(QBrush(QColor(GREEN if run['result'] else RED)))
+                    item.setBackground(QBrush(QColor(verdict_color(run['result'],
+                                                                   run.get('reference')))))
                     item.setForeground(QBrush(QColor(BG)))
                 table.setItem(row, col, item)
 

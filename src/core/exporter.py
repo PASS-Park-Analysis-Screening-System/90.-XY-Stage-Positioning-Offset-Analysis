@@ -7,7 +7,8 @@ import csv
 import collections
 from typing import Optional
 
-from core.checklist import basis_warnings, build_checklist, cpk_text, result_text, summarize_runs
+from core.checklist import (basis_text, basis_warnings, build_checklist, result_text,
+                            summarize_runs)
 from core.recipe_scanner import run_label
 from core.die_analysis import (compute_deviation_matrix, filter_stabilization_die,
                                extract_die_number, is_analysis_row, stabilization_die)
@@ -438,13 +439,12 @@ def write_checklist_sheets(wb, recipe_results: list, spec_limits: dict = None,
     _write_table(
         ws,
         ['Recipe', 'Round', 'Axis', 'Die', 'Repeat', 'Avg (nm)', 'Dev Range (µm)',
-         'Dev StdDev (µm)', 'Cpk', 'Result', 'Spec Range (µm)', 'Spec StdDev (µm)'],
+         'Dev StdDev (µm)', 'Cpk', 'Result', '판정 기준', 'Spec Range (µm)', 'Spec StdDev (µm)'],
         [[r['recipe'], r['round'], r['axis'], r['die_count'], r['repeat_count'],
           shown(r['avg']), shown(r['range']), shown(r['stddev']),
-          # 1 Repeat 참고 판정은 숫자 대신 '1.23 (참고)' 문자열로 적는다 (참고임이 칸에 남게)
-          (cpk_text(r['cpk'], True) if r['reference']
-           else '—' if r['cpk'] is None else r['cpk'] if r['cpk'] == r['cpk'] else 'N/A'),
-          result_text(r['result'], r['reference']),
+          # Cpk는 숫자 그대로 둔다. 1 Repeat 참고 판정은 '판정 기준' 칸에 적는다
+          '—' if r['cpk'] is None else r['cpk'] if r['cpk'] == r['cpk'] else 'N/A',
+          result_text(r['result'], r['reference']), basis_text(r['result'], r['reference']),
           r['spec_range'], r['spec_stddev']] for r in rows],
         st, highlight=lambda v: str(v[9]).startswith('FAIL'))
 
@@ -513,7 +513,7 @@ def write_basis_sheet(wb, recipe_results: list, position: int) -> None:
 
 RUN_COMPARISON_HEADERS = ['회차', 'Lot 수', 'X Range (µm)', 'X StdDev (µm)', 'X Avg (nm)',
                           'Y Range (µm)', 'Y StdDev (µm)', 'Y Avg (nm)', 'Cpk X', 'Cpk Y',
-                          '판정', '경고']
+                          '판정', '판정 기준', '경고']
 
 
 def write_run_comparison_sheet(wb, recipe_results: list, spec_limits: dict = None,
@@ -550,9 +550,9 @@ def write_run_comparison_sheet(wb, recipe_results: list, spec_limits: dict = Non
             values = [run['run'], run['lot_count'],
                       shown(x['range']), shown(x['stddev']), shown(x['avg']),
                       shown(y['range']), shown(y['stddev']), shown(y['avg']),
-                      cpk_text(x['cpk'], True) if x['reference'] else shown(x['cpk']),
-                      cpk_text(y['cpk'], True) if y['reference'] else shown(y['cpk']),
+                      shown(x['cpk']), shown(y['cpk']),
                       result_text(run['result'], run.get('reference')),
+                      basis_text(run['result'], run.get('reference')),
                       '; '.join(run['warnings']) if run['warnings'] else '']
             bad = run['result'] is False
             for col, val in enumerate(values, 1):
