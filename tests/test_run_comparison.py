@@ -274,6 +274,9 @@ def test_run_table_and_row_click(window, tmp_path):
     assert table.rowCount() == 4 and not table.isHidden()
     assert [table.item(r, 0).text() for r in range(4)] == ['1', '2', '3', '4']
     assert table.item(0, 9).text() == 'PASS' and table.item(3, 9).text() == 'FAIL'
+    # 차트는 '회차 비교' 탭이 처음 보일 때 그린다
+    assert window.chart_widgets['Run Metrics']._canvas is None
+    window._select_chart('회차 비교')
     assert window.chart_widgets['Run Metrics']._canvas is not None
 
     window._on_run_row_clicked(1)
@@ -431,8 +434,13 @@ def test_run_switch_redraws_recipe_comparison_charts(window, tmp_path, monkeypat
                         lambda rr: seen.append([r['round'] for r in rr]) or real(rr))
 
     window.run_combo.setCurrentIndex(0)
+    assert seen == []                    # Comparison 탭이 가려져 있으면 그 탭이 보일 때 그린다
 
+    window._select_chart('Boxplot')
     assert seen == [['1', '(root)']]
+    window._select_chart('Trend')
+    window._select_chart('Boxplot')
+    assert seen == [['1', '(root)']]     # 같은 결과면 다시 그리지 않는다
 
 
 def test_pdf_export_uses_snapshot_taken_on_main_thread(window, tmp_path, monkeypatch):

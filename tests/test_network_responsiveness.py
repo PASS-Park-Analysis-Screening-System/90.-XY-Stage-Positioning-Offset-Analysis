@@ -343,6 +343,7 @@ def fake_loader(monkeypatch):
         error = Signal(str, str)
         progress = Signal(str)
         cancelled = Signal()
+        count = Signal(int, int)
 
         def __init__(self, folder, recipes=None, session=None):
             super().__init__()

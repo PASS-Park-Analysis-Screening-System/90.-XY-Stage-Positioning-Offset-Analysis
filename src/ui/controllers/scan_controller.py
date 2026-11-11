@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+import copy
 import logging
 import time
 import traceback
@@ -15,6 +16,14 @@ from core import (compute_deviation_matrix, compute_affine_transform, extract_di
                   filter_stabilization_die)
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
 import charts as viz
+
+# Comparison 탭의 Recipe 비교 차트 (탭 이름, charts 함수 이름, 완료 로그)
+COMPARISON_CHARTS = (
+    ('Boxplot', 'plot_recipe_comparison_boxplot', "📊 Recipe Boxplot 비교 차트 생성 완료"),
+    ('Trend', 'plot_recipe_comparison_trend', "📈 Recipe Trend 비교 차트 생성 완료"),
+    ('Heatmap', 'plot_recipe_comparison_heatmap', "🗺️ Recipe Heatmap 비교 차트 생성 완료"),
+)
+RUN_COMPARE_TAB = '회차 비교'
 
 FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
                     "어느 Workflow의 데이터인지 지정해 주세요.")
@@ -88,6 +97,77 @@ class ScanMixin:
             sender.wait(2000)   # 마지막 시그널을 보냈다. 곧 끝난다
         return True
 
+    # ── 진행 표시 (결과 영역 막 + 상태 표시줄 막대) ─────────────────
+
+    def _busy_begin(self, title, cancellable=True):
+        """작업 단계를 보인다. 진행 수를 알기 전에는 바쁨 표시."""
+        overlay = getattr(self, '_busy_overlay', None)
+        if overlay is not None:
+            overlay.start(title, cancellable)
+        bar = getattr(self, 'status_progress', None)
+        if bar is not None:
+            bar.setRange(0, 0)
+            bar.show()
+
+    def _busy_count(self, done, total):
+        """n/m — 전체를 모르면(0) 바쁨 표시."""
+        overlay = getattr(self, '_busy_overlay', None)
+        if overlay is not None:
+            overlay.set_progress(done, total)
+        bar = getattr(self, 'status_progress', None)
+        if bar is not None:
+            if total > 0:
+                bar.setRange(0, total)
+                bar.setValue(min(done, total))
+            else:
+                bar.setRange(0, 0)
+
+    def _busy_text(self, text):
+        self.statusBar().showMessage(text)
+        overlay = getattr(self, '_busy_overlay', None)
+        if overlay is not None:
+            overlay.set_item(text)
+
+    def _busy_end(self):
+        overlay = getattr(self, '_busy_overlay', None)
+        if overlay is not None:
+            overlay.finish()
+        bar = getattr(self, 'status_progress', None)
+        if bar is not None:
+            bar.hide()
+
+    def _show_render_phase(self):
+        """화면 그리기 전에 '화면 그리는 중…'을 실제로 그려 둔다 (그리기 동안은 이벤트를 못 돈다)."""
+        self._busy_begin("화면 그리는 중…", cancellable=False)
+        self._busy_text("화면 그리는 중… (결과 표·차트)")
+        for widget in (getattr(self, '_busy_overlay', None), self.statusBar()):
+            if widget is not None and widget.isVisible():
+                widget.repaint()
+
+    # ── 보이지 않는 탭의 차트는 처음 보일 때 그린다 ─────────────────
+
+    def _chart_tab_visible(self, name):
+        tabs = getattr(self, '_inner_tabs', {}).get('Comparison')
+        return (tabs is not None and self.chart_category_tabs.currentWidget() is tabs
+                and tabs.tabText(tabs.currentIndex()) == name)
+
+    def _flush_hidden_charts(self, *_args):
+        """밀어 둔 비교 차트 중 지금 보이는 탭의 것을 그린다 (같은 결과면 다시 그리지 않는다)."""
+        pending = self.__dict__.get('_comparison_pending') or {}
+        for name, plot_name, done in COMPARISON_CHARTS:
+            if name in pending and self._chart_tab_visible(name):
+                announce = pending.pop(name)
+                try:
+                    self.chart_widgets[name].set_figure(getattr(viz, plot_name)(self.recipe_results))
+                    if announce:
+                        self.logger.ok(done)
+                except Exception as e:
+                    self.logger.error(f"{name} 비교 오류: {e}")
+        draw = self.__dict__.get('_run_charts_pending')
+        if draw is not None and self._chart_tab_visible(RUN_COMPARE_TAB):
+            self._run_charts_pending = None
+            draw()
+
     def _browse_folder(self):
         path = QFileDialog.getExistingDirectory(
             self, "Root Data 폴더 선택", self.path_edit.text() or "")
@@ -135,9 +215,11 @@ class ScanMixin:
     def _start_folder_check(self, session, job, then):
         """job(session)을 스캔 스레드에서 돌리고, 끝나면 화면 스레드에서 then(결과)을 부른다."""
         self.statusBar().showMessage("폴더 확인 중...")
+        self._busy_begin("폴더 확인 중")
         thread = FolderScanThread(job, session)
         thread.generation = self._next_generation()
-        thread.progress.connect(self.statusBar().showMessage)
+        thread.progress.connect(self._busy_text)
+        thread.count.connect(self._busy_count)
         thread.done.connect(self._on_folder_check_done)
         thread.failed.connect(self._on_folder_check_failed)
         thread.cancelled.connect(self._on_folder_check_cancelled)
@@ -150,6 +232,7 @@ class ScanMixin:
         thread, self._scan_thread = self._scan_thread, None
         if thread is not None:
             thread.wait(2000)   # run()은 마지막 시그널을 보냈다. 끝날 때까지 잠깐 기다린다
+        self._busy_end()
         self._set_scan_controls_enabled(True)
         then, self._scan_then = self._scan_then, None
         return then
@@ -194,6 +277,7 @@ class ScanMixin:
             self._retire(scan)
             self._scan_thread = self._scan_then = None
             self._next_generation()
+            self._busy_end()
             self._set_scan_controls_enabled(True)
             self.logger.warn("폴더 확인을 중지했습니다. 이전 결과를 그대로 둡니다.")
             self.statusBar().showMessage("스캔 중지 — 이전 결과 유지")
@@ -333,10 +417,16 @@ class ScanMixin:
         self.logger.info("전체 Recipe 데이터 로드 시작 (회차 폴더가 여럿이면 모든 회차)...")
         self._loader_thread = DataLoaderThread(source_folder, recipes=recipes, session=session)
         self._loader_thread.generation = self._next_generation()
+        # 회차 요약은 로드 스레드가 계산한다. 끝났을 때 Spec이 그대로면 다시 계산하지 않는다
+        self._loader_thread.run_specs = (copy.deepcopy(self.settings.get('spec_limits', {})),
+                                         copy.deepcopy(self.settings.get('spec_deviation', {})))
         self._loader_thread.finished.connect(self._on_scan_complete)
         self._loader_thread.error.connect(self._on_scan_error)
         self._loader_thread.cancelled.connect(self._on_load_cancelled)
-        self._loader_thread.progress.connect(self.statusBar().showMessage)
+        self._loader_thread.progress.connect(self._busy_text)
+        self._loader_thread.count.connect(self._busy_count)
+        self._busy_begin("데이터 읽는 중")
+        self._busy_count(0, getattr(self._loader_thread, 'total_lots', 0))
         try:
             self._reset_results_for_scan()
         except Exception as e:
@@ -352,6 +442,8 @@ class ScanMixin:
         """이전 폴더의 결과를 지운다. 안 그러면 로드 중에 새 Step 이름으로 이전 판정이 보인다."""
         self.recipe_results = []
         self._run_compare_key = None    # 새 결과의 회차 비교 차트를 다시 그리게 한다
+        self._run_charts_pending = None
+        self._comparison_pending = {}
         self.sum_table.setColumnCount(0)
         self._build_nav()
         if self.recipes:
@@ -402,6 +494,7 @@ class ScanMixin:
 
     def _after_load_cancelled(self):
         self._pending_settings = None
+        self._busy_end()
         self._set_scan_controls_enabled(True)
         self.logger.warn("데이터 로드를 중지했습니다. 이전 결과로 되돌립니다.")
         try:
@@ -433,6 +526,7 @@ class ScanMixin:
         if self.recipe_results:
             self._update_summary_table(compare_recipes(self.recipe_results), self.recipe_results)
             self._compute_all_step_pass_states()
+            self._render_recipe_comparison_charts(announce=False)   # 탭이 보일 때 그린다
         if self.recipes:
             index = view['index'] if 0 <= view['index'] < len(self.recipes) else 0
             self._select_step(index)
@@ -448,6 +542,7 @@ class ScanMixin:
         self._loader_thread = None
         self._previous_view = None
         self._pending_settings = None
+        self._busy_end()
         self._set_scan_controls_enabled(True)
         # 메시지 없는 예외도 대화상자가 비지 않게 한다
         try:
@@ -538,19 +633,15 @@ class ScanMixin:
                 "장비 원본 데이터 확인이 필요합니다.")
 
     def _render_recipe_comparison_charts(self, announce=True):
-        """Recipe 간 비교 차트(Boxplot·Trend·Heatmap). 회차를 바꾸면 다시 그린다."""
+        """Recipe 간 비교 차트(Boxplot·Trend·Heatmap). 회차를 바꾸면 다시 그린다.
+
+        Comparison 탭은 보통 가려져 있다. 지금 보이는 차트만 그리고 나머지는 그 탭이 처음
+        보일 때 그린다 (스캔 완료·회차 전환이 1초 넘게 걸리던 주된 이유).
+        """
         if len(self.recipe_results) < 2:
             return
-        for name, plot, done in (
-                ('Boxplot', viz.plot_recipe_comparison_boxplot, "📊 Recipe Boxplot 비교 차트 생성 완료"),
-                ('Trend', viz.plot_recipe_comparison_trend, "📈 Recipe Trend 비교 차트 생성 완료"),
-                ('Heatmap', viz.plot_recipe_comparison_heatmap, "🗺️ Recipe Heatmap 비교 차트 생성 완료")):
-            try:
-                self.chart_widgets[name].set_figure(plot(self.recipe_results))
-                if announce:
-                    self.logger.ok(done)
-            except Exception as e:
-                self.logger.error(f"{name} 비교 오류: {e}")
+        self._comparison_pending = {name: announce for name, _plot, _done in COMPARISON_CHARTS}
+        self._flush_hidden_charts()
 
     def _log_runs(self, results):
         """회차를 모두 읽었다는 것과 기본 회차를 남긴다 (전에는 첫 회차만 조용히 분석했다)."""
@@ -573,15 +664,24 @@ class ScanMixin:
         if self._is_stale(self._loader_thread):
             return      # 중지한 로드의 늦은 결과
         t_render = time.perf_counter()
+        self._show_render_phase()
+        try:
+            self._apply_scan_results(results, comparison, elapsed, t_render)
+        finally:
+            self._busy_end()
+
+    def _apply_scan_results(self, results, comparison, elapsed, t_render):
         self._previous_view = None
         self._save_loaded_settings()
         # 어느 단계가 느린지 현장에서 구분할 수 있게 단계별 시간을 남긴다
         self.logger.info(f"⏱ 데이터 로드 {elapsed:.1f}초")
-        # 회차가 둘 이상인 Workflow는 회차별 요약을 붙인다 (회차 비교 표·Excel)
+        # 회차가 둘 이상인 Workflow는 회차별 요약을 붙인다 (회차 비교 표·Excel).
+        # 로드 스레드가 같은 Spec으로 이미 계산했으면 그대로 쓴다
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
+        computed = getattr(self._loader_thread, 'run_specs', None) == (spec_limits, spec_deviation)
         for result in results:
-            if result.get('run_results'):
+            if result.get('run_results') and not (computed and 'runs' in result):
                 result['runs'] = summarize_runs(result, spec_limits, spec_deviation)
         self.recipe_results = results
         # 경로 입력란은 스캔 뒤에 바뀔 수 있다. 내보내기는 이 값으로 출처를 적는다.

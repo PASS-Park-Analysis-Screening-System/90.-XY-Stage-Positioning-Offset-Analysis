@@ -1,4 +1,7 @@
-from PySide6.QtWidgets import QLabel, QPushButton, QCheckBox
+from contextlib import contextmanager
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QCheckBox
 from functools import partial
 from core import (compute_deviation_matrix, extract_die_positions, evaluate_deviation_pass,
                   filter_stabilization_die, stabilization_die)
@@ -17,6 +20,20 @@ def _warning_tooltip(warnings: list) -> str:
     if len(warnings) > _MAX_TOOLTIP_WARNINGS:
         lines.append(f"… 외 {len(warnings) - _MAX_TOOLTIP_WARNINGS}건 (품질 리포트 참조)")
     return "\n".join(lines)
+
+
+@contextmanager
+def wait_cursor(window, message):
+    """Step·회차 전환처럼 화면 스레드에서 1초 남짓 그리는 동안 모래시계와 문구를 보인다."""
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        status = window.statusBar()
+        status.showMessage(message)
+        if status.isVisible():
+            status.repaint()    # 그리기 동안은 이벤트를 못 돈다. 문구를 먼저 그린다
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 class StepMixin:
@@ -73,6 +90,10 @@ class StepMixin:
     def _select_step(self, idx):
         if idx < 0 or idx >= len(self.recipes):
             return
+        with wait_cursor(self, f"Step 전환 중… {self.recipes[idx].get('short_name', '')}"):
+            self._show_step(idx)
+
+    def _show_step(self, idx):
         self.current_recipe_idx = idx
         for i, btn in enumerate(self.step_buttons):
             is_pass = self.step_pass_states.get(i)  # True/False/None

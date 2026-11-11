@@ -12,6 +12,7 @@ from ui.widgets.system_logger import SystemLogger
 from ui.widgets.copyable_table import CopyableTable
 from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
+from ui.widgets.busy_overlay import BusyOverlay
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -845,6 +846,9 @@ class UIBuilderMixin:
         for name in ['Boxplot', 'Trend', 'Heatmap']:
             _add_chart('Comparison', name, ChartWidget())
         _add_chart('Comparison', '회차 비교', self._build_run_compare_widget(), register=False)
+        # 가려진 비교 차트는 탭이 보일 때 그린다
+        self.chart_category_tabs.currentChanged.connect(self._flush_hidden_charts)
+        self._inner_tabs['Comparison'].currentChanged.connect(self._flush_hidden_charts)
 
         # ── Remark 탭 (Export + Help 하위탭) ──────────────────────
         # ── Export 하위탭 ─────────────────────────────────────────
@@ -1019,6 +1023,8 @@ class UIBuilderMixin:
 
         # ─── 좌측 패널 토글 (F11 + 스플리터 더블클릭) ───
         self._main_splitter = splitter
+        # 폴더 확인·데이터 읽기·화면 그리기 동안 결과 영역을 덮는 진행 표시
+        self._busy_overlay = BusyOverlay(splitter, on_cancel=self._cancel_scan)
         # 좌측 패널 핸들 보관(스크롤 wrapper). F11/더블클릭 토글은 _toggle_left_panel에서
         # 스플리터 sizes로 동작하므로 이 참조 자체를 읽지는 않는다.
         self._left_panel = left_scroll
@@ -1037,6 +1043,15 @@ class UIBuilderMixin:
             "폴더를 선택하고 '스캔 & 분석'을 눌러주세요."))
 
         # Status bar: 영구 위젯은 showMessage가 덮어쓰지 않아 실행 버전이 항상 보인다
+        # 작업 중에만 보이는 진행 막대 (n/m을 알면 채우고, 모르면 바쁨 표시)
+        self.status_progress = QProgressBar()
+        self.status_progress.setTextVisible(False)
+        self.status_progress.setFixedSize(180, 12)
+        self.status_progress.setStyleSheet(
+            f"QProgressBar {{ background: {BG3}; border: none; border-radius: 5px; }}"
+            f"QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}")
+        self.status_progress.hide()
+        self.statusBar().addPermanentWidget(self.status_progress)
         self.version_status_label = QLabel(APP_VERSION_LABEL)
         self.version_status_label.setStyleSheet(f"color:{FG2}; padding:0 8px;")
         self.statusBar().addPermanentWidget(self.version_status_label)

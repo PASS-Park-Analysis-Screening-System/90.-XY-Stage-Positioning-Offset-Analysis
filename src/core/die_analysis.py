@@ -1,7 +1,9 @@
 """
 core/die_analysis.py
 """
+import functools
 import math
+import re
 from typing import Optional
 
 from core.statistics import is_usable
@@ -76,8 +78,17 @@ def extract_die_number(site_id: str) -> Optional[int]:
     유효한 Die 인덱스가 아니므로 None을 반환한다(음수 센티넬이 'Die0' 유령 die로
     둔갑해 통계/좌표 인덱싱을 오염시키는 것을 방지).
     """
-    import re
-    m = re.match(r'^\d{2}(\d{2})_', str(site_id))
+    return _die_number(str(site_id))
+
+
+_SITE_DIE = re.compile(r'^\d{2}(\d{2})_')
+
+
+@functools.lru_cache(maxsize=4096)
+def _die_number(site_id: str) -> Optional[int]:
+    """extract_die_number의 계산. Site ID 문자열은 수십 가지뿐이라 결과를 담아 둔다
+    (스캔 완료 화면 갱신에서 수십만 번 불려 정규식이 가장 큰 비용이었다)."""
+    m = _SITE_DIE.match(site_id)
     if m:
         n = int(m.group(1)) - 1
         return n if n >= 0 else None

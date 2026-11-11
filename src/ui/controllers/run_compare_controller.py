@@ -13,6 +13,7 @@ import charts as viz
 from core.checklist import result_text
 from core.recipe_scanner import compare_recipes, run_view
 from ui.theme import BG, GREEN, RED, ORANGE
+from ui.controllers.step_controller import wait_cursor
 
 
 def _num(value, fmt):
@@ -70,6 +71,10 @@ class RunCompareMixin:
         if self.recipe_results[idx].get('round') == runs[run_index].get('round'):
             self._highlight_run_row(run_index)
             return
+        with wait_cursor(self, f"회차 전환 중… {runs[run_index].get('round', '')}"):
+            self._switch_run(idx, runs, run_index)
+
+    def _switch_run(self, idx, runs, run_index):
         self.recipe_results[idx] = run_view(self.recipe_results[idx], run_index)
         self.logger.info(f"회차 전환 → {self.recipes[idx]['short_name']} "
                          f"회차 {runs[run_index].get('round', '')}")
@@ -95,6 +100,7 @@ class RunCompareMixin:
             table.hide()
             charts_tabs.hide()
             self._run_compare_key = None
+            self._run_charts_pending = None
             return
 
         self.run_compare_label.setText(
@@ -126,13 +132,19 @@ class RunCompareMixin:
         if getattr(self, '_run_compare_key', None) != key:
             self._run_compare_key = key
             spec = self.settings.get('spec_deviation', {}).get(result.get('short_name', ''), {})
-            try:
-                self.chart_widgets['Run Metrics'].set_figure(viz.plot_run_comparison_metrics(
-                    runs, spec.get('spec_range'), spec.get('spec_stddev'), f'— {name}'))
-                self.chart_widgets['Run Boxplot'].set_figure(viz.plot_run_comparison_boxplot(
-                    result.get('run_results') or [], f'— {name}'))
-            except Exception as e:
-                self.logger.error(f"회차 비교 차트 오류: {type(e).__name__}: {e}")
+            run_results = result.get('run_results') or []
+
+            def draw():
+                try:
+                    self.chart_widgets['Run Metrics'].set_figure(viz.plot_run_comparison_metrics(
+                        runs, spec.get('spec_range'), spec.get('spec_stddev'), f'— {name}'))
+                    self.chart_widgets['Run Boxplot'].set_figure(viz.plot_run_comparison_boxplot(
+                        run_results, f'— {name}'))
+                except Exception as e:
+                    self.logger.error(f"회차 비교 차트 오류: {type(e).__name__}: {e}")
+            # '회차 비교' 탭이 보일 때 그린다 (가려져 있으면 처음 보일 때)
+            self._run_charts_pending = draw
+            self._flush_hidden_charts()
         names = [str(r['run']) for r in runs]
         current = str(result.get('round', ''))
         self._highlight_run_row(names.index(current) if current in names else -1)

@@ -388,6 +388,7 @@ def scan(window, monkeypatch, tmp_path):
         error = Signal(str, str)     # 실제 DataLoaderThread와 같은 형태
         progress = Signal(str)
         cancelled = Signal()
+        count = Signal(int, int)
 
         def __init__(self, folder, recipes=None, session=None):
             super().__init__()

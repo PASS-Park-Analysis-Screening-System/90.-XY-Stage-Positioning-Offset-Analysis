@@ -51,6 +51,9 @@ class ScanSession:
             for name in self._SHARED:
                 setattr(self, name, getattr(_shared, name))
         self.progress = progress     # callback(확인한 폴더 수, 지금까지 찾은 폴더 수, 경로)
+        # 로드 진행: callback('lot' | 'round', 회차 폴더 경로). 'lot'은 Lot 하나를 읽을 때마다
+        # (작업 스레드들에서 불린다), 'round'는 그 회차 폴더를 다 읽었을 때 한 번
+        self.lot_progress = None
         self.done = 0
         self.total = 0
         self._cancel = threading.Event()
@@ -910,7 +913,8 @@ def _exclude_first_repeat(lots: list, info: Optional[dict]) -> list:
 LOT_LOAD_WORKERS = 8   # 네트워크 지연을 겹친다. 결과 순서는 Lot 순서 그대로다
 
 
-def _load_lots_parallel(lots: list, session: Optional[ScanSession] = None) -> list:
+def _load_lots_parallel(lots: list, session: Optional[ScanSession] = None,
+                        on_loaded=None) -> list:
     """Lot마다 load_lot_data를 작은 스레드 풀로 읽는다. [(lot_data, 예외), ...] (Lot 순서).
 
     네트워크 폴더는 파일 하나를 여는 데 수십 ms가 걸려 순서대로 읽으면 대부분 기다리는
@@ -923,6 +927,9 @@ def _load_lots_parallel(lots: list, session: Optional[ScanSession] = None) -> li
             return load_lot_data(lot['path']), None
         except Exception as e:
             return None, e
+        finally:
+            if on_loaded is not None:
+                on_loaded()
 
     if len(lots) <= 1:
         return [load(lot) for lot in lots]
@@ -939,6 +946,25 @@ def batch_load(root_path: str,
                warnings: Optional[list] = None,
                info: Optional[dict] = None,
                session: Optional[ScanSession] = None) -> list:
+    """batch_load_rows와 같다. session.lot_progress가 있으면 Lot마다·회차 끝에 알린다."""
+    notify = getattr(session, 'lot_progress', None)
+    try:
+        return batch_load_rows(root_path, lot_range, axis, metric_col, errors, warnings, info,
+                               session, (lambda: notify('lot', root_path)) if notify else None)
+    finally:
+        if notify is not None:
+            notify('round', root_path)
+
+
+def batch_load_rows(root_path: str,
+                    lot_range: Optional[Union[tuple, list]] = None,
+                    axis: str = 'both',
+                    metric_col: str = 'HZ1_O (nm)',
+                    errors: Optional[list] = None,
+                    warnings: Optional[list] = None,
+                    info: Optional[dict] = None,
+                    session: Optional[ScanSession] = None,
+                    on_loaded=None) -> list:
     """유연한 범위 지정 배치 로드 — Analysis csv combine.exe 완전 대체
 
     Args:
@@ -989,7 +1015,7 @@ def batch_load(root_path: str,
             [l for l in lots if l.get('x_csv') or l.get('y_csv')], info)
 
     results = []
-    loaded = _load_lots_parallel(lots, session)
+    loaded = _load_lots_parallel(lots, session, on_loaded)
     if session is not None:
         session.check_cancelled()
     for lot, (lot_data, e) in zip(lots, loaded):

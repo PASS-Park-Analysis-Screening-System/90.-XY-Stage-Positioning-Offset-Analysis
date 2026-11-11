@@ -13,6 +13,7 @@ import traceback
 from PySide6.QtCore import QThread, Signal
 
 from core.csv_loader import ScanCancelled
+from ui.workers.progress_throttle import Throttle
 
 
 def progress_text(done: int, total: int, path: str) -> str:
@@ -28,15 +29,19 @@ class FolderScanThread(QThread):
     failed = Signal(str, str)       # (대화상자용 요약, System Log용 traceback)
     cancelled = Signal()
     progress = Signal(str)          # 상태 표시줄 문구
+    count = Signal(int, int)        # (확인한 폴더, 지금까지 찾은 폴더) — 찾을수록 전체가 늘어난다
 
     def __init__(self, job, session, parent=None):
         super().__init__(parent)
         self._job = job
         # 캐시는 함께 쓰고 진행 표시·중지는 이 스레드 것만 갖는다
         self.session = session.fork(progress=self._report)
+        self._throttle = Throttle(0.1)      # 초당 10번 정도만 알린다
 
     def _report(self, done, total, path):
-        self.progress.emit(progress_text(done, total, path))
+        if self._throttle.ready():
+            self.progress.emit(progress_text(done, total, path))
+            self.count.emit(done, total)
 
     def cancel(self):
         self.session.cancel()

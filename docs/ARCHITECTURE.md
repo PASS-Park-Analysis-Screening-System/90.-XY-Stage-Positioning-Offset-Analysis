@@ -241,6 +241,9 @@ overall = pass_x and pass_y
 | 데이터 로드 | `QThread (DataLoaderThread)` + Lot 스레드 8개 | 네트워크 지연을 겹친다. 결과 순서는 Lot 순서 |
 | 폴더 확인 결과 재사용 | `ScanSession` (사용자 동작 1회) | 스캔→대화상자→로드가 같은 폴더를 다시 읽지 않는다 |
 | TIFF 찾기·읽기 | `QThread (TiffLoadThread)` | 더블클릭 때 폴더 목록·TIFF 읽기 |
+| 진행 표시 | `BusyOverlay` + 상태 표시줄 `QProgressBar` | 폴더 확인 n/m, Lot n/m(전체는 폴더 확인 결과로 미리 앎), 초당 10번까지 |
+| 회차 요약 (`summarize_runs`) | `DataLoaderThread` | 화면 갱신 시간을 줄인다. Spec이 바뀌었으면 화면 스레드가 다시 계산 |
+| Comparison 탭 차트 | 처음 보일 때 그림 | 가려진 탭은 미뤘다가 보일 때 한 번 (같은 결과면 다시 안 그림) |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |
 | 결과 UI 업데이트 | `QTimer.singleShot(0, ...)` | 스레드 → 메인 스레드 안전한 UI 업데이트 |

@@ -544,7 +544,7 @@ def flow(window, monkeypatch):
     class FakeThread:
         def __init__(self, folder, recipes=None, session=None):
             self.folder, self.recipes, self.session = folder, recipes, session
-            self.finished = self.error = self.progress = self.cancelled = self
+            self.finished = self.error = self.progress = self.cancelled = self.count = self
             state['threads'].append(self)
 
         def connect(self, _slot):

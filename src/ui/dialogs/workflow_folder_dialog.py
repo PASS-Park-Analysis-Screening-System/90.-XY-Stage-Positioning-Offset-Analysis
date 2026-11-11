@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QGridLayout, QLabel,
-    QLineEdit, QPushButton, QVBoxLayout,
+    QLineEdit, QProgressBar, QPushButton, QVBoxLayout,
 )
 
 from core.csv_loader import ScanCancelled, ScanSession
@@ -56,6 +56,7 @@ class WorkflowFolderDialog(QDialog):
         self._bridge.progress.connect(self._on_check_progress)
         self._rows = {}     # spec_key → (checkbox, path_edit, status_label, timer)
         self._notes = {}    # spec_key → 초기값 안내 문구 (경로를 바꾸면 지운다)
+        self._row_bars = {}  # spec_key → 확인 중일 때 움직이는 작은 막대
         self._pending = {}  # spec_key → 결과를 기다리는 경로
         self._row_status = {}   # spec_key → (경로, (ok, text)) — 행의 마지막 확인 결과
         self._row_checks = {}   # spec_key → (경로, 세션 사본) — 작업 스레드에 넘긴 확인
@@ -182,6 +183,16 @@ class WorkflowFolderDialog(QDialog):
             status = QLabel()
             status.setMinimumWidth(220)
             status.setWordWrap(True)
+            # 확인 중인 행에서 움직이는 막대 (네트워크 폴더는 수십 초 걸릴 수 있다)
+            bar = QProgressBar()
+            bar.setRange(0, 0)
+            bar.setTextVisible(False)
+            bar.setFixedSize(70, 8)
+            bar.setStyleSheet(
+                f"QProgressBar {{ background: {BG3}; border: none; border-radius: 4px; }}"
+                f"QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}")
+            bar.hide()
+            self._row_bars[key] = bar
             # 네트워크 폴더는 읽는 데 시간이 걸리므로 입력이 멈춘 뒤 그 행만 확인한다
             timer = QTimer(self)
             timer.setSingleShot(True)
@@ -197,6 +208,7 @@ class WorkflowFolderDialog(QDialog):
             grid.addWidget(edit, row, 2)
             grid.addWidget(browse, row, 3)
             grid.addWidget(status, row, 4)
+            grid.addWidget(bar, row, 5)
             self._rows[key] = (check, edit, status, timer)
             self._notes[key] = prefill[key].get('note', '')
             if self._prefill_pending:
@@ -205,6 +217,11 @@ class WorkflowFolderDialog(QDialog):
                 self._update_status(key, refresh=False)
         grid.setColumnStretch(2, 1)
         layout.addLayout(grid)
+
+        # 전체 진행: '폴더 확인 완료 3/4'
+        self.progress_label = QLabel()
+        self.progress_label.setStyleSheet(f"color: {FG2}; font-size: 9pt;")
+        layout.addWidget(self.progress_label)
 
         self.warn_label = QLabel()
         self.warn_label.setWordWrap(True)
@@ -278,8 +295,10 @@ class WorkflowFolderDialog(QDialog):
         status = self._rows[key][2]
         status.setText(text)
         status.setStyleSheet(f"color: {FG2};")
+        self._row_bars[key].show()
 
     def _show_status(self, key, ok, text):
+        self._row_bars[key].hide()
         _check, edit, status, _timer = self._rows[key]
         note = self._notes.get(key)
         status.setText(f"{text} ({note})" if note else text)
@@ -348,9 +367,19 @@ class WorkflowFolderDialog(QDialog):
         return [key for key, enabled, _path in self._rows_state()
                 if enabled and key in self._pending]
 
+    def _refresh_progress(self, rows):
+        if self._prefill_pending:
+            self.progress_label.setText(f'{CHECKING} 초기값 (지난번 폴더·선택한 폴더)')
+            return
+        with_path = [key for key, _enabled, path in rows if path]
+        done = sum(1 for key in with_path if key not in self._pending)
+        self.progress_label.setText(
+            f'폴더 확인 완료 {done}/{len(with_path)}' if with_path else '')
+
     def _refresh_ok(self):
         ok_btn = self.buttons.button(QDialogButtonBox.Ok)
         rows = self._rows_state()
+        self._refresh_progress(rows)
         waiting = self._waiting_rows()
         if self._prefill_pending or waiting:
             ok_btn.setEnabled(False)
