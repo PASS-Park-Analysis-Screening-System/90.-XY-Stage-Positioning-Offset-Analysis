@@ -142,7 +142,7 @@ class RunCompareMixin:
                     self.chart_widgets['Run Boxplot'].set_figure(viz.plot_run_comparison_boxplot(
                         run_results, f'— {name}'))
                 except Exception as e:
-                    self.logger.error(f"회차 비교 차트 오류: {type(e).__name__}: {e}")
+                    self.logger.error(f"Run Comparison 차트 오류: {type(e).__name__}: {e}")
             # '회차 비교' 탭이 보일 때 그린다 (가려져 있으면 처음 보일 때)
             self._run_charts_pending = draw
             self._flush_hidden_charts()

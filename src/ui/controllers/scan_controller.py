@@ -23,7 +23,7 @@ COMPARISON_CHARTS = (
     ('Trend', 'plot_recipe_comparison_trend', "📈 Recipe Trend 비교 차트 생성 완료"),
     ('Heatmap', 'plot_recipe_comparison_heatmap', "🗺️ Recipe Heatmap 비교 차트 생성 완료"),
 )
-RUN_COMPARE_TAB = '회차 비교'
+RUN_COMPARE_TAB = 'Run Comparison'
 
 FLAT_ROOT_REASON = ("선택한 폴더에 Lot 데이터가 바로 들어 있습니다. "
                     "어느 Workflow의 데이터인지 지정해 주세요.")
@@ -666,14 +666,14 @@ class ScanMixin:
                 continue
             label = r.get('short_name') or r.get('recipe', '')
             self.logger.info(f"  ℹ {label}: 회차 {len(runs)}개 분석 — Step 상세 기본 회차 "
-                             f"{r.get('default_run')} (회차 콤보·'회차 비교' 탭에서 변경)")
+                             f"{r.get('default_run')} (회차 콤보·'Run Comparison' 탭에서 변경)")
             if r.get('default_skipped'):
                 self.logger.warn(f"  ⚠ {label}: 최신 회차 {', '.join(r['default_skipped'])}에 "
                                  f"데이터가 없어 기본 회차를 {r.get('default_run')}(으)로 했습니다")
             warned = [str(run['run']) for run in runs if run['warnings']]
             if warned:
                 self.logger.warn(f"  ⚠ {label}: 경고가 있는 회차 {', '.join(warned)} "
-                                 f"(회차 비교 탭의 ⚠ 참고)")
+                                 f"(Run Comparison 탭의 ⚠ 참고)")
 
     def _on_scan_complete(self, results, comparison, elapsed):
         if self._is_stale(self._loader_thread):

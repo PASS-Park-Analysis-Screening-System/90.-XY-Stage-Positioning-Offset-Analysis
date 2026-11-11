@@ -366,9 +366,9 @@ def test_hidden_comparison_tabs_render_on_first_show_only(window, tmp_path, monk
     assert calls['box'] == 1
     assert '📊 Recipe Boxplot 비교 차트 생성 완료' in str(window.logger.export_rows())
 
-    window._select_chart('회차 비교')
+    window._select_chart('Run Comparison')
     window._select_chart('Boxplot')
-    window._select_chart('회차 비교')
+    window._select_chart('Run Comparison')
     assert calls['metrics'] == 1
 
     window._select_chart('Contour X')
@@ -513,7 +513,7 @@ def test_run_charts_redraw_only_for_new_results(window, tmp_path, monkeypatch):
     monkeypatch.setattr(charts, 'plot_run_comparison_metrics',
                         lambda *a: calls.append(1) or real(*a))
     _loaded(window, tmp_path / 'a')
-    window._select_chart('회차 비교')
+    window._select_chart('Run Comparison')
     window.run_combo.setCurrentIndex(0)         # 같은 결과의 회차 전환: 차트 내용이 같다
     assert len(calls) == 1
     _loaded(window, tmp_path / 'b')             # 새 스캔 결과

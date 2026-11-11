@@ -276,7 +276,7 @@ def test_run_table_and_row_click(window, tmp_path):
     assert table.item(0, 9).text() == 'PASS' and table.item(3, 9).text() == 'FAIL'
     # 차트는 '회차 비교' 탭이 처음 보일 때 그린다
     assert window.chart_widgets['Run Metrics']._canvas is None
-    window._select_chart('회차 비교')
+    window._select_chart('Run Comparison')
     assert window.chart_widgets['Run Metrics']._canvas is not None
 
     window._on_run_row_clicked(1)

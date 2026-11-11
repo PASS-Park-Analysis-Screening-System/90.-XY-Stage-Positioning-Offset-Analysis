@@ -48,7 +48,7 @@ class UIBuilderMixin:
         self.chart_widgets['Run Metrics'] = ChartWidget()
         self.chart_widgets['Run Boxplot'] = ChartWidget()
         self.run_compare_charts.addTab(self.chart_widgets['Run Metrics'], 'Range / StdDev')
-        self.run_compare_charts.addTab(self.chart_widgets['Run Boxplot'], '편차 Boxplot')
+        self.run_compare_charts.addTab(self.chart_widgets['Run Boxplot'], 'Deviation Boxplot')
         splitter.addWidget(self.run_compare_charts)
         self.run_compare_table.setMinimumHeight(180)
         splitter.setStretchFactor(0, 2)
@@ -845,7 +845,7 @@ class UIBuilderMixin:
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:
             _add_chart('Comparison', name, ChartWidget())
-        _add_chart('Comparison', '회차 비교', self._build_run_compare_widget(), register=False)
+        _add_chart('Comparison', 'Run Comparison', self._build_run_compare_widget(), register=False)
         # 가려진 비교 차트는 탭이 보일 때 그린다
         self.chart_category_tabs.currentChanged.connect(self._flush_hidden_charts)
         self._inner_tabs['Comparison'].currentChanged.connect(self._flush_hidden_charts)
