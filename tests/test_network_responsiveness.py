@@ -390,7 +390,7 @@ def test_scan_button_returns_immediately_and_reads_in_worker(app, window, fake_l
 def test_progress_text_names_the_folder_being_checked():
     from ui.workers.folder_scan_thread import progress_text
     path = os.path.join('\\\\srv', 'share', 'Vision Pattern', '7', 'Sample2202 (9)')
-    assert progress_text(37, 140, path) == '폴더 확인 중 37/140 — Vision Pattern/7'
+    assert progress_text(37, 140, path) == '폴더 확인 중 37개 확인 — Vision Pattern/7'
 
 
 def test_cancel_during_folder_check_keeps_previous_results(app, window, fake_loader,

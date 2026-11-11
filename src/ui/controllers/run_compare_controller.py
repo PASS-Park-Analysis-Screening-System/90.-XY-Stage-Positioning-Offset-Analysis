@@ -128,7 +128,8 @@ class RunCompareMixin:
                     item.setForeground(QBrush(QColor(BG)))
                 table.setItem(row, col, item)
 
-        key = (idx, id(result.get('run_results')))
+        # 같은 스캔 결과·같은 Step이면 다시 그리지 않는다 (회차 전환은 차트 내용이 같다)
+        key = (idx, getattr(self, '_data_generation', 0))
         if getattr(self, '_run_compare_key', None) != key:
             self._run_compare_key = key
             spec = self.settings.get('spec_deviation', {}).get(result.get('short_name', ''), {})

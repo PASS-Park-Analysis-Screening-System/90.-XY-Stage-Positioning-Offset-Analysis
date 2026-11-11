@@ -371,7 +371,7 @@ class WorkflowFolderDialog(QDialog):
         if self._prefill_pending:
             self.progress_label.setText(f'{CHECKING} 초기값 (지난번 폴더·선택한 폴더)')
             return
-        with_path = [key for key, _enabled, path in rows if path]
+        with_path = [key for key, enabled, path in rows if enabled and path]
         done = sum(1 for key in with_path if key not in self._pending)
         self.progress_label.setText(
             f'폴더 확인 완료 {done}/{len(with_path)}' if with_path else '')

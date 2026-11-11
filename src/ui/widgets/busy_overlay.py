@@ -5,13 +5,13 @@ busy_overlay.py — 폴더 확인·데이터 읽기·화면 그리기 동안 결
 위에 반투명 막을 덮고 단계 제목, 큰 진행 막대(n/m, %), 지금 읽는 항목, 경과 초,
 '중지 (Esc)' 버튼을 보인다. 창 이동·크기 조절은 막지 않는다(창 안의 자식 위젯이다).
 
-target(덮을 위젯)의 위치를 따라간다. QSplitter의 자식이면 분할 칸으로 들어가므로
-target의 부모(가운데 위젯)를 부모로 삼고 target 위에 올린다.
+target(덮을 위젯)의 위치를 따라간다. QSplitter의 자식은 분할 칸으로 들어가므로 막은
+host(가운데 위젯)의 자식으로 두고 target의 위치를 host 좌표로 옮겨 그 위에 올린다.
 """
 
 import time
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton,
                                QVBoxLayout, QWidget)
@@ -20,8 +20,8 @@ from ui.theme import ACCENT, BG, BG2, BG3, FG, FG2
 
 
 class BusyOverlay(QWidget):
-    def __init__(self, target: QWidget, on_cancel=None):
-        super().__init__(target.parentWidget())
+    def __init__(self, target: QWidget, host: QWidget = None, on_cancel=None):
+        super().__init__(host if host is not None else target.parentWidget())
         self._target = target
         self._started = 0.0
         self.setAttribute(Qt.WA_StyledBackground, False)
@@ -78,6 +78,10 @@ class BusyOverlay(QWidget):
         self._tick.timeout.connect(self._update_elapsed)
         self._follower = _GeometryFollower(self)
         target.installEventFilter(self._follower)
+        # 덮는 칸이 분할기 안에 있으면 분할기가 움직일 때(위 줄 높이가 바뀔 때)도 따라간다
+        holder = target.parentWidget()
+        if holder is not None and holder is not self.parentWidget():
+            holder.installEventFilter(self._follower)
 
     # ── 표시 ──────────────────────────────────────────
 
@@ -95,6 +99,8 @@ class BusyOverlay(QWidget):
         self.follow()
         self.show()
         self.raise_()
+        if cancellable:
+            self.cancel_btn.setFocus()      # Enter·Space로도 중지할 수 있게
 
     def set_progress(self, done: int, total: int, item: str = ''):
         """n/m을 안다면 막대를 채운다. total이 0이면 바쁨 표시."""
@@ -112,6 +118,11 @@ class BusyOverlay(QWidget):
     def set_item(self, item: str):
         self.item.setText(item)
 
+    def set_busy_count(self, text: str):
+        """전체를 모르는 단계(폴더 확인): 막대는 바쁨 표시, 확인한 수만 적는다."""
+        self.bar.setRange(0, 0)
+        self.count.setText(text)
+
     def finish(self):
         self._tick.stop()
         self.hide()
@@ -122,7 +133,8 @@ class BusyOverlay(QWidget):
     # ── 위치 ──────────────────────────────────────────
 
     def follow(self):
-        self.setGeometry(self._target.geometry())
+        top_left = self._target.mapTo(self.parentWidget(), QPoint(0, 0))
+        self.setGeometry(QRect(top_left, self._target.size()))
         self._card.adjustSize()
         self._card.move((self.width() - self._card.width()) // 2,
                         max(0, (self.height() - self._card.height()) // 3))

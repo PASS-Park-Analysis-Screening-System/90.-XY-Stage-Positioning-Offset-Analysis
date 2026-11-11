@@ -1024,7 +1024,8 @@ class UIBuilderMixin:
         # ─── 좌측 패널 토글 (F11 + 스플리터 더블클릭) ───
         self._main_splitter = splitter
         # 폴더 확인·데이터 읽기·화면 그리기 동안 결과 영역을 덮는 진행 표시
-        self._busy_overlay = BusyOverlay(splitter, on_cancel=self._cancel_scan)
+        # 오른쪽 결과 칸(차트)만 덮는다. 왼쪽 System Log는 긴 네트워크 로드 동안 읽고 넘길 수 있다
+        self._busy_overlay = BusyOverlay(right, host=central, on_cancel=self._cancel_scan)
         # 좌측 패널 핸들 보관(스크롤 wrapper). F11/더블클릭 토글은 _toggle_left_panel에서
         # 스플리터 sizes로 동작하므로 이 참조 자체를 읽지는 않는다.
         self._left_panel = left_scroll

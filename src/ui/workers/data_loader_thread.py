@@ -2,6 +2,7 @@
 data_loader_thread.py — 백그라운드 데이터 로딩 스레드
 """
 
+import logging
 import threading
 
 from PySide6.QtCore import QThread, Signal
@@ -50,7 +51,7 @@ class DataLoaderThread(QThread):
         self._rounds = {}       # 경로 키 → 다 읽은 횟수
         self._lock = threading.Lock()
         self._throttle = Throttle(0.1)
-        self.emitted = []       # 보낸 (읽은 Lot, 전체) — 테스트·진단용
+        self.last_emitted = None    # 마지막으로 보낸 (읽은 Lot, 전체)
 
     def cancel(self):
         self.session.cancel()
@@ -72,15 +73,17 @@ class DataLoaderThread(QThread):
             else:
                 self._done[key] = min(cap, self._done.get(key, 0) + 1)
             done = sum(self._done.values())
-            if not self._throttle.ready():
+            # 회차 끝은 늘 보낸다 (줄인 Lot 알림 사이의 진행이 보이게). Lot은 초당 10번까지
+            if event != 'round' and not self._throttle.ready():
                 return
             self._emit_count(done)
 
-    def _emit_count(self, done):
+    def _emit_count(self, done, final=False):
         done = min(done, self.total_lots)
-        if self.emitted and done < self.emitted[-1][0]:
-            return      # 늦게 도착한 작은 값은 버린다 (진행 막대가 뒤로 가지 않게)
-        self.emitted.append((done, self.total_lots))
+        last = self.last_emitted[0] if self.last_emitted else None
+        if last is not None and (done < last or (final and done == last)):
+            return      # 늦게 도착한 작은 값·같은 끝 값은 버린다 (진행 막대가 뒤로 가지 않게)
+        self.last_emitted = (done, self.total_lots)
         self.count.emit(done, self.total_lots)
 
     def run(self):
@@ -93,12 +96,20 @@ class DataLoaderThread(QThread):
                                        progress_cb=self._report_progress,
                                        session=self.session)
             with self._lock:
-                self._emit_count(self.total_lots)
-            if self.run_specs is not None:
+                self._emit_count(self.total_lots, final=True)
+            if self.run_specs is not None and any(r.get('run_results') for r in results):
+                self.progress.emit("회차 요약 계산 중…")
                 spec_limits, spec_deviation = self.run_specs
                 for result in results:
-                    if result.get('run_results'):
+                    if not result.get('run_results'):
+                        continue
+                    try:
                         result['runs'] = summarize_runs(result, spec_limits, spec_deviation)
+                    except Exception:
+                        # 로드는 버리지 않는다. 'runs'가 없으면 화면 스레드가 다시 계산한다
+                        logging.exception("회차 요약 계산 실패 (화면에서 다시 계산): %s",
+                                          result.get('short_name', ''))
+                        result.pop('runs', None)
             comparison = compare_recipes(results)
             elapsed = time.perf_counter() - t0
             self.finished.emit(results, comparison, elapsed)

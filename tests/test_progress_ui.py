@@ -149,20 +149,38 @@ def test_overlay_during_folder_check_and_cancel(app, window, tmp_path, monkeypat
     window._scan_folder()
     overlay = window._busy_overlay
     assert overlay.title.text() == '폴더 확인 중' and _busy(window) == (True, True)
-    _wait_for(app, lambda: overlay.count.text() == '1/140 (0%)')
-    assert overlay.item.text() == '폴더 확인 중 1/140 — Vision Pattern/7'
+    _wait_for(app, lambda: overlay.count.text() == '1개 확인')
+    assert overlay.item.text() == '폴더 확인 중 1개 확인 — Vision Pattern/7'
+    # 전체가 늘어나는 단계라 %를 보이지 않는다 (막대는 바쁨 표시)
+    assert overlay.bar.maximum() == 0 and window.status_progress.maximum() == 0
 
     window._cancel_scan()
     assert _busy(window) == (False, False)
     release.set()
 
 
-def test_overlay_follows_the_results_area(window):
+def test_overlay_covers_only_the_right_results_panel(app, window):
+    from PySide6.QtCore import QPoint, QRect
     window.resize(1400, 900)
+    window.show()                       # 배치가 실제 크기로 잡히게 (offscreen)
+    app.processEvents()
     window._busy_begin('데이터 읽는 중')
     overlay = window._busy_overlay
-    assert overlay.geometry() == window._main_splitter.geometry()
-    assert overlay.parentWidget() is window.centralWidget()     # 창 이동·크기 조절은 막지 않는다
+    central = window.centralWidget()
+    right = overlay._target
+    assert overlay.parentWidget() is central                    # 창 이동·크기 조절은 막지 않는다
+    assert overlay.geometry() == QRect(right.mapTo(central, QPoint(0, 0)), right.size())
+    # System Log가 든 왼쪽 칸은 가리지 않는다: 막은 분할선 오른쪽에서 시작한다
+    splitter = window._main_splitter
+    assert window._left_panel.isAncestorOf(window.main_tabs)
+    assert splitter.widget(0) is window._left_panel and splitter.widget(1) is right
+    handle_right = splitter.handle(1).mapTo(central, QPoint(splitter.handle(1).width(), 0)).x()
+    assert overlay.geometry().left() >= handle_right
+    assert right.isAncestorOf(window.chart_category_tabs)
+
+    window._main_splitter.setSizes([300, 1000])                  # 분할선을 옮겨도 따라간다
+    app.processEvents()
+    assert overlay.geometry() == QRect(right.mapTo(central, QPoint(0, 0)), right.size())
     window._busy_end()
 
 
@@ -207,7 +225,7 @@ def test_load_progress_is_throttled(app, tmp_path):
 
     _run_thread(app, thread)
 
-    assert len(seen) == 2 and seen[-1] == 12        # 처음 한 번 + 끝
+    assert seen == [1, 6, 12]       # 처음 한 번 + 회차 끝마다 (끝 값은 한 번만)
 
 
 def test_throttle_allows_about_ten_per_second():
@@ -234,8 +252,11 @@ def test_folder_check_progress_is_throttled(tmp_path):
     thread._throttle = Throttle(0.1, clock=lambda: clock[0])
     seen = []
     thread.count.connect(lambda done, total: seen.append((done, total)))
+    texts = []
+    thread.progress.connect(texts.append)
     thread.run()
-    assert seen == [(1, 50)]
+    assert seen == [(1, 50), (50, 50)]                  # 처음 한 번 + 끝 값은 꼭 보낸다
+    assert texts[-1].startswith('폴더 확인 중 50개 확인')
 
 
 # ── 화면 그리기 단계와 Step·회차 전환 ──────────────────────────────────
@@ -372,6 +393,8 @@ def test_dialog_rows_show_busy_bar_and_overall_progress(app, tmp_path, monkeypat
     empty = {key: {'path': '', 'enabled': False, 'note': ''} for key in SPECS}
     dlg = WorkflowFolderDialog(None, SPECS, '', {}, '', session=ScanSession(), prefill=empty)
     try:
+        dlg._rows['Global Align'][1].setText('relative')      # 체크하지 않은 행은 세지 않는다
+        dlg._rows['Vision Pattern'][0].setChecked(True)
         dlg._rows['Vision Pattern'][1].setText(str(tmp_path / 'vp'))
         dlg._update_status('Vision Pattern')
         assert not dlg._row_bars['Vision Pattern'].isHidden()
@@ -386,3 +409,112 @@ def test_dialog_rows_show_busy_bar_and_overall_progress(app, tmp_path, monkeypat
         release.set()
         dlg.done(0)
         dlg.deleteLater()
+
+
+# ── 리뷰 반영 ───────────────────────────────────────────────────
+
+def test_render_failure_unlocks_controls_and_reports(window, fake_loader, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, 'critical', staticmethod(lambda *a, **k: shown.append(a[2])))
+    _start_load(window, tmp_path)
+    assert not window.btn_scan.isEnabled() and window._cancel_shortcut.isEnabled()
+
+    def boom(*_a, **_k):
+        raise RuntimeError('표 그리기 실패')
+    monkeypatch.setattr(window, '_update_summary_table', boom)
+    fake_loader[-1].finished.emit([], [], 0.1)
+
+    assert _busy(window) == (False, False)
+    assert window.btn_scan.isEnabled() and window.btn_workflow.isEnabled()
+    assert window.btn_cancel_scan.isHidden() and not window._cancel_shortcut.isEnabled()
+    assert window._loader_thread is None
+    assert QApplication.overrideCursor() is None
+    logged = str(window.logger.export_rows())
+    assert '❌ 결과 화면 갱신 오류: RuntimeError: 표 그리기 실패' in logged and 'Traceback' in logged
+    assert shown and '표 그리기 실패' in shown[0]
+
+
+def test_progress_callback_error_does_not_change_data(tmp_path):
+    from core import csv_loader
+    root = _make_runs(tmp_path / 'vp', ['1'], lots=4) / '1'
+    plain = csv_loader.batch_load(str(root))
+    session = ScanSession()
+
+    def broken(*_a):
+        raise ValueError('진행 표시 오류')
+    session.lot_progress = broken
+    errors = []
+    assert csv_loader.batch_load(str(root), errors=errors, session=session) == plain
+    assert errors == []
+
+
+def test_runs_are_recomputed_when_specs_changed_during_load(window, tmp_path, monkeypatch):
+    import ui.controllers.scan_controller as controller
+    vp = _make_runs(tmp_path / 'vp', ['1', '2'], lots=10)
+    recipes, _ = recipes_from_mapping([('Vision Pattern', str(vp))], SPECS)
+    window.recipes = recipes
+    window._build_nav()
+    results = load_all_recipes('', recipes=recipes)
+    results[0]['runs'] = ['로드 시작 때 Spec으로 계산한 값']
+    old_specs = ({}, {'Vision Pattern': {'spec_range': 9.9, 'spec_stddev': 9.9}})
+    real = controller.summarize_runs
+    calls = []
+    monkeypatch.setattr(controller, 'summarize_runs',
+                        lambda *a: calls.append(a) or real(*a))
+    window._loader_thread = type('Done', (), {'folder': str(vp), 'run_specs': old_specs})()
+    window._on_scan_complete(results, compare_recipes(results), 1.0)
+    assert len(calls) == 1 and len(window.recipe_results[0]['runs']) == 2
+
+
+def test_summary_failure_in_loader_keeps_the_load(app, tmp_path, monkeypatch):
+    import ui.workers.data_loader_thread as module
+    thread = _loader_for(tmp_path, ['1', '2'], lots=3)
+    thread.run_specs = ({}, dict(SPEC_DEV))
+
+    def boom(*_a):
+        raise ValueError('요약 실패')
+    monkeypatch.setattr(module, 'summarize_runs', boom)
+    texts, finished = [], []
+    thread.progress.connect(texts.append)
+    thread.finished.connect(lambda results, _c, _e: finished.append(results))
+    _run_thread(app, thread)
+    assert '회차 요약 계산 중…' in texts
+    assert finished and finished[0][0]['run_results'] and 'runs' not in finished[0][0]
+
+
+def test_wait_cursor_is_restored_when_body_raises(window):
+    from PySide6.QtWidgets import QApplication
+    from ui.controllers.step_controller import wait_cursor
+    with pytest.raises(RuntimeError):
+        with wait_cursor(window, 'Step 전환 중…'):
+            raise RuntimeError('그리기 실패')
+    assert QApplication.overrideCursor() is None
+
+
+def test_rescan_with_one_recipe_clears_old_comparison_charts(window, tmp_path, fake_loader):
+    _loaded(window, tmp_path / 'a', (('Vision Pattern', ['1', '2']), ('Global Align', ['1', '2'])))
+    window._select_chart('Boxplot')
+    assert window.chart_widgets['Boxplot']._canvas is not None
+    assert '비교 차트(Comparison 탭)는 탭을 열 때 그립니다' in str(window.logger.export_rows())
+    window._select_chart('Contour X')
+
+    _start_load(window, tmp_path / 'b')         # 새 폴더: Recipe 1개
+    for name in ('Boxplot', 'Trend', 'Heatmap'):
+        assert window.chart_widgets[name]._canvas is None
+    window._select_chart('Boxplot')
+    assert window.chart_widgets['Boxplot']._canvas is None      # 지난 결과를 다시 그리지 않는다
+
+
+def test_run_charts_redraw_only_for_new_results(window, tmp_path, monkeypatch):
+    import charts
+    calls = []
+    real = charts.plot_run_comparison_metrics
+    monkeypatch.setattr(charts, 'plot_run_comparison_metrics',
+                        lambda *a: calls.append(1) or real(*a))
+    _loaded(window, tmp_path / 'a')
+    window._select_chart('회차 비교')
+    window.run_combo.setCurrentIndex(0)         # 같은 결과의 회차 전환: 차트 내용이 같다
+    assert len(calls) == 1
+    _loaded(window, tmp_path / 'b')             # 새 스캔 결과
+    assert len(calls) == 2

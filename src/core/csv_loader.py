@@ -929,7 +929,7 @@ def _load_lots_parallel(lots: list, session: Optional[ScanSession] = None,
             return None, e
         finally:
             if on_loaded is not None:
-                on_loaded()
+                _notify_safely(on_loaded)
 
     if len(lots) <= 1:
         return [load(lot) for lot in lots]
@@ -953,7 +953,15 @@ def batch_load(root_path: str,
                                session, (lambda: notify('lot', root_path)) if notify else None)
     finally:
         if notify is not None:
-            notify('round', root_path)
+            _notify_safely(notify, 'round', root_path)
+
+
+def _notify_safely(callback, *args):
+    """진행 알림은 화면 표시용이다. 알림이 실패해도 읽은 데이터·로드 결과는 바뀌면 안 된다."""
+    try:
+        callback(*args)
+    except Exception:
+        logging.exception('진행 알림 오류 (데이터에는 영향 없음)')
 
 
 def batch_load_rows(root_path: str,

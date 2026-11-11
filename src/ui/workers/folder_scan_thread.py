@@ -17,11 +17,14 @@ from ui.workers.progress_throttle import Throttle
 
 
 def progress_text(done: int, total: int, path: str) -> str:
-    """상태 표시줄 문구 — '폴더 확인 중 37/140 — Vision Pattern/7' (확인 중인 Lot의 상위 두 단계)."""
+    """상태 표시줄 문구 — '폴더 확인 중 37개 확인 — Vision Pattern/7' (확인 중인 Lot의 상위 두 단계).
+
+    폴더를 찾을수록 전체가 늘어나 n/m의 %가 뒤로 갈 수 있다. 확인한 수만 적는다.
+    """
     parent = os.path.dirname(os.path.normpath(path))
     tail = '/'.join(p for p in (os.path.basename(os.path.dirname(parent)),
                                 os.path.basename(parent)) if p)
-    return f"폴더 확인 중 {done}/{total} — {tail}"
+    return f"폴더 확인 중 {done}개 확인 — {tail}"
 
 
 class FolderScanThread(QThread):
@@ -37,8 +40,10 @@ class FolderScanThread(QThread):
         # 캐시는 함께 쓰고 진행 표시·중지는 이 스레드 것만 갖는다
         self.session = session.fork(progress=self._report)
         self._throttle = Throttle(0.1)      # 초당 10번 정도만 알린다
+        self._last = None                   # 마지막 진행 (끝날 때 꼭 한 번 보낸다)
 
     def _report(self, done, total, path):
+        self._last = (done, total, path)
         if self._throttle.ready():
             self.progress.emit(progress_text(done, total, path))
             self.count.emit(done, total)
@@ -56,4 +61,8 @@ class FolderScanThread(QThread):
         except Exception as e:
             self.failed.emit(f"{type(e).__name__}: {e}", traceback.format_exc())
             return
+        if self._last is not None:      # 줄여 보내느라 빠진 마지막 값
+            done, total, path = self._last
+            self.progress.emit(progress_text(done, total, path))
+            self.count.emit(done, total)
         self.done.emit(result, time.perf_counter() - t0)

@@ -68,6 +68,7 @@ class ScanMixin:
     _previous_view = None     # 로드를 중지하면 되돌릴 이전 결과
     _pending_settings = None  # 로드가 끝나면 저장할 설정 (중지하면 버린다)
     _scan_generation = 0      # 스캔·로드·중지마다 바뀐다. 다른 세대의 늦은 결과는 버린다
+    _data_generation = 0      # 결과 목록이 새로 바뀔 때마다(스캔 완료·초기화·복원) 바뀐다
 
     def _next_generation(self):
         self._scan_generation += 1
@@ -121,6 +122,15 @@ class ScanMixin:
                 bar.setValue(min(done, total))
             else:
                 bar.setRange(0, 0)
+
+    def _busy_folder_count(self, done, _total):
+        """폴더 확인: 찾을수록 전체가 늘어 %가 뒤로 갈 수 있으므로 바쁨 표시 + 확인한 수."""
+        overlay = getattr(self, '_busy_overlay', None)
+        if overlay is not None:
+            overlay.set_busy_count(f"{done}개 확인")
+        bar = getattr(self, 'status_progress', None)
+        if bar is not None:
+            bar.setRange(0, 0)
 
     def _busy_text(self, text):
         self.statusBar().showMessage(text)
@@ -219,7 +229,7 @@ class ScanMixin:
         thread = FolderScanThread(job, session)
         thread.generation = self._next_generation()
         thread.progress.connect(self._busy_text)
-        thread.count.connect(self._busy_count)
+        thread.count.connect(self._busy_folder_count)
         thread.done.connect(self._on_folder_check_done)
         thread.failed.connect(self._on_folder_check_failed)
         thread.cancelled.connect(self._on_folder_check_cancelled)
@@ -442,8 +452,12 @@ class ScanMixin:
         """이전 폴더의 결과를 지운다. 안 그러면 로드 중에 새 Step 이름으로 이전 판정이 보인다."""
         self.recipe_results = []
         self._run_compare_key = None    # 새 결과의 회차 비교 차트를 다시 그리게 한다
+        self._data_generation += 1
         self._run_charts_pending = None
         self._comparison_pending = {}
+        # 이전 폴더의 Recipe 비교 차트를 지운다 (새 결과가 Recipe 1개거나 로드가 실패하면 남는다)
+        for name, _plot, _done in COMPARISON_CHARTS:
+            self.chart_widgets[name].clear()
         self.sum_table.setColumnCount(0)
         self._build_nav()
         if self.recipes:
@@ -522,6 +536,7 @@ class ScanMixin:
         self.recipes = view['recipes']
         self.recipe_results = view['results']
         self._run_compare_key = None
+        self._data_generation += 1
         self._build_nav()
         if self.recipe_results:
             self._update_summary_table(compare_recipes(self.recipe_results), self.recipe_results)
@@ -664,11 +679,22 @@ class ScanMixin:
         if self._is_stale(self._loader_thread):
             return      # 중지한 로드의 늦은 결과
         t_render = time.perf_counter()
-        self._show_render_phase()
         try:
+            self._show_render_phase()
             self._apply_scan_results(results, comparison, elapsed, t_render)
+        except Exception as e:
+            # 화면을 그리다 실패해도 버튼·진행 표시는 풀어야 한다 (잠긴 채 남으면 다시 스캔할 수 없다)
+            tb = traceback.format_exc()
+            self._log_during_recovery(f"❌ 결과 화면 갱신 오류: {type(e).__name__}: {e}")
+            self._log_during_recovery(tb.rstrip())
+            self.statusBar().showMessage("화면 갱신 실패 (System Log 확인)")
+            QMessageBox.critical(self, "오류",
+                                 f"결과 화면을 그리지 못했습니다.\n{type(e).__name__}: {e}")
         finally:
             self._busy_end()
+            # 스레드 완료 → 참조 해제 + 컨트롤 재활성 (isRunning() 가드를 신뢰 가능하게 유지)
+            self._loader_thread = None
+            self._set_scan_controls_enabled(True)
 
     def _apply_scan_results(self, results, comparison, elapsed, t_render):
         self._previous_view = None
@@ -684,6 +710,7 @@ class ScanMixin:
             if result.get('run_results') and not (computed and 'runs' in result):
                 result['runs'] = summarize_runs(result, spec_limits, spec_deviation)
         self.recipe_results = results
+        self._data_generation += 1      # 회차 비교 차트 캐시 키
         # 경로 입력란은 스캔 뒤에 바뀔 수 있다. 내보내기는 이 값으로 출처를 적는다.
         self._scanned_folder = self._loader_thread.folder
         total = sum(len(r.get('raw_data', [])) for r in results)
@@ -736,9 +763,8 @@ class ScanMixin:
         self.statusBar().showMessage(
             f"✅ {len(self.recipes)}개 Recipe | {total}개 데이터 | Step 클릭 → 상세 분석")
 
-        # 스레드 완료 → 참조 해제 + 컨트롤 재활성 (isRunning() 가드를 신뢰 가능하게 유지)
-        self._loader_thread = None
-        self._set_scan_controls_enabled(True)
+        if len(self.recipe_results) >= 2 or any(r.get('runs') for r in self.recipe_results):
+            self.logger.info("  ℹ 비교 차트(Comparison 탭)는 탭을 열 때 그립니다")
         self.logger.info(f"⏱ 화면 갱신 {time.perf_counter() - t_render:.1f}초")
 
 
