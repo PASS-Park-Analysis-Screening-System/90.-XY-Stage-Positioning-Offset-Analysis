@@ -46,6 +46,39 @@ _MACHINE_SPECIFIC_DEFAULTS = {'last_folder': '', 'recent_folders': [],
 # 값을 JSON 문자열로 레지스트리에 저장하는 항목
 _JSON_REGISTRY_KEYS = ('recent_folders', 'workflow_folder_map')
 
+# 회전 진단 잠정 규격 (트러블슈팅 진단 탭). 장비 데이터(평균 + 3σ)로 확정 전까지 잠정이다.
+#   theta: X 라인 |θx| (Y 라인은 |θy|), µrad — ±120 mm Die에서 Range 기여 = θ × 0.24 µm,
+#          1.0 µm Spec의 25 %를 배정하면 1.0 µrad
+#   kappa: 스캐너 구동 1 µm당 회전, µrad/µm
+#   offset_max: 측정 라인에 걸리는 스캐너 오프셋(보정 포함) 한도, µm
+DEFAULT_ROTATION_SPEC = {'theta_max': 1.0, 'theta_warn': 0.7,
+                         'kappa_max': 0.10, 'kappa_warn': 0.07,
+                         'offset_max': 10.0, 'provisional': True}
+
+
+def rotation_spec(settings: dict = None) -> dict:
+    """설정의 회전 잠정 규격. 번들 settings.json 값이 우선이고, 없거나 숫자가 아니거나 음수인 항목은
+    항목마다 코드 기본값을 쓴다. 주의값이 한도보다 크면 한도로 맞춘다 (warn ≤ max)."""
+    spec = (settings or {}).get('rotation_spec')
+    spec = spec if isinstance(spec, dict) else {}
+    out = {}
+    for key, default in DEFAULT_ROTATION_SPEC.items():
+        value = spec.get(key, default)
+        if key == 'provisional':
+            out[key] = value if isinstance(value, bool) else default
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = float(default)
+        if isinstance(spec.get(key), bool) or value != value or value in (float('inf'), float('-inf')) \
+                or value < 0:
+            value = float(default)
+        out[key] = value
+    for warn, limit in (('theta_warn', 'theta_max'), ('kappa_warn', 'kappa_max')):
+        out[warn] = min(out[warn], out[limit])
+    return out
+
 
 def _read_settings_file(file_path: str) -> dict:
     with open(file_path, 'r', encoding='utf-8-sig') as f:
@@ -159,6 +192,8 @@ def load_settings() -> dict:
     except (json.JSONDecodeError, OSError):
         return {}
 
+    # 규격은 다른 Spec 항목처럼 번들에서 온다 (사용자 설정으로 바꾸지 않는다). 빠진 항목은 코드 기본값
+    bundled['rotation_spec'] = rotation_spec(bundled)
     if not IS_FROZEN:
         return {**bundled, **_read_local_settings()}
 

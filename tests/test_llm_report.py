@@ -91,7 +91,7 @@ def test_all_sections_present_in_order(tmp_path):
                           SPEC_LIM, SPEC_DEV, **FIXED)
     titles = re.findall(r'^## (.+)$', md, re.MULTILINE)
     assert titles == ['분석 조건', '결과 요약', '원인 단서', '비전 보정 로그 대조 (Positioning Log)',
-                      '회차 비교',
+                      '트러블슈팅 진단 (Diagnosis)', '회차 비교',
                       '회차 변경 이력 (사용자 기입)', '부록: Die×Repeat 편차 표 (선택 회차)',
                       'LLM 분석 요청']
     clues = _section(md, '원인 단서')

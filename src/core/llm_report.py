@@ -904,9 +904,27 @@ def _whatif_text(a: _Analysis, whatifs, spec_range, spec_stddev) -> str:
     return result_text(combine_verdicts(*(m['result'] for m in axes)), verdict_reference(*axes))
 
 
-def _positioning(results) -> str:
+def _poslog_analyses(results) -> list:
+    """Workflow마다 비전 보정 로그 대조 [(분석 또는 None, 예외 또는 None)].
+
+    Positioning Log·Diagnosis 탭에서 읽어 담은 분석을 쓰고, 없으면 내보내기 스레드에서 순서대로 읽는다.
+    '비전 보정 로그 대조' 절과 '트러블슈팅 진단' 절이 같은 분석을 쓴다 (화면의 진단 탭도 담긴 분석을 쓴다).
+    한 Workflow의 실패가 리포트 전체를 막지 않게 한다.
+    """
+    from core.positioning_log import ensure_analysis
+    out = []
+    for r in results:
+        try:
+            out.append((ensure_analysis(r, workers=1), None))
+        except Exception as e:
+            out.append((None, e))
+    return out
+
+
+def _positioning(results, analyses=None) -> str:
     """비전 보정 로그(SamplePositioning·TipPositioning)와 최종 착지 대조 (선택 회차)."""
-    from core.positioning_log import COEF_NAMES, COEF_UNIT, ensure_analysis
+    from core.positioning_log import COEF_NAMES, COEF_UNIT
+    analyses = analyses if analyses is not None else _poslog_analyses(results)
     lines = ['## 비전 보정 로그 대조 (Positioning Log)',
              'Lot 폴더 Debug/SamplePositioning(Die마다 Coarse/Fine Match·Move, Optical Shift, Tip Pos)과 '
              'Debug/TipPositioning 로그를 최종 착지(HZ1_O 편차)와 대조한다. 각 Workflow의 선택 회차, '
@@ -914,14 +932,10 @@ def _positioning(results) -> str:
              '∂/∂y = θx (µrad), Y축 ∂/∂x = θy (µrad), ∂/∂y = Sy (ppm). t = 값/SE. '
              'r 전체 = Die별 값과 같은 축 최종 착지의 상관, r 항 = 그 계수만 남긴 부분 잔차끼리의 상관 '
              '(판정에 쓴다). — = 정할 수 없음(좌표 퍼짐 부족·공선). 로그 값의 부호 기준은 장비 정의를 따른다.']
-    for r in results:
+    for r, (a, error) in zip(results, analyses):
         lines += ['', f"### {_name(r)} (회차 {r.get('round', '')})"]
-        # Positioning Log 탭에서 읽은 분석을 쓴다. 없으면 내보내기 스레드에서 순서대로 읽는다.
-        # 한 Workflow의 실패가 리포트 전체를 막지 않게 한다
-        try:
-            a = ensure_analysis(r, workers=1)
-        except Exception as e:
-            lines.append(f'- 상태: 로그 대조 실패 ({type(e).__name__}: {e})')
+        if error is not None:
+            lines.append(f'- 상태: 로그 대조 실패 ({type(error).__name__}: {error})')
             continue
         lines.append(f"- 상태: {a.get('message', '')}")
         for lot in a.get('lots') or []:
@@ -984,6 +998,141 @@ def _positioning(results) -> str:
         summary = a.get('tip_summary') or {}
         lines += [f'- {text}' for text in summary.get('lines') or []]
     return '\n'.join(lines)
+
+
+def _pair(values, fmt='+.3f'):
+    if not values:
+        return '—'
+    return ' / '.join(_num(v, fmt[1:], fmt.startswith('+')) for v in values)
+
+
+def _diagnosis(results, spec_deviation, rotation_spec, analyses=None, rotation_test=None,
+               rotation_test_tool=None, tool_root=None) -> str:
+    """트러블슈팅 진단 (core.xy_diagnosis, 선택 회차). 화면에서 읽은 Log가 있으면 그것을, 없으면
+    내보내기 스레드에서 Lot Log를 순서대로 읽는다. 비전 보정 로그 대조는 앞 절과 같은 분석을 쓴다.
+    Workflow 하나의 실패(읽기·계산·문장 만들기)가 리포트를 막지 않는다."""
+    from core.xy_diagnosis import PART_RULES, ROTATION_RULE
+    analyses = analyses if analyses is not None else [(None, None)] * len(results)
+    lines = ['## 트러블슈팅 진단 (Diagnosis)',
+             'Lot 폴더 Log/<Sample>_Log.csv의 측정 라인별 스캐너 오프셋(ImageJob Set scan params, '
+             '적용 = 레시피 + 기준 보정 + 미세 보정)과 측정값으로 원인 후보를 규칙으로 판정한다. 각 Workflow의 '
+             f'선택 회차, 안정화 Die 제외. 길이 µm, 각도 µrad. 판정·예측은 {DERIVED} 경험 규칙이며 '
+             '회전 규격은 잠정(장비 데이터로 확정 전)이다.',
+             f'- {ROTATION_RULE}']
+    lines += [f'- 부품 규칙: {rule}' for rule in PART_RULES]
+    for r, (analysis, _error) in zip(results, analyses):
+        lines += ['', f"### {_name(r)} (회차 {r.get('round', '')})"]
+        if not r.get('raw_data'):
+            lines.append('- 데이터 없음')
+            continue
+        try:
+            lines += _diagnosis_lines(r, spec_deviation, rotation_spec, analysis, rotation_test,
+                                      rotation_test_tool, tool_root)
+        except Exception as e:
+            lines.append(f'- 상태: 진단 실패 ({type(e).__name__}: {e})')
+    return '\n'.join(lines)
+
+
+def _diagnosis_lines(r, spec_deviation, rotation_spec, analysis, rotation_test, rotation_test_tool,
+                     tool_root) -> list:
+    """Workflow 하나의 진단 문장 (예외는 부르는 쪽이 Workflow 단위로 잡는다)."""
+    from core.xy_diagnosis import build_diagnosis, read_run_logs, rotation_test_text
+    lines = []
+    logs = r.get('xy_logs')
+    if not isinstance(logs, dict):
+        logs = read_run_logs(r, workers=1)
+    d = build_diagnosis(r, logs, spec_deviation, rotation_spec, poslog=analysis, generated='',
+                        rotation_test=rotation_test, rotation_test_tool=rotation_test_tool,
+                        tool_root=tool_root).to_dict()
+    source, spec = d['source'], d['spec']
+    lines.append(f"- Log: {source.get('log_message') or source.get('log_status') or '—'}"
+                 + (f", 레시피 {source['recipe_id']}" if source.get('recipe_id') else '')
+                 + (f", 시료 {source['sample']}" if source.get('sample') else '')
+                 + (f", {source['start']} ~ {source.get('end') or '—'}" if source.get('start') else ''))
+    lines.append(f"- 잠정 규격: |θ| 주의 {spec['theta_warn']:g} / 한도 {spec['theta_max']:g} µrad, "
+                 f"κ 주의 {spec['kappa_warn']:g} / 한도 {spec['kappa_max']:g} µrad/µm, 측정 라인 스캐너 "
+                 f"오프셋 한도 {spec['offset_max']:g} µm (잠정)")
+    offsets = d.get('scanner_offsets') or {}
+    rows = []
+    for key, label in (('X_line', 'X 라인'), ('Y_line', 'Y 라인')):
+        e = offsets.get(key) or {}
+        rows.append([label, _pair(e.get('recipe')), _pair(e.get('ref')), _pair(e.get('fine')),
+                     _pair(e.get('applied')), _pair(e.get('recipe_plus_ref')), e.get('n', 0)])
+    lines.append(_table(['라인', '레시피 (X / Y)', '기준 보정', '미세 보정', '적용', '레시피+기준 보정',
+                         '측정 수'], rows))
+    shape = d.get('shape') or {}
+    sx, sy = shape.get('X') or {}, shape.get('Y') or {}
+    lines.append(f"- 평면 모양 (Die 평균): X θx {_num(sx.get('theta'), '.2f', True)} µrad "
+                 f"(t {_num(sx.get('theta_t'), '.1f', True)}), Sx {_num(sx.get('scale_ppm'), '.2f', True)} ppm "
+                 f"(t {_num(sx.get('scale_t'), '.1f', True)}); Y θy {_num(sy.get('theta'), '.2f', True)} µrad "
+                 f"(t {_num(sy.get('theta_t'), '.1f', True)}), Sy {_num(sy.get('scale_ppm'), '.2f', True)} ppm "
+                 f"(t {_num(sy.get('scale_t'), '.1f', True)})")
+    rot = d.get('rotation') or {}
+    lines.append(f"- 회전 판정 {DERIVED}: {rot.get('status', 'na')} — X 라인 θx {_num(rot.get('theta'), '.2f', True)} µrad, "
+                 f"스캐너 Y {_num(rot.get('scanner_y'), '.2f', True)} µm, κ_eff {_num(rot.get('kappa_eff'), '.3f')} "
+                 f"µrad/µm, Range 기여 {_num(rot.get('contribution_um'))} µm")
+    lines += [f'  - {text}' for text in rot.get('reasons') or []]
+    y_line = rot.get('y_line') or {}
+    lines.append(f"- Y 라인 (참고): θy {_num(y_line.get('theta'), '.2f', True)} µrad, 스캐너 X "
+                 f"{_num(y_line.get('scanner_x'), '.2f', True)} µm, κ_eff {_num(y_line.get('kappa_eff'), '.3f')}, "
+                 f"{y_line.get('status', 'na')}")
+    two = rot.get('kappa_two_point')
+    if two:
+        lines.append(f"- 회차 간 θx 대 스캐너 Y (참고): 기울기 {_num(two.get('kappa'), '.3f', True)} µrad/µm, "
+                     f"절편 {_num(two.get('intercept'), '.2f', True)} µrad ("
+                     + ', '.join(f"{p['run']}: {_num(p['scanner_y'], '.1f', True)} µm → {_num(p['theta'], '.2f', True)}"
+                                 for p in two.get('points') or []) + ')')
+    whatif = d.get('whatif') or {}
+    if whatif.get('rows'):
+        lines.append(f"What-if {DERIVED} (선형 가정, κ_eff {_num(whatif.get('kappa_eff'), '.3f')} µrad/µm"
+                     + (f"; {whatif['note']}" if whatif.get('note') else '') + '):')
+        lines.append(_table(
+            ['레시피 Y', '스캐너 Y', 'θx', 'Lot Range 평균 (최대)', 'Lot StdDev 평균 (최대)', 'PASS Lot',
+             '전체 Range / StdDev', '표시'],
+            [[_num(w['recipe_y'], '.1f', True), _num(w['scanner_y'], '.2f', True), _num(w['theta'], '.2f', True),
+              f"{_num(w['range_mean'])} ({_num(w['range_max'])})", f"{_num(w['std_mean'])} ({_num(w['std_max'])})",
+              '—' if w['pass_lots'] is None else f"{w['pass_lots']}/{w['lots']}",
+              f"{_num(w['range_all'])} / {_num(w['std_all'])}",
+              ' · '.join(m for m, on in (('현재', w['current']), ('권장', w.get('recommended'))) if on)]
+             for w in whatif['rows']]))
+    else:
+        lines.append(f"- What-if: {whatif.get('note') or '없음'}")
+    drift = d.get('drift') or {}
+    lines.append(f"- Drift {DERIVED}: {drift.get('status', 'na')}")
+    lines += [f'  - {text}' for text in drift.get('reasons') or []]
+    if drift.get('lot_means'):
+        first = {w['axis']: w for w in drift.get('within_lot') or [] if w['lot'] == drift.get('first_lot')}
+        lines.append(_table(['Lot', '시작', 'X 평균', 'Y 평균'],
+                            [[e['lot'], e.get('start') or '—', _num(e.get('x'), '.3f', True),
+                              _num(e.get('y'), '.3f', True)] for e in drift['lot_means']]))
+        lines.append('- 첫 Lot 안 측정 순서 기울기 (µm/Die, 유의한 평면 모양만 뺀 값): '
+                     + ', '.join(f"{axis} {_num((first.get(axis) or {}).get('slope_um_per_die'), '.4f', True)}"
+                                 f" (r {_num((first.get(axis) or {}).get('r'), '.2f', True)})" for axis in AXES))
+    tr = d.get('transient') or {}
+    lines.append(f"- Transient {DERIVED}: {tr.get('status', 'na')} — Die4 이후 평면 대비 잔차 (µm): "
+                 + '; '.join(f"{axis} Die1 {_num((tr.get(axis) or {}).get('die1'), '.3f', True)}, "
+                             f"Die2 {_num((tr.get(axis) or {}).get('die2'), '.3f', True)}, "
+                             f"Die3 {_num((tr.get(axis) or {}).get('die3'), '.3f', True)}" for axis in AXES))
+    lines += [f'  - {text}' for text in tr.get('reasons') or []]
+    pl = d.get('positioning_log')
+    if pl and pl.get('verdict_lines'):
+        lines += [f"- Positioning Log 판정: {text}" for text in pl['verdict_lines']]
+    elif pl:
+        lines.append(f"- Positioning Log: {pl.get('message') or pl.get('status')}")
+    else:
+        lines.append('- Positioning Log: 이 회차의 비전 보정 로그 대조가 없음 (vision·xy_stage는 na)')
+    lines.append(_table(['부품', 'id', '판정', '근거'],
+                        [[p['name'], p['id'], p['verdict'], p['reason']] for p in d.get('parts') or []]))
+    lines.append('다음 조치:')
+    lines += [f'{i}. {a}' for i, a in enumerate(d.get('actions') or [], 1)]
+    if d.get('rotation_test'):
+        lines.append(f"- {rotation_test_text(d['rotation_test'])}")
+    elif (d.get('source') or {}).get('rotation_test_note'):
+        lines.append(f"- 스캐너 회전 시험: {d['source']['rotation_test_note']}")
+    else:
+        lines.append('- 스캐너 회전 시험 결과 없음 (rotation_test null)')
+    lines += [f'- 경고: {w}' for w in d.get('warnings') or []]
+    return lines
 
 
 def _change_log(results) -> str:
@@ -1173,6 +1322,7 @@ def _request(results, spec_limits, spec_deviation) -> str:
              '  - 측정·비전 잡음 (Die×Lot 잔여, Die 안 StdDev)',
              '  - 위치 결정 단계 (비전 보정 로그 대조: 도착·비전 보정·정밀 잔차·Optical Shift·'
              'Tip Positioning 중 어디에 같은 성분이 있는지, 어디에도 없으면 카메라→Tip 착지 구간)',
+             '  - 측정 라인 스캐너 구동 회전 (트러블슈팅 진단: 스캐너 오프셋, κ_eff, what-if, 부품 판정)',
              '- 이상치(*)는 Range·StdDev·판정에 포함되어 있습니다.']
     if reference:
         lines.append(f"- {', '.join(reference)}: 판정이 '{REFERENCE_LABEL}'입니다. Repeat이 1개라 "
@@ -1187,20 +1337,29 @@ def _request(results, spec_limits, spec_deviation) -> str:
 
 def build_llm_report(recipe_results: list, spec_limits: dict = None,
                      spec_deviation: dict = None, *, app_version: str = '',
-                     exported_at: str = '', source_root: str = '', raw_csv: dict = None) -> str:
+                     exported_at: str = '', source_root: str = '', raw_csv: dict = None,
+                     rotation_spec: dict = None, rotation_test: dict = None,
+                     rotation_test_tool: str = None, tool_root: str = None) -> str:
     """LLM 원인 분석용 Markdown 한 파일 (UTF-8 문자열).
 
     recipe_results: 화면의 Recipe 결과 목록 (선택 회차 결과, 회차가 여럿이면 run_results 포함)
     raw_csv: 같이 쓴 셀 값 CSV {'name': 파일 이름} 또는 실패 시 {'name':…, 'error': 이유}
+    rotation_spec: 회전 잠정 규격 (settings.rotation_spec). 없으면 코드 기본값
+    rotation_test: 스캐너 회전 시험 결과 (창의 _rotation_test_result, 장비의 것). 없으면 None
+    rotation_test_tool: 그 시험을 받은 장비 tool_id — 다른 장비의 Workflow 진단에는 붙이지 않는다
+    tool_root: Log에 Tool ID가 없을 때 장비를 가리는 폴더 (화면이 연 폴더)
     """
     results = list(recipe_results or [])
+    analyses = _poslog_analyses(results)
     sections = [
         _front_matter(results, app_version, exported_at, source_root, raw_csv),
         '# XY Stage 위치 오프셋 — AI 분석용 리포트',
         _conditions(results, spec_limits, spec_deviation),
         _summary(results, spec_limits, spec_deviation),
         _clues(results, spec_limits, spec_deviation),
-        _positioning(results),
+        _positioning(results, analyses),
+        _diagnosis(results, spec_deviation, rotation_spec, analyses, rotation_test,
+                   rotation_test_tool, tool_root),
         _run_comparison(results, spec_limits, spec_deviation),
         _change_log(results),
         _appendix(results, raw_csv),

@@ -1,0 +1,59 @@
+Time,Parent Job,Current Job,Step,Param ID,Param Value,Tack Time
+2026/11/12 11:46:11.272,LotProcessJob,SampleProcessJob,STARTED,-,-
+2026/11/12 11:46:54.848,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.167
+,,,,X Offset - Fine,-0.18386
+,,,,Y Offset - Fine,-0.765634
+2026/11/12 11:47:17.414,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.032
+,,,,X Offset,0.94914
+,,,,Y Offset,-8.382634
+2026/11/12 11:47:35.157,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.053
+,,,,X Offset,25.94914
+,,,,Y Offset,-1.382634
+2026/11/12 11:47:58.430,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.162
+,,,,X Offset - Fine,0.042023
+,,,,Y Offset - Fine,-0.657917
+2026/11/12 11:48:11.831,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.411
+,,,,X Offset,1.175023
+,,,,Y Offset,-8.274917
+2026/11/12 11:48:29.576,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.055
+,,,,X Offset,26.175023
+,,,,Y Offset,-1.274917
+2026/11/12 11:48:53.813,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.221
+,,,,X Offset - Fine,0.153618
+,,,,Y Offset - Fine,-0.681967
+2026/11/12 11:49:06.969,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.413
+,,,,X Offset,1.286618
+,,,,Y Offset,-8.298967
+2026/11/12 11:49:24.703,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.056
+,,,,X Offset,26.286618
+,,,,Y Offset,-1.298967
+2026/11/12 11:49:49.004,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.276
+,,,,X Offset - Fine,1.873681
+,,,,Y Offset - Fine,-0.20296
+2026/11/12 11:50:02.117,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.418
+,,,,X Offset,3.006681
+,,,,Y Offset,-7.81996
+2026/11/12 11:50:19.852,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.057
+,,,,X Offset,28.006681
+,,,,Y Offset,-0.81996
+2026/11/12 11:50:43.201,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.161
+,,,,X Offset - Fine,0.691572
+,,,,Y Offset - Fine,-0.7428
+2026/11/12 11:50:56.630,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.412
+,,,,X Offset,1.824572
+,,,,Y Offset,-8.3598
+2026/11/12 11:51:14.406,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.065
+,,,,X Offset,26.824572
+,,,,Y Offset,-1.3598
+2026/11/12 11:51:39.356,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.162
+,,,,X Offset - Fine,0.360107
+,,,,Y Offset - Fine,-0.651274
+2026/11/12 11:51:52.645,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,2.414
+,,,,X Offset,1.493107
+,,,,Y Offset,-8.268274
+2026/11/12 11:52:10.404,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,3.059
+,,,,X Offset,26.493107
+,,,,Y Offset,-1.268274
+2026/11/12 11:52:34.631,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,2.163
+,,,,X Offset - Fine,0.956816
+,,,,Y Offset - Fine,-0.087162

@@ -82,11 +82,12 @@ from ui.dialogs.image_shift_dialog import threads_alive as image_shift_threads_a
 from ui.dialogs.scanner_rotation_dialog import threads_alive as rotation_threads_alive
 from ui.controllers.run_compare_controller import RunCompareMixin
 from ui.controllers.positioning_controller import PositioningMixin
+from ui.controllers.diagnosis_controller import DiagnosisMixin
 
 # ═══════════════════════════════════════════════
 #  Main Application
 # ═══════════════════════════════════════════════
-class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin):
+class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin, DiagnosisMixin):
 
     def __init__(self):
         super().__init__()
@@ -145,6 +146,9 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
         for thread in threads:
             if hasattr(thread, 'cancel'):
                 thread.cancel()
+        cancel_diagnosis = getattr(self, '_cancel_diagnosis_reads', None)
+        if cancel_diagnosis is not None:    # 진단 Log 읽기(파이썬 스레드)도 남은 Lot은 읽지 않게
+            cancel_diagnosis()
         deadline = time.monotonic() + 1.5
         for thread in threads:
             thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))

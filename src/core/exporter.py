@@ -512,8 +512,8 @@ def write_basis_sheet(wb, recipe_results: list, position: int) -> None:
 
 
 RUN_COMPARISON_HEADERS = ['회차', 'Lot 수', 'X Range (µm)', 'X StdDev (µm)', 'X Avg (nm)',
-                          'Y Range (µm)', 'Y StdDev (µm)', 'Y Avg (nm)', 'Cpk X', 'Cpk Y',
-                          '판정', '판정 기준', '경고']
+                          'θx (µrad)', 'Y Range (µm)', 'Y StdDev (µm)', 'Y Avg (nm)', 'θy (µrad)',
+                          'Cpk X', 'Cpk Y', '판정', '판정 기준', '경고']
 
 
 def write_run_comparison_sheet(wb, recipe_results: list, spec_limits: dict = None,
@@ -547,9 +547,13 @@ def write_run_comparison_sheet(wb, recipe_results: list, spec_limits: dict = Non
         for run in runs:
             row += 1
             x, y = run['x'], run['y']
+            # θ: Die 평균 편차의 평면 기울기 (X ∂dx/∂y, Y ∂dy/∂x), CSV 값만
+            theta_x, theta_y = run.get('theta_x'), run.get('theta_y')
             values = [run['run'], run['lot_count'],
                       shown(x['range']), shown(x['stddev']), shown(x['avg']),
+                      shown(None if theta_x is None else round(theta_x, 2)),
                       shown(y['range']), shown(y['stddev']), shown(y['avg']),
+                      shown(None if theta_y is None else round(theta_y, 2)),
                       shown(x['cpk']), shown(y['cpk']),
                       result_text(run['result'], run.get('reference')),
                       basis_text(run['result'], run.get('reference')),

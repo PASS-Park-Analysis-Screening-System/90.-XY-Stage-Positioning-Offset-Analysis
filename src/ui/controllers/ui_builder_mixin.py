@@ -848,6 +848,11 @@ class UIBuilderMixin:
         _add_chart('Advanced', 'Positioning Log', self._build_positioning_widget(), register=False)
         self._inner_tabs['Advanced'].currentChanged.connect(self._flush_positioning_chart)
         self.chart_category_tabs.currentChanged.connect(self._flush_positioning_chart)
+        # 트러블슈팅 진단 (스캐너 오프셋·회전·what-if·drift, pass.xy.diagnosis/1)
+        from ui.controllers.diagnosis_controller import DIAGNOSIS_TAB
+        _add_chart('Advanced', DIAGNOSIS_TAB, self._build_diagnosis_widget(), register=False)
+        self._inner_tabs['Advanced'].currentChanged.connect(self._flush_diagnosis)
+        self.chart_category_tabs.currentChanged.connect(self._flush_diagnosis)
 
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:

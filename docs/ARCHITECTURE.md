@@ -22,6 +22,7 @@
 │   │   ├── llm_report.py     # LLM 원인 분석용 Markdown (report_schema: xy-stage-llm-report/1)
 │   │   ├── positioning_log.py # 비전 보정 로그(SamplePositioning·TipPositioning) ↔ HZ1_O 대조
 │   │   ├── troubleshoot_report.py # 진단(pass.xy.diagnosis/1) → 3D 트러블슈팅 HTML 한 파일, 사례 라이브러리 경로
+│   │   ├── xy_diagnosis.py   # 트러블슈팅 진단 (스캐너 오프셋·회전·what-if·drift, pass.xy.diagnosis/1)
 │   │   └── settings.py       # 사용자 설정 관리
 │   ├── charts/               # 시각화 모듈
 │   │   ├── basic.py          # 범용 차트 (Matplotlib)
@@ -54,6 +55,7 @@ main.py (DataAnalyzerApp + 여러 Mixin 상속)
 ├── core.exporter       (Excel/CSV 내보내기)
 ├── core.pdf_generator  (PDF 내보내기)
 ├── core.llm_report     (AI 분석용 Markdown, Qt 없음)
+├── core.xy_diagnosis   (트러블슈팅 진단, Qt 없음 — Diagnosis 탭·LLM 리포트·회차 비교 θ)
 ├── core.tiff_loader    (TIFF 열기)
 └── core.settings       (환경 설정 연동)
 ```
@@ -152,7 +154,9 @@ DataAnalyzerApp (QMainWindow)
         ├─ "Advanced"
         │   ├─ "Pareto"
         │   ├─ "Correlation"
-        │   └─ "3D Surface X / Y" (서브탭)
+        │   ├─ "3D Surface X / Y" (서브탭)
+        │   ├─ "Positioning Log"  (비전 보정 로그 대조)
+        │   └─ "Diagnosis (트러블슈팅)" (요약 칩, 스캐너 오프셋·what-if 표, drift 차트, 부품 판정, 다음 조치, 진단 JSON 저장)
         ├─ "Comparison"
         │   ├─ "Boxplot"
         │   ├─ "Trend"
@@ -254,6 +258,33 @@ Optical Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면
 Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결과의 `positioning_log`에 담고, AI 분석용 리포트의
 '비전 보정 로그 대조' 절은 담긴 분석을 쓰거나 내보내기 스레드에서 읽는다.
 
+### 7.2 트러블슈팅 진단 (`core/xy_diagnosis.py`)
+
+선택 회차 하나의 측정값과 Lot Log로 원인 후보를 규칙으로 판정해 `pass.xy.diagnosis/1` dict를 만든다
+(`XYDiagnosis.to_dict()` / `to_json()`, 공유 설계 `.omc/plans/xy-diagnosis-integration.md`).
+- **읽기** (`read_run_logs`, 작업 스레드): Lot마다 `Log/<Sample>_Log.csv`(폴더 목록 1번·파일 1개)와 측정 CSV 앞 20줄
+  (Start/End Time, Recipe ID, Sample ID). Log의 ImageJob `Set scan params`(Scan Direction, X/Y Offset = 측정 라인에
+  건 스캐너 오프셋), 그 전 마지막 `Sample pattern align - fine`(X/Y Offset - Fine, µm), `Apply reference scan result`
+  (X/Y Offset - Reference·Total, nm). 레시피 = 적용 − 기준 보정 − 미세 보정. 기준 스캔이 Lot에 없으면 시각 순서로 앞
+  Lot의 값을 이어 쓰고, 그래도 없으면 레시피·기준 보정은 null(`recipe_plus_ref`만). 폴더·파일 없음은 `no_log`, 그 밖의
+  읽기 오류는 한 번 더 읽고 `error`(담지 않음). 읽은 것은 회차 결과의 `xy_logs`에 담는다 (`store_logs`).
+- **계산** (`build_diagnosis`, 파일을 읽지 않음, 10 Lot에 ~30 ms): 축별 Die 평균 평면(`positioning_log.plane_fit`,
+  θx = ∂dx/∂y, θy = ∂dy/∂x), κ_eff = |θ| / |구동 축 스캐너 오프셋|, what-if(H − κ·Δ·y, 선형), drift(Lot 평균 대 시작
+  시각, Lot 안 측정 순서 기울기 — 유의한 평면 모양만 뺌), transient(Die4 이후 평면 대비 Die1·2·3), Die 평균 편차 장,
+  Positioning Log 분석이 있으면 그 판정, 부품 판정(`PART_RULES`)과 다음 조치. 스캐너 부품의 '이상'은 θ 유의(Die 8개 이상) +
+  구동 ≥ 5 µm + Positioning Log가 비전 정렬 이후로 볼 때만이다(분석 전이면 많아야 '주의'). what-if 후보는 지금 레시피와
+  같은 쪽, 권장은 '지금 행이 모든 Lot PASS면 현재 유지, 아니면 꼭짓점 여유 5 µm 이상 PASS 후보 중 |값| 최소'. 회전 잠정 규격은
+  `settings.rotation_spec` (코드 기본값 `DEFAULT_ROTATION_SPEC`을 번들 값이 항목마다 덮고, 숫자로 바꾸며 warn ≤ max).
+- **화면** (`ui/controllers/diagnosis_controller.py`): Diagnosis 탭이 보일 때만 그 회차의 Log를 읽고(세대 번호로 늦은 결과를
+  버림, 시그널로 화면 스레드에 넘김, 창을 닫으면 ScanSession 중지), 같은 때 positioning_controller의 Positioning Log 읽기도
+  시작한다(끝나면 `_refresh_diagnosis`). 진단은 탭이 보일 때 화면 스레드에서 계산한다. 지금 보이는 진단 dict는 창의
+  `_xy_diagnosis`에 둔다 (3D 보고서·스캐너 회전 시험 분석이 붙는 자리, 없으면 None). 회전 시험 대화상자는
+  `set_rotation_test(결과)`를 부른다: 사본을 `_rotation_test_result`(장비의 것, 회차를 바꿔도 유지)에 두고 진단을 다시
+  계산해 `rotation_test` 칸·요약 칩에 넣는다. 폐루프·Y 축 시험의 warn·fail은 `xy_scanner_y`의 직접 증거다. 결과는 받을 때의
+  장비(`source.tool_id`: Log의 Tool ID, 없으면 연 폴더)에 묶여 다른 장비의 진단·JSON·LLM에는 붙지 않는다.
+- **내보내기**: AI 분석용 리포트 '트러블슈팅 진단 (Diagnosis)' 절은 담긴 Log를 쓰거나 내보내기 스레드에서 읽는다
+  (Workflow별 예외 격리). 회차 비교 표·Excel Run Comparison의 θx·θy는 `axis_shape`로 CSV 값만 쓴다.
+
 ## 8. 성능 및 비동기 처리
 
 | 작업 | 처리 방식 | 이유 |
@@ -266,6 +297,7 @@ Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결�
 | 진행 표시 | `BusyOverlay` + 상태 표시줄 `QProgressBar` | 폴더 확인 n/m, Lot n/m(전체는 폴더 확인 결과로 미리 앎), 초당 10번까지 |
 | 회차 요약 (`summarize_runs`) | `DataLoaderThread` | 화면 갱신 시간을 줄인다. Spec이 바뀌었으면 화면 스레드가 다시 계산 |
 | 비전 보정 로그 대조 (`positioning_log`) | Positioning Log 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 내보내기는 그 스레드에서 순서대로 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2~3개라 데이터 로드에서는 읽지 않는다 |
+| 트러블슈팅 진단 Log (`xy_diagnosis`) | Diagnosis 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 진단 계산은 탭이 보일 때 화면 스레드, 내보내기는 그 스레드에서 순서대로 | Lot마다 Log 폴더 목록 1번·Log 1개·CSV 앞부분이라 데이터 로드에서는 읽지 않는다 |
 | Comparison 탭 차트 | 처음 보일 때 그림 | 가려진 탭은 미뤘다가 보일 때 한 번 (같은 결과면 다시 안 그림) |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |
