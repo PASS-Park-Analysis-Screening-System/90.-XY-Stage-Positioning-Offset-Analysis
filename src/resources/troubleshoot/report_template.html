@@ -76,6 +76,8 @@ a{color:var(--accent)}
 .chip.warn{background:var(--warn-bg)} .chip.warn::before{content:"▲";color:var(--warning)}
 .chip.info{background:var(--info-bg)} .chip.info::before{content:"●";color:var(--accent)}
 .chip.na{background:var(--na-bg)} .chip.na::before{content:"—";color:var(--text-muted)}
+.chip.ref{background:var(--na-bg);color:var(--text-secondary)} .chip.ref::before{content:"ⓘ"} .chip.ref::before,.ic{color:var(--text-muted);font-family:"Segoe UI Symbol","Segoe UI Emoji",sans-serif;font-weight:700}
+table.offt th{white-space:nowrap} table.offt td:last-child{white-space:nowrap}
 .tag{display:inline-block;font-size:11.5px;font-weight:700;border:1px dashed var(--warning);color:var(--text-secondary);border-radius:6px;padding:0 6px;margin-left:6px;white-space:nowrap;vertical-align:1px}
 .na-t{color:var(--text-muted);font-weight:600}
 .empty{color:var(--text-muted);background:var(--surface-2);border-radius:8px;padding:10px 12px;font-size:13.5px}
@@ -358,7 +360,7 @@ const worst=(a,b)=>RANK[a]>=RANK[b]?a:b;
 const VCOL=v=>v==='fail'?C.critical:v==='warn'?C.warning:v==='ok'?C.good:C['text-muted'];
 const VG=v=>v==='fail'?'✖':v==='warn'?'▲':v==='ok'?'✔':'—';
 const VT={ok:'정상',warn:'주의',fail:'이상',na:'판정 없음'};
-const chip=(v,t)=>`<span class="chip ${v==='info'?'info':VK(v)}">${t}</span>`;
+const chip=(v,t)=>`<span class="chip ${v==='info'||v==='ref'?v:VK(v)}">${t}</span>`;
 function statusChip(s){if(s==null||s==='')return chip('na',NAT);const k=VK(s);return chip(k,k===s?VT[k]:esc(s));}
 const AXC=a=>a==='Y'?C['series-2']:C['series-1'];
 const SPEC=obj(g(D,'spec'))||{};
@@ -396,11 +398,23 @@ function metricChip(lab,val,spec){
   const ok=val<=spec;return chip(ok?'ok':'fail',`${lab} ${num(val,3)} ${ok?'≤':'>'} ${specTxt(spec)} µm`);
 }
 function offMax(p){return p?Math.max(Math.abs(p[0]||0),Math.abs(p[1]||0)):null;}
-function offChip(p,om){
-  if(!p)return chip('na',NAT);
-  if(!isNum(om))return chip('na','한계 없음');
-  const m=offMax(p);return m<=om?chip('ok',`|${num(m,1)}| ≤ ${specTxt(om)}`):chip(PROV?'warn':'fail',`|${num(m,1)}| > ${specTxt(om)}`);
+/* 오프셋 한계는 웨이퍼를 돌리는 구동 성분에만 판정한다. 기준 장비는 Y 구동만 돌리고 X 구동은 돌리지 않는다:
+   X 라인 → |적용 Y| 판정(▲ 잠정 / ✖), Y 라인 → |적용 X| 참고(ℹ). 나머지 성분도 참고로만 보인다. */
+const OFF_RULE={X_line:{main:1,judged:true},Y_line:{main:0,judged:false}};
+function offCompChip(line,i,v,om){
+  if(!isNum(v))return chip('na',NAT);
+  const ax=i?'Y':'X',m=Math.abs(v),judged=OFF_RULE[line].judged&&OFF_RULE[line].main===i;
+  if(!isNum(om))return chip(judged?'na':'ref',`${judged?'':'참고 '}|${ax}| ${num(m,1)} µm (한계 없음)`);
+  if(!judged)return chip('ref',`참고 |${ax}| ${num(m,1)} ${m<=om?'≤':'>'} ${specTxt(om)}`);
+  return m<=om?chip('ok',`|${ax}| ${num(m,1)} ≤ ${specTxt(om)}`):chip(PROV?'warn':'fail',`|${ax}| ${num(m,1)} > ${specTxt(om)}`);
 }
+function offCellChip(line,i,v,om){
+  if(!isNum(v))return '';
+  const judged=OFF_RULE[line].judged&&OFF_RULE[line].main===i;
+  if(!judged||!isNum(om))return chip('ref','참고');
+  return Math.abs(v)<=om?chip('ok','이내'):chip(PROV?'warn':'fail','초과');
+}
+function offChip(line,p,om){const i=OFF_RULE[line].main;return p?offCompChip(line,i,p[i],om):chip('na',NAT);}
 function meterHTML(val,warn,max,col){
   const top=Math.max(isNum(max)?max*1.5:1,isNum(val)?Math.abs(val)*1.1:0,isNum(warn)?warn*1.5:0)||1;
   const pc=v=>clamp(v/top*100,0,100).toFixed(1)+'%';
@@ -436,10 +450,11 @@ function renderKPI(){
        `<span>적용 스캐너 Y</span><b>${nfs(r.scanner_y,1)} µm</b><span>Range 기여</span><b>${nf(r.contribution_um,2)} µm</b></div>`+listHTML(r.reasons);
   }
   const so=obj(g(D,'scanner_offsets'));const om=SPEC.offset_max;
-  let c=`<div class="k">레시피 오프셋 점검 — ${isNum(om)?`적용 오프셋 ≤ ±${specTxt(om)} µm`:'한계 데이터 없음'} ${provTag()}</div>`;
+  let c=`<div class="k">레시피 오프셋 점검 — ${isNum(om)?`X 라인 |적용 Y| ≤ ${specTxt(om)} µm`:'한계 데이터 없음'} ${provTag()}</div>`;
   if(!so)c+='<div class="empty">데이터 없음</div>';
   else [['X_line','X 라인'],['Y_line','Y 라인']].forEach(([k,lab])=>{const p=pair(g(so,k,'applied'));const rc=pair(g(so,k,'recipe'));
-    c+=`<div class="vrow"><b>${lab}</b>${offChip(p,om)}</div><div class="kv"><span>적용</span><b>${p?`(${nfs(p[0],1)}, ${nfs(p[1],1)}) µm`:NAH}</b><span>레시피</span><b>${rc?`(${nfs(rc[0],1)}, ${nfs(rc[1],1)}) µm`:NAH}</b></div>`;});
+    c+=`<div class="vrow"><b>${lab}</b>${offChip(k,p,om)}</div><div class="kv"><span>적용</span><b>${p?`(${nfs(p[0],1)}, ${nfs(p[1],1)}) µm`:NAH}</b><span>레시피</span><b>${rc?`(${nfs(rc[0],1)}, ${nfs(rc[1],1)}) µm`:NAH}</b></div>`;});
+  if(so)c+='<div class="note" style="margin-top:4px">판정은 회전을 일으키는 Y 구동(X 라인의 Y)만 — Y 라인의 X는 <span class="ic">ⓘ</span> 참고</div>';
   $('kpi').innerHTML=`<div class="tile">${a}</div><div class="tile">${b}</div><div class="tile">${c}</div>`;
 }
 
@@ -846,7 +861,7 @@ function closeUp(svg,lines,o){
 }
 function renderOffsets(){
   const so=obj(g(D,'scanner_offsets')),om=SPEC.offset_max;
-  $('omTxt').textContent=isNum(om)?`한계 ±${specTxt(om)} µm (레시피 + 보정을 더한 적용 값 기준)`:'한계 데이터 없음';$('omTag').innerHTML=provTag();
+  $('omTxt').textContent=isNum(om)?`한계 ±${specTxt(om)} µm (레시피 + 보정을 더한 적용 값). 기준 장비는 Y 구동만 웨이퍼를 돌리므로 X 라인의 |적용 Y|만 판정하고, 나머지 성분은 회색 "참고"로만 보입니다.`:'한계 데이터 없음';$('omTag').innerHTML=provTag();
   if(!so){$('offTables').innerHTML='<div class="empty">데이터 없음</div>';closeUp($('offFig'),[]);$('offFigNote').textContent='개념도 — 오프셋 데이터 없음';return;}
   let h='';const figL=[];
   [['X_line','X 라인 (X 측정)','x','X'],['Y_line','Y 라인 (Y 측정)','y','Y']].forEach(([k,lab,kind,ax])=>{
@@ -854,12 +869,12 @@ function renderOffsets(){
     if(!L){h+=`<h3>${lab}</h3><div class="empty">데이터 없음</div>`;return;}
     const rc=pair(L.recipe),rf=pair(L.ref),fn=pair(L.fine),ap=pair(L.applied);
     const scale=Math.max(isNum(om)?om:0,ap?offMax(ap):0)*1.15||1;
-    const mini=v=>{if(!isNum(v))return '';const w=Math.min(Math.abs(v)/scale*50,50),bad=isNum(om)&&Math.abs(v)>om;const lim=isNum(om)?om/scale*50:null;
-      return `<div style="position:relative;height:12px;width:120px;background:var(--surface-2);border-radius:3px;display:inline-block;vertical-align:middle"><div style="position:absolute;left:50%;top:-2px;bottom:-2px;border-left:1px solid ${C['text-muted']}"></div>`+
-        `<div style="position:absolute;top:2px;bottom:2px;left:${v<0?50-w:50}%;width:${w}%;background:${bad?C.warning:C.good};border-radius:2px"></div>`+
+    const mini=(v,i)=>{if(!isNum(v))return '';const judged=OFF_RULE[k].judged&&OFF_RULE[k].main===i,w=Math.min(Math.abs(v)/scale*50,50),bad=isNum(om)&&Math.abs(v)>om;const lim=isNum(om)?om/scale*50:null;
+      return `<div style="position:relative;height:12px;width:90px;background:var(--surface-2);border-radius:3px;display:inline-block;vertical-align:middle"><div style="position:absolute;left:50%;top:-2px;bottom:-2px;border-left:1px solid ${C['text-muted']}"></div>`+
+        `<div style="position:absolute;top:2px;bottom:2px;left:${v<0?50-w:50}%;width:${w}%;background:${!judged?C['text-muted']:bad?(PROV?C.warning:C.critical):C.good};border-radius:2px"></div>`+
         (lim!=null?`<div style="position:absolute;top:-3px;bottom:-3px;left:${50-lim}%;border-left:2px dashed ${C.critical}"></div><div style="position:absolute;top:-3px;bottom:-3px;left:${50+lim}%;border-left:2px dashed ${C.critical}"></div>`:'')+'</div>';};
-    h+=`<h3 style="margin-top:6px">${lab} ${offChip(ap,om)}</h3><table><tr><th>성분</th><th class="r">레시피</th><th class="r">+ 기준 보정</th><th class="r">+ 미세 보정</th><th class="r">= 적용</th><th>${isNum(om)?`±${specTxt(om)} µm 대비`:'한계 대비'}</th></tr>`;
-    [0,1].forEach(i=>{h+=`<tr><td><b class="ax" style="color:${AXC(i?'Y':'X')}">${i?'Y':'X'}</b></td><td class="r">${rc?nfs(rc[i],1):NAH}</td><td class="r">${rf?nfs(rf[i],2):NAH}</td><td class="r">${fn?nfs(fn[i],2):NAH}</td><td class="r"><b>${ap?nfs(ap[i],1):NAH}</b></td><td>${ap?mini(ap[i]):''}</td></tr>`;});
+    h+=`<h3 style="margin-top:6px">${lab} ${offChip(k,ap,om)}</h3><table class="offt"><tr><th>성분</th><th class="r">레시피</th><th class="r">+ 기준 보정</th><th class="r">+ 미세 보정</th><th class="r">= 적용</th><th>${isNum(om)?`±${specTxt(om)} µm 대비`:'한계 대비'}</th></tr>`;
+    [0,1].forEach(i=>{h+=`<tr><td><b class="ax" style="color:${AXC(i?'Y':'X')}">${i?'Y':'X'}</b></td><td class="r">${rc?nfs(rc[i],1):NAH}</td><td class="r">${rf?nfs(rf[i],2):NAH}</td><td class="r">${fn?nfs(fn[i],2):NAH}</td><td class="r"><b>${ap?nfs(ap[i],1):NAH}</b></td><td>${ap?mini(ap[i],i)+' '+offCellChip(k,i,ap[i],om):''}</td></tr>`;});
     h+='</table>';
     if(rc&&rf&&fn&&ap){const bad=[0,1].filter(i=>[rc[i],rf[i],fn[i],ap[i]].every(isNum)&&Math.abs(rc[i]+rf[i]+fn[i]-ap[i])>0.06);if(bad.length)h+=`<div class="note" style="color:${C.critical}">레시피 + 보정의 합이 적용 값과 다릅니다 (${bad.map(i=>(i?'Y':'X')+': '+num(rc[i]+rf[i]+fn[i],2)+' ≠ '+num(ap[i],2)).join(', ')}) — 다른 보정이 더 있을 수 있습니다.</div>`;}
     h+=`<div class="note">Lot·Die 건수 n = ${nf(L.n,0)}</div>`;
@@ -875,12 +890,16 @@ const nfsT=v=>isNum(v)?sgn(v,1):'?';
 /* =====================================================================
    What-if — recipe Y offset of the X line
    ===================================================================== */
-const WI={rows:[],i:0,cur:-1,rec:-1};
+const WI={rows:[],i:0,cur:-1,rec:-1,keep:false,flag:false};
+const WI_MIN_ABS=5;   // 꼭짓점 여유: X 라인을 체커보드 꼭짓점에서 5 µm 이상 떨어뜨린다 (엣지 품질)
+const allPass=r=>isNum(r.pass_lots)&&isNum(r.lots)&&r.lots>0&&r.pass_lots>=r.lots;
 function initWI(){
   const rows=arr(g(D,'whatif','rows')).map(obj).filter(r=>r&&isNum(r.recipe_y)).slice().sort((a,b)=>a.recipe_y-b.recipe_y);
   WI.rows=rows;WI.cur=rows.findIndex(r=>r.current===true);
-  let best=-1;rows.forEach((r,i)=>{if(r.recipe_y===0)return;if(!(isNum(r.pass_lots)&&isNum(r.lots)&&r.lots>0&&r.pass_lots>=r.lots))return;if(best<0||Math.abs(r.recipe_y)<Math.abs(rows[best].recipe_y))best=i;});
-  WI.rec=best;WI.i=best>=0?best:(WI.cur>=0?WI.cur:0);
+  let best=rows.findIndex(r=>r.recommended===true);WI.flag=best>=0;      // 진단(작업 A)이 지정하면 그것을 따른다
+  if(best<0&&WI.cur>=0&&allPass(rows[WI.cur]))best=WI.cur;                 // 지금 레시피로 모든 Lot PASS면 현재 유지
+  if(best<0)rows.forEach((r,i)=>{if(Math.abs(r.recipe_y)<WI_MIN_ABS||!allPass(r))return;if(best<0||Math.abs(r.recipe_y)<Math.abs(rows[best].recipe_y))best=i;});
+  WI.rec=best;WI.keep=best>=0&&best===WI.cur;WI.i=best>=0?best:(WI.cur>=0?WI.cur:0);
   if(HS.off!=null){const j=rows.findIndex(r=>r.recipe_y===+HS.off);if(j>=0)WI.i=j;}
 }
 function bl(lab,mean,max,spec,unitD){
@@ -897,19 +916,20 @@ function renderWI(){
   const tick=(r,i)=>`<span style="${i===WI.rec?'color:'+C.good+';font-weight:800':i===WI.cur?'font-weight:800;color:'+C['text-primary']:''}">${sgn(r.recipe_y,0)}${i===WI.rec?' ✔':''}${i===WI.cur?' ●':''}</span>`;
   const pl=r=>isNum(r.pass_lots)&&isNum(r.lots)?`${num(r.pass_lots,0)}/${num(r.lots,0)}`:NAT;
   const xl=obj(g(D,'scanner_offsets','X_line')),xr=pair(g(xl,'recipe')),lx=xr&&isNum(xr[0])?xr[0]:0;
-  let h=`<p class="sub" style="margin-top:-4px">X 라인을 잴 때 스캐너를 Y로 덜 밀면 회전이 줄어 X 오차가 작아집니다. 가정: ${tx(wi&&wi.assumption)}. Spec: ${isNum(SPEC.range)||isNum(SPEC.stddev)?`Range ≤ ${specTxt(SPEC.range)} µm, StdDev ≤ ${specTxt(SPEC.stddev)} µm`:NAT}. <b>권장</b> = 모든 Lot이 PASS인 행 중 |레시피 Y|가 가장 작은 행(0 제외 — 선이 꼭짓점을 지나 쓸 수 없음).</p>`;
+  let h=`<p class="sub" style="margin-top:-4px">X 라인을 잴 때 스캐너를 Y로 덜 밀면 회전이 줄어 X 오차가 작아집니다. 가정: ${tx(wi&&wi.assumption)}. Spec: ${isNum(SPEC.range)||isNum(SPEC.stddev)?`Range ≤ ${specTxt(SPEC.range)} µm, StdDev ≤ ${specTxt(SPEC.stddev)} µm`:NAT}. <b>권장</b> = 진단이 지정한 행, 없으면 지금 레시피가 모든 Lot PASS일 때 <b>현재 유지</b>, 아니면 모든 Lot이 PASS인 행 중 |레시피 Y| ≥ ${WI_MIN_ABS} µm에서 가장 작은 행 (<b>꼭짓점 여유 ${WI_MIN_ABS} µm</b> — X 라인을 체커보드 꼭짓점에서 떨어뜨려 엣지 품질 확보).</p>`;
   h+=`<div class="two"><div class="side"><div class="h"><label for="wiS">X 라인 레시피 Y 오프셋 (µm)</label></div><input type="range" id="wiS" min="0" max="${n-1}" step="1" value="${WI.i}" style="width:100%"${n<2?' disabled':''}>`+
-     `<div class="wticks">${WI.rows.map(tick).join('')}</div><div class="legend" style="margin-top:4px">${WI.cur>=0?chip('info','현재 '+sgn(WI.rows[WI.cur].recipe_y,0)+' µm'):chip('na','현재 행 표시 없음')}${WI.rec>=0?chip('ok','권장 '+sgn(WI.rows[WI.rec].recipe_y,0)+' µm'):chip('warn','권장 없음 — 모든 Lot PASS인 행이 없음')}</div>`+
+     `<div class="wticks">${WI.rows.map(tick).join('')}</div><div class="legend" style="margin-top:4px">${WI.keep?'':WI.cur>=0?chip('info','현재 '+sgn(WI.rows[WI.cur].recipe_y,0)+' µm'):chip('na','현재 행 표시 없음')}${WI.rec<0?chip('warn',`권장 없음 — |레시피 Y| ≥ ${WI_MIN_ABS} µm에서 모든 Lot PASS인 행이 없음`):WI.keep?chip('ok','현재 유지 (권장) '+sgn(WI.rows[WI.rec].recipe_y,0)+' µm'):chip('ok','권장 '+sgn(WI.rows[WI.rec].recipe_y,0)+' µm'+(WI.flag?' (진단 지정)':''))}</div>`+
+     `<div class="note">꼭짓점 여유 ${WI_MIN_ABS} µm</div>`+
      `<div class="read"><div><span>레시피 Y 오프셋</span><b>${sgn(R.recipe_y,1)} µm</b></div><div><span>실제 스캐너 Y</span><b>${nfs(R.scanner_y,1)} µm</b></div><div><span>예측 θ</span><b>${nf(R.theta,2)} µrad</b></div><div><span>PASS Lot</span><b>${pl(R)}</b></div></div>`+
      `<div class="h">예측 (막대 = 평균, 검은 선 = 최대, 빨간 점선 = Spec)</div>${bl('Range 평균 / 최대',R.range_mean,R.range_max,SPEC.range,2)}${bl('StdDev 평균 / 최대',R.std_mean,R.std_max,SPEC.stddev,3)}</div>`+
      `<div><svg id="wiFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="레시피 오프셋별 X 라인 위치"></svg><div class="note">개념도 — 실선 = 고른 오프셋의 X 라인, 점선 = 현재 레시피.</div></div></div>`;
   h+='<table style="margin-top:12px"><tr><th class="r">레시피 Y (µm)</th><th class="r">실제 스캐너 Y (µm)</th><th class="r">예측 θ (µrad)</th><th class="r">Range 평균 / 최대 (µm)</th><th class="r">Std 평균 / 최대 (µm)</th><th class="r">PASS Lot</th></tr>'+
-    WI.rows.map((r,i)=>`<tr data-i="${i}" class="${i===WI.i?'hl':''} ${i===WI.cur?'cur':''}" style="cursor:pointer"><td class="r">${sgn(r.recipe_y,1)}${i===WI.cur?' '+chip('info','현재'):''}${i===WI.rec?' '+chip('ok','권장'):''}</td><td class="r">${nfs(r.scanner_y,1)}</td><td class="r">${nf(r.theta,2)}</td><td class="r">${nf(r.range_mean,2)} / ${nf(r.range_max,2)}</td><td class="r">${nf(r.std_mean,3)} / ${nf(r.std_max,3)}</td><td class="r">${pl(r)}</td></tr>`).join('')+'</table>';
+    WI.rows.map((r,i)=>`<tr data-i="${i}" class="${i===WI.i?'hl':''} ${i===WI.cur?'cur':''}" style="cursor:pointer"><td class="r">${sgn(r.recipe_y,1)}${i===WI.rec&&WI.keep?' '+chip('ok','현재 유지 (권장)'):(i===WI.cur?' '+chip('info','현재'):'')+(i===WI.rec?' '+chip('ok','권장'):'')}</td><td class="r">${nfs(r.scanner_y,1)}</td><td class="r">${nf(r.theta,2)}</td><td class="r">${nf(r.range_mean,2)} / ${nf(r.range_max,2)}</td><td class="r">${nf(r.std_mean,3)} / ${nf(r.std_max,3)}</td><td class="r">${pl(r)}</td></tr>`).join('')+'</table>';
   el.innerHTML=h;
   const cur=WI.cur>=0?WI.rows[WI.cur]:null,lines=[];
   if(cur&&WI.cur!==WI.i)lines.push({kind:'x',x:lx,y:cur.recipe_y,col:C['text-muted'],dash:true,lab:'현재 ('+sgn(cur.recipe_y,0)+')',pos:'left'});
   lines.push({kind:'x',x:lx,y:R.recipe_y,col:C['series-1'],lab:'X 라인 ('+sgn(R.recipe_y,0)+')',pos:'right'});
-  closeUp($('wiFig'),lines,{warn:R.recipe_y===0?'꼭짓점 위 → 사용 불가':null});
+  closeUp($('wiFig'),lines,{warn:R.recipe_y===0?'꼭짓점 위 → 사용 불가':Math.abs(R.recipe_y)<WI_MIN_ABS?`꼭짓점 여유 ${WI_MIN_ABS} µm 미만`:null});
   $('wiS').oninput=e=>{WI.i=+e.target.value;renderWI();};
   el.querySelectorAll('tr[data-i]').forEach(tr=>tr.onclick=()=>{WI.i=+tr.dataset.i;renderWI();});
 }

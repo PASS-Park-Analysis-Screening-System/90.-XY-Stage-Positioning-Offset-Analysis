@@ -290,6 +290,78 @@ def test_report_renders_without_script_error(tmp_path, name):
         assert '권장' in dom and 'class="opt on"' in dom
 
 
+def _between(text, start, end):
+    return text.split(start, 1)[1].split(end, 1)[0]
+
+
+def _dump_dom(diag, tmp_path):
+    page = tmp_path / 'report.html'
+    page.write_text(tr.build_report_html(diag), encoding='utf-8')
+    with tempfile.TemporaryDirectory() as profile:
+        out = subprocess.run([str(EDGE), '--headless=new', '--disable-gpu', '--dump-dom',
+                              '--virtual-time-budget=3000', f'--user-data-dir={profile}', page.as_uri()],
+                             capture_output=True, timeout=90)
+    dom = out.stdout.decode('utf-8', 'replace')
+    assert '<div id="errBanner" role="alert" hidden="">' in dom
+    return dom
+
+
+def _whatif_marks(dom):
+    """What-if 표에서 칩이 붙은 행: {칩 글자: [레시피 Y 칸]}."""
+    marks = {}
+    for row in re.findall(r'<tr data-i="\d+"[^>]*>(.*?)</tr>', _between(dom, 'id="wiBody"', 'id="sec-drift"')):
+        first = re.search(r'<td class="r">(.*?)</td>', row).group(1)
+        for label in re.findall(r'<span class="chip [a-z]+">([^<]+)</span>', first):
+            marks.setdefault(label, []).append(first.split(' ', 1)[0])
+    return marks
+
+
+def _old_not_provisional():
+    d = _fixture('diag_ref_old_m25.json')
+    d['spec']['provisional'] = False
+    return d
+
+
+def _new_with_flag():
+    d = _fixture('diag_ref_new_m5.json')
+    next(r for r in d['whatif']['rows'] if r['recipe_y'] == -10)['recommended'] = True
+    return d
+
+
+@pytest.mark.skipif(not EDGE.exists(), reason='Microsoft Edge 없음')
+@pytest.mark.parametrize('case', [
+    # (진단, What-if 칩 → 행, X 라인 칩, Y 라인 참고 칩)
+    pytest.param((lambda: _fixture('diag_ref_old_m25.json'),
+                  {'현재': ['−25.0'], '권장': ['−5.0']},      # −3도 모든 Lot PASS지만 꼭짓점 여유 5 µm 미만
+                  'warn">|Y| 28.0 &gt; 10.0', '참고 |X| 30.8 &gt; 10.0'), id='old'),
+    pytest.param((lambda: _fixture('diag_ref_new_m5.json'),
+                  {'현재 유지 (권장)': ['−5.0']},              # 지금 레시피가 모든 Lot PASS
+                  'ok">|Y| 8.2 ≤ 10.0', '참고 |X| 26.4 &gt; 10.0'), id='new'),
+    pytest.param((_new_with_flag,
+                  {'현재': ['−5.0'], '권장': ['−10.0']},       # 진단의 recommended 표시가 이긴다
+                  'ok">|Y| 8.2 ≤ 10.0', '참고 |X| 26.4 &gt; 10.0'), id='flag'),
+    pytest.param((_old_not_provisional,
+                  {'현재': ['−25.0'], '권장': ['−5.0']},
+                  'fail">|Y| 28.0 &gt; 10.0', '참고 |X| 30.8 &gt; 10.0'), id='old-final-spec'),
+])
+def test_whatif_recommendation_and_offset_rule(tmp_path, case):
+    make, marks, x_chip, y_ref = case
+    dom = _dump_dom(make(), tmp_path)
+
+    assert _whatif_marks(dom) == marks
+    assert '꼭짓점 여유 5 µm' in dom
+
+    # 오프셋 한계: X 라인의 |적용 Y|만 판정, Y 라인(X 구동)은 회색 참고 — ▲·✖ 없음
+    tables = _between(dom, 'id="offTables"', 'id="offFig"')
+    kpi = _between(dom, 'id="kpi"', 'class="jump"')
+    for part in (tables, kpi):
+        x_part, y_part = part.split('Y 라인', 1)
+        assert f'class="chip {x_chip}' in x_part
+        assert f'<span class="chip ref">{y_ref}</span>' in y_part
+        assert not re.search(r'chip (warn|fail)', y_part)
+        assert not re.search(r'chip (warn|fail)">\|X\|', x_part)    # X 라인의 X 성분도 참고만
+
+
 # ── 화면: 진단 없이 누르면 메시지만, 진단이 있으면 보고서를 쓰고 브라우저로 ──────────
 
 @pytest.fixture
