@@ -26,8 +26,10 @@ def _num(value, fmt):
 
 
 class RunCompareMixin:
-    RUN_COMPARE_HEADERS = ['회차', 'Lot 수', 'X Range', 'X StdDev', 'X Avg',
-                           'Y Range', 'Y StdDev', 'Y Avg', 'Cpk X/Y', '판정']
+    RUN_COMPARE_HEADERS = ['회차', 'Lot 수', 'X Range', 'X StdDev', 'X Avg', 'θx (µrad)',
+                           'Y Range', 'Y StdDev', 'Y Avg', 'θy (µrad)', 'Cpk X/Y', '판정']
+    # θx = X 편차의 ∂/∂y, θy = Y 편차의 ∂/∂x (Die 평균 평면, CSV 값만). t는 툴팁
+    THETA_COLUMNS = {5: ('theta_x', 'theta_x_t'), 9: ('theta_y', 'theta_y_t')}
 
     # ── 회차 콤보 ─────────────────────────────────────────
 
@@ -115,12 +117,18 @@ class RunCompareMixin:
             x, y = run['x'], run['y']
             cells = [f"{run['run']}{mark}", str(run['lot_count']),
                      _num(x['range'], '.3f'), _num(x['stddev'], '.3f'), _num(x['avg'], '.1f'),
+                     _num(run.get('theta_x'), '+.2f'),
                      _num(y['range'], '.3f'), _num(y['stddev'], '.3f'), _num(y['avg'], '.1f'),
+                     _num(run.get('theta_y'), '+.2f'),
                      f"{cpk_text(x['cpk'], x['reference'])} / {cpk_text(y['cpk'], y['reference'])}",
                      result_text(run['result'], run.get('reference'))]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignCenter)
+                if col in self.THETA_COLUMNS:
+                    t = run.get(self.THETA_COLUMNS[col][1])
+                    item.setToolTip('Die 평균 편차의 평면 기울기 (CSV 값만)'
+                                    + ('' if t is None else f' — t {t:+.1f}'))
                 if col == 0 and run['warnings']:
                     item.setToolTip('\n'.join(run['warnings'][:8]))
                     item.setForeground(QBrush(QColor(ORANGE)))

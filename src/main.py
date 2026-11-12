@@ -81,11 +81,12 @@ from ui.controllers.export_controller import ExportMixin
 from ui.dialogs.image_shift_dialog import threads_alive as image_shift_threads_alive
 from ui.controllers.run_compare_controller import RunCompareMixin
 from ui.controllers.positioning_controller import PositioningMixin
+from ui.controllers.diagnosis_controller import DiagnosisMixin
 
 # ═══════════════════════════════════════════════
 #  Main Application
 # ═══════════════════════════════════════════════
-class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin):
+class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin, DiagnosisMixin):
 
     def __init__(self):
         super().__init__()

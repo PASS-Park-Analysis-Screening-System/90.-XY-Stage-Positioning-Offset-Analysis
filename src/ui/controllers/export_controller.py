@@ -157,6 +157,11 @@ class ExportMixin:
         outcome = []
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
+        from core.settings import rotation_spec
+        rot_spec = rotation_spec(self.settings)
+        # 스캐너 회전 시험 결과는 장비의 것 (회차와 무관). 내보내는 동안 바뀌어도 섞이지 않게 사본
+        import copy
+        rot_test = copy.deepcopy(getattr(self, '_rotation_test_result', None))
 
         # 모든 회차의 셀 값은 .md 옆 CSV에 둔다 (.md 부록은 선택 회차만)
         csv_path = os.path.splitext(path)[0] + '_raw.csv'
@@ -190,7 +195,8 @@ class ExportMixin:
                 text = build_llm_report(results, spec_limits, spec_deviation,
                                         app_version=APP_VERSION,
                                         exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
-                                        source_root=root, raw_csv=raw_csv)
+                                        source_root=root, raw_csv=raw_csv,
+                                        rotation_spec=rot_spec, rotation_test=rot_test)
                 write_atomic(path, text, 'utf-8', '\n')
             except Exception as e:
                 state['error'] = e

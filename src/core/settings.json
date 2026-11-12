@@ -75,5 +75,13 @@
     "LLC Translation",
     "Global Align"
   ],
-  "wafer_size": 300
+  "wafer_size": 300,
+  "rotation_spec": {
+    "theta_max": 1.0,
+    "theta_warn": 0.7,
+    "kappa_max": 0.1,
+    "kappa_warn": 0.07,
+    "offset_max": 10.0,
+    "provisional": true
+  }
 }

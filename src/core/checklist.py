@@ -179,8 +179,10 @@ def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict 
     """회차별 요약 (회차 비교 표·Excel 시트). 회차가 하나뿐이면 빈 목록.
 
     값은 체크리스트·Step 카드 기본값과 같은 분석 기준(안정화 Die 제외)과 같은 함수
-    (compute_axis_metrics)로 계산한다.
+    (compute_axis_metrics)로 계산한다. theta_x·theta_y는 Die 평균 편차의 평면 기울기
+    (X: ∂dx/∂y, Y: ∂dy/∂x, µrad, xy_diagnosis.axis_shape)로 CSV 값만 쓴다 (Log를 읽지 않는다).
     """
+    from core.xy_diagnosis import axis_shape      # xy_diagnosis가 이 모듈을 쓴다 (순환 import 방지)
     runs = result.get('run_results') or []
     if len(runs) < 2:
         return []
@@ -191,11 +193,14 @@ def summarize_runs(result: dict, spec_limits: dict = None, spec_deviation: dict 
         data = filter_stabilization_die(raw)
         axes = {axis: compute_axis_metrics(data, axis, recipe, spec_limits, spec_deviation)
                 for axis in ('X', 'Y')}
+        shapes = {axis: axis_shape(data, axis, dev=axes[axis]['deviation']) for axis in ('X', 'Y')}
         summary.append({
             'run': run.get('round', ''),
             'lot_count': len({r.get('lot_name') for r in raw}),
             'x': axes['X'],
             'y': axes['Y'],
+            'theta_x': shapes['X']['theta'], 'theta_x_t': shapes['X']['theta_t'],
+            'theta_y': shapes['Y']['theta'], 'theta_y_t': shapes['Y']['theta_t'],
             'result': combine_verdicts(axes['X']['result'], axes['Y']['result']),
             'reference': verdict_reference(axes['X'], axes['Y']),
             'warnings': analysis_warnings(run),

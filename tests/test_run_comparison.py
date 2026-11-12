@@ -197,6 +197,8 @@ def test_excel_run_comparison_sheet_only_for_multi_run(tmp_path):
     rows = [r for r in wb['Run Comparison'].iter_rows(values_only=True) if any(r)]
     assert rows[0][0].startswith('Vision Pattern — 회차 3개 (선택 회차 3')
     assert [r[0] for r in rows[2:]] == ['1', '2', '3']
+    assert rows[1][5] == 'θx (µrad)' and rows[1][9] == 'θy (µrad)'
+    assert rows[2][5] == '—' and isinstance(rows[2][9], float)     # Die가 Y = 0 한 줄
     basis = [r for r in wb['Analysis Basis'].iter_rows(values_only=True) if any(r)]
     assert ('Vision Pattern', 'Run: 3 (3회차 중)') in [r[:2] for r in basis]
 
@@ -273,7 +275,15 @@ def test_run_table_and_row_click(window, tmp_path):
     table = window.run_compare_table
     assert table.rowCount() == 4 and not table.isHidden()
     assert [table.item(r, 0).text() for r in range(4)] == ['1', '2', '3', '4']
-    assert table.item(0, 9).text() == 'PASS' and table.item(3, 9).text() == 'FAIL'
+    assert table.item(0, 11).text() == 'PASS' and table.item(3, 11).text() == 'FAIL'
+    # 회차별 θx·θy (CSV 값만, Die 평균 평면 기울기)
+    runs = window.recipe_results[0]['runs']
+    assert window.RUN_COMPARE_HEADERS[5] == 'θx (µrad)' and window.RUN_COMPARE_HEADERS[9] == 'θy (µrad)'
+    for col, key in ((5, 'theta_x'), (9, 'theta_y')):
+        value = runs[0][key]
+        assert table.item(0, col).text() == ('—' if value is None else f'{value:+.2f}')
+    # 시험 Die는 Y = 0 한 줄이라 θx(∂dx/∂y)는 정할 수 없고 θy(∂dy/∂x)는 있다
+    assert runs[0]['theta_x'] is None and runs[0]['theta_y'] is not None
     # 차트는 '회차 비교' 탭이 처음 보일 때 그린다
     assert window.chart_widgets['Run Metrics']._canvas is None
     window._select_chart('Run Comparison')

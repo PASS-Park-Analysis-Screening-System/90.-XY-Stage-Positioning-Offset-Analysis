@@ -263,6 +263,9 @@ class StepMixin:
         update_positioning = getattr(self, '_update_positioning_log', None)
         if update_positioning is not None:      # Positioning Log 탭 (로그 없으면 안내)
             update_positioning(result)
+        update_diagnosis = getattr(self, '_update_diagnosis', None)
+        if update_diagnosis is not None:        # Diagnosis (트러블슈팅) 탭 (Log는 탭이 보일 때 읽는다)
+            update_diagnosis(result)
         stats = result.get('statistics', {})
         self.statusBar().showMessage(
             f"Step {recipe['index']}: {recipe['short_name']} — "
