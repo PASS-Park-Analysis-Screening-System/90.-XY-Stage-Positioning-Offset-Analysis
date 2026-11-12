@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XY 위치 맞춤 트러블슈팅 보고서</title>
+<style>
+.viz-root{
+  color-scheme:light;
+  --surface-0:#f4f3f0; --surface-1:#fcfcfb; --surface-2:#f0efec;
+  --border:#dedcd5; --grid:#e1e0d9; --axis:#c3c2b7;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a7873;
+  --accent:#2a78d6; --series-1:#2a78d6; --series-2:#eb6834; --pos:#e34948;
+  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+  --good-bg:#e7f5e7; --crit-bg:#fbeaea; --warn-bg:#fdf3dc; --info-bg:#e9f1fb; --na-bg:#ecebe7;
+  --bg3d:#fcfcfb;
+  --m-avt:#e3e1db; --m-body:#d6d4cd; --m-stage:#bfe3ea; --m-scan:#cfe8cf; --m-plate:#e2f1e2;
+  --m-hinge:#8f8d86; --m-pzt:#b9b7b0; --m-chuck:#b9b6af; --m-wafer:#d3d9e2; --m-die:#f7f9fc;
+  --m-zst:#bfe3ea; --m-fst:#bfe3ea; --m-vis:#ece8c0; --m-cone:#efe39a; --m-zsc:#cfe8cf; --m-tip:#7a7873;
+  --m-efem:#d9d7d0; --m-pattern:#8f8d86; --m-na:#a3a19a;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])) .viz-root{
+    color-scheme:dark;
+    --surface-0:#121211; --surface-1:#1a1a19; --surface-2:#242422;
+    --border:#383835; --grid:#2c2c2a; --axis:#383835;
+    --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8d86;
+    --accent:#3987e5; --series-1:#3987e5; --series-2:#d95926; --pos:#e66767;
+    --good-bg:#16301a; --crit-bg:#3a1c1c; --warn-bg:#3a3018; --info-bg:#172a40; --na-bg:#2c2c2a;
+    --bg3d:#1a1a19;
+    --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
+    --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
+    --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
+    --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955;
+  }
+}
+:root[data-theme="dark"] .viz-root{
+  color-scheme:dark;
+  --surface-0:#121211; --surface-1:#1a1a19; --surface-2:#242422;
+  --border:#383835; --grid:#2c2c2a; --axis:#383835;
+  --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8d86;
+  --accent:#3987e5; --series-1:#3987e5; --series-2:#d95926; --pos:#e66767;
+  --good-bg:#16301a; --crit-bg:#3a1c1c; --warn-bg:#3a3018; --info-bg:#172a40; --na-bg:#2c2c2a;
+  --bg3d:#1a1a19;
+  --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
+  --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
+  --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
+  --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f3f0}
+@media (prefers-color-scheme: dark){:root:where(:not([data-theme="light"])) body{background:#121211}}
+:root[data-theme="dark"] body{background:#121211}
+#errBanner{position:sticky;top:0;z-index:100;background:#d03b3b;color:#fff;font:700 14px/1.5 "Malgun Gothic",system-ui,sans-serif;padding:10px 16px}
+.viz-root{font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;color:var(--text-primary);background:var(--surface-0);line-height:1.6;padding:24px 18px 60px;min-height:100vh}
+.wrap{max-width:1120px;margin:0 auto}
+h1{font-size:23px;margin:0 0 4px;line-height:1.35} h2{font-size:18px;margin:0 0 8px} h3{font-size:15px;margin:0 0 6px}
+.sub{color:var(--text-secondary);font-size:13px}
+.note{font-size:12.5px;color:var(--text-muted)}
+a{color:var(--accent)}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px 22px;margin:16px 0}
+.card>h2 .chip{font-size:12.5px;vertical-align:2px;margin-left:6px}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:6px}
+.tile{background:var(--surface-2);border-radius:10px;padding:10px 12px;font-size:13.5px}
+.tile .k{font-size:12px;color:var(--text-muted);font-weight:700;margin-bottom:4px}
+.tile .big{font-size:22px;font-weight:800;line-height:1.3}
+.tile .big small{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.gloss{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.gloss div{background:var(--surface-2);border-radius:10px;padding:9px 12px;font-size:13px}
+.gloss .gt{display:block;font-size:13.5px;font-weight:700}
+@media(max-width:1000px){.tiles,.gloss{grid-template-columns:1fr 1fr}}
+.toggle{float:right;font:inherit;font-size:12.5px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);border-radius:6px;padding:4px 10px;cursor:pointer}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;border-radius:999px;padding:1px 10px;white-space:nowrap;color:var(--text-primary)}
+.chip.ok{background:var(--good-bg)} .chip.ok::before{content:"✔";color:var(--good)}
+.chip.fail{background:var(--crit-bg)} .chip.fail::before{content:"✖";color:var(--critical)}
+.chip.warn{background:var(--warn-bg)} .chip.warn::before{content:"▲";color:var(--warning)}
+.chip.info{background:var(--info-bg)} .chip.info::before{content:"●";color:var(--accent)}
+.chip.na{background:var(--na-bg)} .chip.na::before{content:"—";color:var(--text-muted)}
+.tag{display:inline-block;font-size:11.5px;font-weight:700;border:1px dashed var(--warning);color:var(--text-secondary);border-radius:6px;padding:0 6px;margin-left:6px;white-space:nowrap;vertical-align:1px}
+.na-t{color:var(--text-muted);font-weight:600}
+.empty{color:var(--text-muted);background:var(--surface-2);border-radius:8px;padding:10px 12px;font-size:13.5px}
+.btn,.jump button{font:inherit;font-size:13px;padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);cursor:pointer}
+.btn[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1);border-color:var(--text-primary)}
+.jump{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 10px}
+.toolbar .sp{flex:1}
+.legend{display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--text-secondary);align-items:center}
+.cvwrap{border:1px solid var(--border);border-radius:10px;background:var(--bg3d);overflow:hidden}
+canvas.v3{display:block;width:100%;cursor:grab;touch-action:none}
+canvas.v3:active{cursor:grabbing}
+#cv1{height:560px} #cv2{height:470px}
+.hint{font-size:12px;color:var(--text-muted);margin-top:5px}
+.below2{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:14px}
+@media(max-width:900px){.below2{grid-template-columns:1fr}}
+.pcard{background:var(--surface-2);border-radius:10px;padding:14px 16px;min-height:190px}
+.pcard h3{font-size:16px;margin:0 0 6px}
+.pcard .row{margin:8px 0 0;font-size:14px}
+.pcard .lab{font-size:12px;font-weight:700;color:var(--text-muted);display:block}
+.plist{list-style:none;margin:0;padding:0;font-size:13.5px}
+.plist li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-radius:7px;cursor:pointer}
+.plist li:hover{background:var(--surface-1)}
+.plist li.sel{background:var(--info-bg)}
+.plist li.grp{cursor:default;font-size:12px;font-weight:700;color:var(--text-muted);padding-top:8px}
+.plist li.grp:hover{background:none}
+.two{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+@media(max-width:900px){.two{grid-template-columns:1fr}}
+.ctl{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 10px;font-size:13px}
+.ctl input[type=range]{width:180px;vertical-align:middle}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border-bottom:1px solid var(--grid);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--text-secondary);font-weight:700;font-size:12.5px}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+tr.hl td{background:var(--info-bg)}
+tr.cur td:first-child{box-shadow:inset 3px 0 0 var(--text-primary)}
+.box{border-radius:10px;padding:12px 14px;margin:10px 0;font-size:14px}
+.box ul,.box ol{margin:4px 0 0;padding-left:20px}
+.box.good{background:var(--good-bg)} .box.warn{background:var(--warn-bg)} .box.info{background:var(--info-bg)} .box.crit{background:var(--crit-bg)}
+.meter{margin-top:6px}
+.meter .trk{position:relative;height:12px;border-radius:6px;background:var(--surface-1);border:1px solid var(--border)}
+.meter .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+.meter .lim{position:absolute;top:-4px;bottom:-4px;width:0;border-left:2px dashed var(--critical)}
+.meter .lim.w{border-left-color:var(--warning)}
+.meter .ticks{position:relative;height:16px;font-size:11px;color:var(--text-muted)}
+.meter .ticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.bl{margin:6px 0}
+.bl .t{display:flex;justify-content:space-between;gap:8px;font-size:12.5px}
+.bl .trk{position:relative;height:12px;border-radius:6px;background:var(--surface-1);border:1px solid var(--border)}
+.bl .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+.bl .mx{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text-primary)}
+.bl .spec{position:absolute;top:-5px;bottom:-5px;width:0;border-left:2px dashed var(--critical)}
+.read{border:1px solid var(--border);background:var(--surface-1);border-radius:8px;padding:8px 10px;font-size:13px;margin-top:8px}
+.read div{display:flex;justify-content:space-between;gap:10px;padding:1px 0}
+.read span:first-child{color:var(--text-secondary)}
+.read b{font-variant-numeric:tabular-nums;text-align:right}
+.side{background:var(--surface-2);border-radius:10px;padding:12px 14px;font-size:13.5px}
+.side .h{font-size:12px;font-weight:700;color:var(--text-muted);margin:10px 0 4px}
+.side .h:first-child{margin-top:0}
+.wticks{display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-top:2px;gap:4px}
+.wticks span{flex:1;text-align:center;white-space:nowrap}
+.wticks span:first-child{text-align:left} .wticks span:last-child{text-align:right}
+.sb{display:grid;grid-template-columns:minmax(160px,250px) minmax(0,1fr) 190px;gap:10px;align-items:center;margin:5px 0;font-size:13px}
+.sb .sbt{position:relative;height:18px;background:var(--surface-2);border-radius:4px}
+.sb .sbt .z{position:absolute;left:50%;top:-3px;bottom:-3px;border-left:1px solid var(--text-muted)}
+.sb .sbt .f{position:absolute;top:3px;bottom:3px;border-radius:3px}
+.sb .sbv{font-variant-numeric:tabular-nums;color:var(--text-secondary)}
+.sb.fin{border-top:1px dashed var(--border);padding-top:6px;margin-top:8px;font-weight:700}
+.sbax{display:grid;grid-template-columns:minmax(160px,250px) minmax(0,1fr) 190px;gap:10px;font-size:11.5px;color:var(--text-muted)}
+.tree{display:flex;flex-direction:column}
+.lv{display:grid;grid-template-columns:230px minmax(0,1fr);gap:6px 14px;align-items:start;background:var(--surface-2);border-radius:10px;padding:10px 12px}
+.lv.dim{opacity:.5}
+.lv .q{font-weight:700;font-size:14px;display:flex;gap:8px;align-items:flex-start}
+.lv .num{flex:none;display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--text-primary);color:var(--surface-1);align-items:center;justify-content:center;font-size:12px;font-weight:800;margin-top:1px}
+.opts{display:flex;gap:8px;flex-wrap:wrap}
+.opt{flex:1 1 150px;border:1px solid var(--border);background:var(--surface-1);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--text-muted)}
+.opt>b{color:var(--text-secondary)}
+.opt .leaf{font-size:12px;margin-top:2px}
+.opt.on{border:2px solid var(--accent);background:var(--info-bg);color:var(--text-primary)}
+.opt.on>b{color:var(--text-primary)}
+.opt.on>b::before{content:"✔ ";color:var(--accent)}
+.opt.on .leaf{font-weight:700}
+.lv .ev{grid-column:2;font-size:12.5px;color:var(--text-secondary)}
+.con{height:16px;margin-left:122px;border-left:2px solid var(--accent)}
+.con.off{border-left:2px dashed var(--border)}
+.tip{position:fixed;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12.5px;box-shadow:0 4px 14px rgba(0,0,0,.18);opacity:0;transition:opacity .08s;z-index:50;max-width:320px}
+.vrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:3px 0}
+.ax{font-weight:800;min-width:14px;display:inline-block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;font-size:13px;margin-top:6px}
+.kv span{color:var(--text-secondary)}
+.kv b{font-variant-numeric:tabular-nums}
+ul.rs{margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--text-secondary)}
+.foot{font-size:12px;color:var(--text-muted);margin-top:24px;text-align:center}
+svg text{font-family:inherit}
+</style>
+</head>
+<body>
+<div id="errBanner" role="alert" hidden></div>
+<script>
+(function(){
+  function show(msg){var b=document.getElementById('errBanner');if(!b)return;b.hidden=false;b.textContent='⚠ 이 보고서의 스크립트 오류 — 그림이 올바르지 않을 수 있습니다: '+msg;}
+  window.onerror=function(m,src,line,col){show(m+' (줄 '+line+':'+col+')');return false;};
+  window.addEventListener('unhandledrejection',function(e){show(String(e.reason));});
+})();
+</script>
+<script>
+const DIAG = /*__PASS_DIAG__*/null;
+</script>
+<div class="viz-root"><div class="wrap">
+
+<button class="toggle" id="themeBtn" type="button">다크/라이트</button>
+<h1 id="title">XY 위치 맞춤 트러블슈팅 보고서</h1>
+<div class="sub" id="hdr"></div>
+<div id="warnBox"></div>
+
+<div class="card" id="sec-sum">
+  <h2>한눈에 보기</h2>
+  <div class="tiles" id="kpi"></div>
+  <nav class="jump" aria-label="바로 가기">
+    <button type="button" data-go="sec-3d">장비 3D</button>
+    <button type="button" data-go="sec-wafer">웨이퍼 증거</button>
+    <button type="button" data-go="sec-where">어디서 생기나</button>
+    <button type="button" data-go="sec-offset">스캐너 오프셋</button>
+    <button type="button" data-go="sec-whatif">What-if</button>
+    <button type="button" data-go="sec-drift">드리프트</button>
+    <button type="button" data-go="sec-rot">회전 시험</button>
+    <button type="button" data-go="sec-tree">판단 트리</button>
+    <button type="button" data-go="sec-act">조치</button>
+    <button type="button" data-go="sec-gloss">용어</button>
+  </nav>
+</div>
+
+<div class="card" id="sec-3d">
+  <h2>장비 3D — 부품별 판정</h2>
+  <p class="sub" style="margin-top:-4px">기본 시점은 <b>장비 정면</b>(−Y 쪽)에서 본 모습입니다: <b>X</b>는 오른쪽, <b>Y</b>는 안쪽(뒤의 기둥 쪽), <b>Z</b>는 위. 기둥(스트럿)은 뒤, <b>EFEM은 왼쪽</b>(−X)에 있고 웨이퍼는 <b>왼쪽에서</b> 들어옵니다. 부품 색은 이번 진단의 판정입니다. 끌면 돌아가고 휠로 확대하며, 부품을 누르면 판정 이유가 아래에 나옵니다. 크기는 개념도 수준입니다.</p>
+  <div class="toolbar">
+    <button class="btn" id="explodeBtn" aria-pressed="false" type="button">분해 보기</button>
+    <button class="btn" id="enclBtn" aria-pressed="false" type="button">방음 인클로저 보이기</button>
+    <button class="btn" id="labelBtn" aria-pressed="true" type="button">이름표</button>
+    <button class="btn" id="reset1" type="button">시점 초기화</button>
+    <span class="sp"></span>
+    <span class="legend"><span class="chip ok">정상</span><span class="chip warn">주의</span><span class="chip fail">이상</span><span class="chip na">판정 없음</span></span>
+  </div>
+  <div class="cvwrap"><canvas id="cv1" class="v3" aria-label="장비 3D 모델. 끌어서 회전, 휠로 확대, 부품 클릭으로 판정 이유"></canvas></div>
+  <div class="below2">
+    <div class="pcard" id="partCard" aria-live="polite"></div>
+    <div class="pcard" style="padding:10px 10px"><ul class="plist" id="partList"></ul></div>
+  </div>
+</div>
+
+<div class="card" id="sec-wafer">
+  <h2>웨이퍼 증거 — Die별 이동 화살표</h2>
+  <p class="sub" style="margin-top:-4px">각 Die의 편차(dx, dy)를 화살표로 그렸습니다. 웨이퍼 중심을 도는 <b>소용돌이</b> 모양이면 회전, 모두 같은 쪽이면 평행 이동, 바깥(안쪽)을 향하면 배율 오차입니다. 방향: <b>정면 ↓ · 기둥 ↑ · EFEM ←</b>.</p>
+  <div class="ctl">
+    <label for="kS">화살표 배율</label>
+    <input type="range" id="kS" min="-4" max="4" step="1" value="0">
+    <b id="kSv"></b>
+    <span class="sp" style="flex:1"></span>
+    <button class="btn" id="reset2" type="button">시점 초기화</button>
+  </div>
+  <div class="two">
+    <div><div class="cvwrap"><canvas id="cv2" class="v3" aria-label="3D 웨이퍼와 Die 이동 화살표"></canvas></div><div class="hint">3D: 끌어서 회전 · 휠로 확대 · Die 위에 마우스를 올리면 값이 나옵니다.</div></div>
+    <div><svg id="topView" viewBox="0 0 440 420" width="100%" role="img" aria-label="웨이퍼 위에서 본 Die 이동 화살표"></svg><div class="hint">위에서 본 그림(스테이지 좌표: X 오른쪽, Y 위 = 뒤).</div></div>
+  </div>
+  <div id="shapeBox" style="margin-top:12px"></div>
+</div>
+
+<div class="card" id="sec-where">
+  <h2>어디서 생기나 — 비전 단계별 θ <span id="whereChip"></span></h2>
+  <p class="sub" style="margin-top:-4px">Positioning Log의 단계마다 Die 값을 Die 위치에 평면 피팅한 위치 비례 성분(θ, µrad)입니다. 최종 착지(HZ1_O)의 θ가 비전 단계에 없으면 <b>비전 정렬 이후</b>(스캐너 이동·Tip 착지)에서 생긴 것입니다. 옅은 막대 = |t| &lt; 3(유의하지 않음).</p>
+  <div id="whereBars"></div>
+  <div id="whereLines"></div>
+</div>
+
+<div class="card" id="sec-offset">
+  <h2>스캐너 오프셋 — 레시피 + 기준 보정 + 미세 보정 = 적용</h2>
+  <p class="sub" style="margin-top:-4px">측정 라인마다 시료 스캐너를 옮겨 둔 거리입니다. 적용 오프셋이 클수록 스캐너 구동에 따른 회전이 커집니다. <span id="omTxt"></span><span id="omTag"></span></p>
+  <div class="two">
+    <div id="offTables"></div>
+    <div><svg id="offFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="Die 확대 — 정렬점과 X·Y 라인 위치"></svg><div class="note" id="offFigNote"></div></div>
+  </div>
+</div>
+
+<div class="card" id="sec-whatif">
+  <h2>What-if — X 라인 레시피 Y 오프셋을 바꾸면</h2>
+  <div id="wiBody"></div>
+</div>
+
+<div class="card" id="sec-drift">
+  <h2>드리프트 · Lot 시작 과도 <span id="driftChip"></span></h2>
+  <div id="driftReasons"></div>
+  <h3 style="margin-top:10px">Lot 평균의 시간 추이</h3>
+  <div id="driftChart"></div>
+  <div class="two" style="margin-top:12px">
+    <div><h3>Lot 안 흐름 (Die 순서에 따른 기울기)</h3><div id="withinLot"></div></div>
+    <div><h3>Lot 시작 과도 <span id="transChip"></span></h3><div id="transient"></div></div>
+  </div>
+</div>
+
+<div class="card" id="sec-rot">
+  <h2>스캐너 회전 시험</h2>
+  <div id="rotTest"></div>
+</div>
+
+<div class="card" id="sec-tree">
+  <h2>판단 트리 — 이번 진단이 지나간 길</h2>
+  <p class="sub" style="margin-top:-4px">고정된 순서로 묻고, 진단 데이터로 고른 답을 <b>파란 테두리</b>로 표시합니다. 옅은 단계는 이 경로에서 닿지 않은 단계입니다.</p>
+  <div class="tree" id="tree"></div>
+</div>
+
+<div class="card" id="sec-act">
+  <h2>조치</h2>
+  <div id="actions"></div>
+</div>
+
+<div class="card" id="sec-gloss">
+  <h2>처음 보시는 분을 위한 용어</h2>
+  <div class="gloss">
+    <div><b class="gt">µm · µrad</b>µm(마이크로미터) = 1 mm의 1/1000. µrad(마이크로라디안) = 아주 작은 각도. 1 µrad는 1 m 떨어진 곳이 1 µm 옮겨지는 각도(약 0.00006°).</div>
+    <div><b class="gt">θx · θy (세타)</b>Die 위치에 따라 오차가 얼마나 커지는지 나타내는 기울기(µrad). θx = Die의 Y 위치에 비례하는 X 오차. θx 1 µrad = Y 1 mm마다 X 오차 1 nm → 웨이퍼 끝(±120 mm)에서 약 ±0.12 µm.</div>
+    <div><b class="gt">HZ1_O</b>AFM 결과 파일에서 Spec 판정에 쓰는 값의 이름. 패턴의 엣지(경계선)가 있어야 할 자리에서 얼마나 벗어났는지를 나타냅니다.</div>
+    <div><b class="gt">비전 정렬</b>카메라(Vision)로 Die의 패턴을 보고, 잴 자리를 Tip 바로 아래로 정확히 맞추는 단계. 시료 스캐너를 측정 라인 위치로 밀기 <b>전</b>에 끝납니다.</div>
+    <div><b class="gt">PZT (압전 소자)</b>전압을 걸면 µm 단위로 아주 조금 늘어나는 세라믹. 스캐너 안에서 상판을 미는 '미세 모터' 역할을 합니다.</div>
+    <div><b class="gt">플렉셔</b>마찰 없이 휘면서 움직임을 한 방향으로 안내하는 얇은 금속 힌지(판 스프링). 스캐너 상판을 붙잡고 있습니다.</div>
+    <div><b class="gt">스캐너 오프셋</b>스테이지는 그대로 두고 시료 스캐너만으로 웨이퍼를 옮겨 둔 거리(µm). 레시피 오프셋 + 기준 스캔 보정 + 미세 보정 = 적용 오프셋.</div>
+    <div><b class="gt">디텍터 · 듀얼 서보</b>디텍터 = 스캐너가 얼마나 움직였는지 재는 위치 센서(X1·X2·Y1·Y2). 듀얼 서보 = 한 축의 디텍터 2개를 함께 써서 상판이 비틀리지 않게 붙잡는 제어.</div>
+    <div><b class="gt">Die · Lot · 캔틸레버</b>Die = 웨이퍼 위 측정 칸. Lot = 웨이퍼 한 장을 Die × 반복으로 잰 묶음. 캔틸레버 = Tip을 끝에 단 얇은 판.</div>
+    <div><b class="gt">κ (카파)</b>스캐너를 1 µm 구동할 때 생기는 회전(µrad/µm). κ_eff = θ ÷ 적용 스캐너 오프셋 — 레시피 오프셋을 바꿨을 때의 회전을 예측하는 데 씁니다.</div>
+    <div><b class="gt">t 값</b>계수가 측정 흔들림에 비해 얼마나 큰지. |t| ≥ 3이면 우연으로 보기 어렵습니다.</div>
+    <div><b class="gt">잠정 규격</b>장비 여러 대의 데이터(평균 + 3σ)로 확정하기 전의 임시 기준. 판정은 참고용이며 확정 후 바뀔 수 있습니다.</div>
+  </div>
+</div>
+
+<div class="foot" id="foot">PASS XY Stage 앱이 진단 데이터(pass.xy.diagnosis/1)로 만든 한 파일 보고서입니다. 인터넷 연결 없이 열립니다.</div>
+<div class="tip" id="tip"></div>
+</div></div>
+
+<script>
+(function(){
+'use strict';
+const root=document.querySelector('.viz-root');
+const $=id=>document.getElementById(id);
+const FONT='"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif';
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const D=(typeof DIAG!=='undefined'&&DIAG&&typeof DIAG==='object'&&!Array.isArray(DIAG))?DIAG:null;
+
+/* ---------- URL hash (initial state for review / screenshots) ---------- */
+const HS={};
+location.hash.replace(/^#/,'').split('&').forEach(kv=>{if(!kv)return;const i=kv.indexOf('=');HS[i<0?kv:kv.slice(0,i)]=i<0?'1':decodeURIComponent(kv.slice(i+1));});
+if(HS.theme==='dark'||HS.theme==='light')document.documentElement.setAttribute('data-theme',HS.theme);
+
+/* ---------- theme colours ---------- */
+const C={};
+const CK=['surface-0','surface-1','surface-2','border','grid','axis','text-primary','text-secondary','text-muted','accent','series-1','series-2','pos','good','warning','critical','bg3d','m-avt','m-body','m-stage','m-scan','m-plate','m-hinge','m-pzt','m-chuck','m-wafer','m-die','m-zst','m-fst','m-vis','m-cone','m-zsc','m-tip','m-efem','m-pattern','m-na'];
+function readTheme(){const cs=getComputedStyle(root);CK.forEach(k=>C[k]=cs.getPropertyValue('--'+k).trim());C.dark=(cs.getPropertyValue('color-scheme')||'').indexOf('dark')>=0;}
+function hex2rgb(h){h=(h||'#888888').replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return [(n>>16)&255,(n>>8)&255,n&255];}
+const rgbs=(c,a)=>{const v=c.map(x=>Math.round(clamp(x,0,255)));return a==null?`rgb(${v.join(',')})`:`rgba(${v.join(',')},${a})`;};
+const mixc=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+const mixHex=(a,b,t)=>'#'+mixc(hex2rgb(a),hex2rgb(b),t).map(v=>Math.round(clamp(v,0,255)).toString(16).padStart(2,'0')).join('');
+
+/* ---------- data helpers: every DIAG field may be null ---------- */
+const isNum=v=>typeof v==='number'&&isFinite(v);
+const NAT='데이터 없음';
+const NAH='<span class="na-t">데이터 없음</span>';
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function g(o){for(let i=1;i<arguments.length;i++){if(o==null||typeof o!=='object')return null;o=o[arguments[i]];}return o===undefined?null:o;}
+const arr=v=>Array.isArray(v)?v:[];
+const obj=v=>(v&&typeof v==='object'&&!Array.isArray(v))?v:null;
+function num(v,d){const s=Math.abs(v).toFixed(d==null?3:d);return (v<0&&/[1-9]/.test(s)?'−':'')+s;}
+function sgn(v,d){const s=Math.abs(v).toFixed(d==null?2:d);return (/[1-9]/.test(s)?(v<0?'−':'+'):'')+s;}
+const nf=(v,d)=>isNum(v)?num(v,d):NAH;
+const nfs=(v,d)=>isNum(v)?sgn(v,d):NAH;
+const tx=v=>(v==null||v==='')?NAH:esc(v);
+const dt=s=>(typeof s==='string'&&s)?esc(s.replace('T',' ').slice(0,16)):NAH;
+function specTxt(v){if(!isNum(v))return NAT;let s=String(Math.round(v*1000)/1000);if(s.indexOf('.')<0)s+='.0';return s;}
+function pair(v){if(!Array.isArray(v)||v.length<2)return null;const p=[isNum(v[0])?v[0]:null,isNum(v[1])?v[1]:null];return p[0]==null&&p[1]==null?null:p;}
+const VK=v=>(v==='ok'||v==='warn'||v==='fail'||v==='na')?v:'na';
+const RANK={fail:3,warn:2,ok:1,na:0};
+const worst=(a,b)=>RANK[a]>=RANK[b]?a:b;
+const VCOL=v=>v==='fail'?C.critical:v==='warn'?C.warning:v==='ok'?C.good:C['text-muted'];
+const VG=v=>v==='fail'?'✖':v==='warn'?'▲':v==='ok'?'✔':'—';
+const VT={ok:'정상',warn:'주의',fail:'이상',na:'판정 없음'};
+const chip=(v,t)=>`<span class="chip ${v==='info'?'info':VK(v)}">${t}</span>`;
+function statusChip(s){if(s==null||s==='')return chip('na',NAT);const k=VK(s);return chip(k,k===s?VT[k]:esc(s));}
+const AXC=a=>a==='Y'?C['series-2']:C['series-1'];
+const SPEC=obj(g(D,'spec'))||{};
+const PROV=SPEC.provisional===true;
+const provTag=()=>PROV?'<span class="tag">잠정 규격</span>':'';
+const listHTML=(a,cls)=>{a=arr(a).filter(x=>x!=null&&x!=='');return a.length?`<ul class="${cls||'rs'}">${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'';};
+
+/* ---------- tooltip ---------- */
+const tipEl=$('tip');
+function showTip(x,y,html){tipEl.innerHTML=html;tipEl.style.opacity=1;tipEl.style.left=Math.min(x+14,innerWidth-330)+'px';tipEl.style.top=(y+14)+'px';}
+function hideTip(){tipEl.style.opacity=0;}
+
+/* =====================================================================
+   Header, warnings, KPI tiles
+   ===================================================================== */
+function renderHeader(){
+  const s=obj(g(D,'source'))||{};
+  const t='XY 위치 맞춤 트러블슈팅 보고서'+(s.workflow?' — '+s.workflow:'');
+  $('title').textContent=t;document.title=t+(s.sample?' · '+s.sample:'');
+  $('hdr').innerHTML=`<div>시료 <b>${tx(s.sample)}</b> · 레시피 <b>${tx(s.recipe_id)}</b> · 회차 <b>${tx(s.run)}</b> · Lot <b>${nf(s.lots,0)}</b> · Die <b>${nf(s.dies,0)}</b></div>`+
+    `<div>측정 ${s.start||s.end?dt(s.start)+' – '+dt(s.end):'시각 '+NAH} · 진단 생성 ${dt(g(D,'generated'))} · 앱 버전 ${tx(g(D,'app_version'))}</div>`+
+    `<div class="note">데이터 폴더: ${tx(s.root)}</div>`;
+}
+function renderWarnings(){
+  let h='';
+  if(!D)h+='<div class="box warn"><b>진단 데이터가 없습니다.</b> 이 파일은 보고서 틀입니다 — 앱에서 진단을 실행한 뒤 Remark → Export → "3D 트러블슈팅 보고서"로 만드세요. 아래 칸은 모두 "데이터 없음"으로 표시됩니다.</div>';
+  else if(D.schema!=='pass.xy.diagnosis/1')h+=`<div class="box warn">스키마 ${tx(D.schema)} — 이 보고서는 pass.xy.diagnosis/1 기준입니다. 일부 칸이 비어 보일 수 있습니다.</div>`;
+  const w=arr(g(D,'warnings')).filter(x=>x!=null&&x!=='');
+  if(w.length)h+=`<div class="box warn"><b>진단 경고</b><ul>${w.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  $('warnBox').innerHTML=h;
+}
+function metricChip(lab,val,spec){
+  if(!isNum(val))return chip('na',lab+' '+NAT);
+  if(!isNum(spec))return chip('na',`${lab} ${num(val,3)} µm (규격 없음)`);
+  const ok=val<=spec;return chip(ok?'ok':'fail',`${lab} ${num(val,3)} ${ok?'≤':'>'} ${specTxt(spec)} µm`);
+}
+function offMax(p){return p?Math.max(Math.abs(p[0]||0),Math.abs(p[1]||0)):null;}
+function offChip(p,om){
+  if(!p)return chip('na',NAT);
+  if(!isNum(om))return chip('na','한계 없음');
+  const m=offMax(p);return m<=om?chip('ok',`|${num(m,1)}| ≤ ${specTxt(om)}`):chip(PROV?'warn':'fail',`|${num(m,1)}| > ${specTxt(om)}`);
+}
+function meterHTML(val,warn,max,col){
+  const top=Math.max(isNum(max)?max*1.5:1,isNum(val)?Math.abs(val)*1.1:0,isNum(warn)?warn*1.5:0)||1;
+  const pc=v=>clamp(v/top*100,0,100).toFixed(1)+'%';
+  let h=`<div class="meter"><div class="trk">`;
+  if(isNum(val))h+=`<div class="fill" style="width:${pc(Math.abs(val))};background:${col}"></div>`;
+  if(isNum(warn))h+=`<div class="lim w" style="left:${pc(warn)}" title="경고"></div>`;
+  if(isNum(max))h+=`<div class="lim" style="left:${pc(max)}" title="한계"></div>`;
+  const pv=v=>clamp(v/top*100,0,100);
+  const at=(p,t)=>`<span style="${p>88?'right:0;left:auto;transform:none':p<12?'left:0;transform:none':`left:${p.toFixed(1)}%`}">${t}</span>`;
+  h+='</div><div class="ticks">';
+  const L=[];if(isNum(warn))L.push([pv(warn),'경고 '+specTxt(warn)]);if(isNum(max))L.push([pv(max),'한계 '+specTxt(max)]);
+  if(L.length===2&&Math.abs(L[1][0]-L[0][0])<26)L.splice(0,2,[(L[0][0]+L[1][0])/2,L[0][1]+' · '+L[1][1]]);
+  if(!L.length||L[0][0]>20)h+='<span style="left:0;transform:none">0</span>';
+  L.forEach(q=>{h+=at(q[0],q[1]);});
+  return h+'</div></div>';
+}
+function rotLine(a){return a==='Y_line'?'Y 라인 θy':a==='X_line'?'X 라인 θx':(a?esc(a)+' θ':'θ');}
+function renderKPI(){
+  const ver=obj(g(D,'verdict'))||{};
+  let a='<div class="k">판정 — Range · StdDev 대 Spec</div>';
+  ['X','Y'].forEach(ax=>{const v=obj(ver[ax])||{};const p=v.pass;
+    a+=`<div class="vrow"><b class="ax" style="color:${AXC(ax)}">${ax}</b>${p===true?chip('ok','PASS'):p===false?chip('fail','FAIL'):chip('na',NAT)}</div>`+
+       `<div class="vrow">${metricChip('Range',v.range,SPEC.range)}${metricChip('Std',v.stddev,SPEC.stddev)}</div>`;});
+  const r=obj(g(D,'rotation'));
+  let b=`<div class="k">회전 KPI — 스캐너 구동에 따른 회전 ${provTag()}</div>`;
+  if(!r)b+='<div class="empty">데이터 없음</div>';
+  else{
+    const st=VK(r.status);
+    b+=`<div class="vrow"><span class="big">${nf(r.theta,2)} <small>µrad</small></span>${statusChip(r.status)}</div>`+
+       `<div class="note">${rotLine(r.axis)} · ${isNum(SPEC.theta_warn)||isNum(SPEC.theta_max)?`경고 ${specTxt(SPEC.theta_warn)} · 한계 ${specTxt(SPEC.theta_max)} µrad`:'규격 데이터 없음'}</div>`+
+       meterHTML(r.theta,SPEC.theta_warn,SPEC.theta_max,VCOL(st))+
+       `<div class="kv"><span>κ_eff</span><b>${nf(r.kappa_eff,3)} µrad/µm <span class="note">(${isNum(SPEC.kappa_warn)||isNum(SPEC.kappa_max)?`경고 ${specTxt(SPEC.kappa_warn)} · 한계 ${specTxt(SPEC.kappa_max)}`:'규격 데이터 없음'})</span></b>`+
+       `<span>적용 스캐너 Y</span><b>${nfs(r.scanner_y,1)} µm</b><span>Range 기여</span><b>${nf(r.contribution_um,2)} µm</b></div>`+listHTML(r.reasons);
+  }
+  const so=obj(g(D,'scanner_offsets'));const om=SPEC.offset_max;
+  let c=`<div class="k">레시피 오프셋 점검 — ${isNum(om)?`적용 오프셋 ≤ ±${specTxt(om)} µm`:'한계 데이터 없음'} ${provTag()}</div>`;
+  if(!so)c+='<div class="empty">데이터 없음</div>';
+  else [['X_line','X 라인'],['Y_line','Y 라인']].forEach(([k,lab])=>{const p=pair(g(so,k,'applied'));const rc=pair(g(so,k,'recipe'));
+    c+=`<div class="vrow"><b>${lab}</b>${offChip(p,om)}</div><div class="kv"><span>적용</span><b>${p?`(${nfs(p[0],1)}, ${nfs(p[1],1)}) µm`:NAH}</b><span>레시피</span><b>${rc?`(${nfs(rc[0],1)}, ${nfs(rc[1],1)}) µm`:NAH}</b></div>`;});
+  $('kpi').innerHTML=`<div class="tile">${a}</div><div class="tile">${b}</div><div class="tile">${c}</div>`;
+}
+
+/* =====================================================================
+   Minimal 3D engine (from the explainer): perspective projection,
+   painter's algorithm, back-face culling, flat shading, orbit/zoom, picking.
+   World: X right, Y back (column), Z up. Tip landing point = origin.
+   ===================================================================== */
+const LD=(()=>{const v=[0.45,-0.55,0.72];const n=Math.hypot(v[0],v[1],v[2]);return v.map(x=>x/n);})();
+function newell(P){let x=0,y=0,z=0;for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];x+=(a[1]-b[1])*(a[2]+b[2]);y+=(a[2]-b[2])*(a[0]+b[0]);z+=(a[0]-b[0])*(a[1]+b[1]);}const n=Math.hypot(x,y,z)||1;return [x/n,y/n,z/n];}
+function pip(x,y,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if(((a[1]>y)!==(b[1]>y))&&(x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;}
+const rotX=(p,a,pv)=>{const c=Math.cos(a),s=Math.sin(a),y=p[1]-pv[0],z=p[2]-pv[1];return [p[0],pv[0]+y*c-z*s,pv[1]+y*s+z*c];};
+function mkBox(cx,cy,z0,w,d,h,col,part,o){o=o||{};
+  const x0=cx-w/2,x1=cx+w/2,y0=cy-d/2,y1=cy+d/2,z1=z0+h;
+  let F6=[[[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]],[[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[x1,y0,z0]],[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]],[[x1,y1,z0],[x0,y1,z0],[x0,y1,z1],[x1,y1,z1]],[[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]],[[x0,y1,z0],[x0,y0,z0],[x0,y0,z1],[x0,y1,z1]]];
+  let c=[cx,cy,z0+h/2];
+  if(o.tf){F6=F6.map(f=>f.map(o.tf));c=o.tf(c);}
+  return {faces:F6.map(pts=>({pts})),col,part,c,alpha:o.alpha,after:o.after};
+}
+function mkCyl(cx,cy,z0,r,h,col,part,o){o=o||{};
+  const n=o.n||40,z1=z0+h,ring=[];for(let i=0;i<n;i++){const a=i/n*2*Math.PI;ring.push([cx+r*Math.cos(a),cy+r*Math.sin(a)]);}
+  const F2=[{pts:ring.map(q=>[q[0],q[1],z1])},{pts:ring.slice().reverse().map(q=>[q[0],q[1],z0])}];
+  for(let i=0;i<n;i++){const a=ring[i],b=ring[(i+1)%n];F2.push({pts:[[a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]],seam:true});}
+  return {faces:F2,col,part,c:[cx,cy,z0+h/2],alpha:o.alpha,after:o.after};
+}
+function mkCone(cx,cy,ztop,r,apex,n,col,part,o){o=o||{};
+  const ring=[];const ph=o.ph||0;for(let i=0;i<n;i++){const a=ph+i/n*2*Math.PI;ring.push([cx+r*Math.cos(a),cy+r*Math.sin(a),ztop]);}
+  const F2=[{pts:ring.slice()}];
+  for(let i=0;i<n;i++)F2.push({pts:[ring[i],apex,ring[(i+1)%n]],seam:o.smooth!==false&&n>6});
+  return {faces:F2,col,part,c:[(cx+apex[0])/2,(cy+apex[1])/2,(ztop+apex[2])/2],alpha:o.alpha,after:o.after,hull:o.hull?ring.concat([apex]):null};
+}
+function View(cv,o){
+  this.cv=cv;this.ctx=cv.getContext('2d');this.build=o.build;this.home=o.home;this.onPick=o.onPick;this.onHover=o.onHover;this.idOf=o.idOf||(k=>k);
+  this.sel=null;this.hov=null;this.drawn=[];this.labelHits=[];this.dirty=true;this.yawR=o.yawR||null;
+  this.resetView();
+  let drag=null;
+  cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,yaw:this.yaw,pitch:this.pitch,moved:false};try{cv.setPointerCapture(e.pointerId);}catch(_){}});
+  cv.addEventListener('pointermove',e=>{const r=cv.getBoundingClientRect();
+    if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(!drag.moved&&Math.abs(dx)+Math.abs(dy)>4)drag.moved=true;
+      if(drag.moved){let y=drag.yaw-dx*0.008;if(this.yawR)y=clamp(y,this.yawR[0],this.yawR[1]);this.yaw=y;this.pitch=clamp(drag.pitch+dy*0.006,0.06,1.53);this.dirty=true;hideTip();}}
+    else if(this.onHover)this.onHover(this,e.clientX-r.left,e.clientY-r.top,e);});
+  cv.addEventListener('pointerup',e=>{const r=cv.getBoundingClientRect();if(drag&&!drag.moved&&this.onPick)this.onPick(this.pick(e.clientX-r.left,e.clientY-r.top),this);drag=null;});
+  cv.addEventListener('pointercancel',()=>{drag=null;});
+  cv.addEventListener('pointerleave',()=>{if(!drag&&this.onHover)this.onHover(this,null);});
+  cv.addEventListener('wheel',e=>{e.preventDefault();this.zoom=clamp(this.zoom*(e.deltaY<0?1.1:1/1.1),0.4,6);this.dirty=true;},{passive:false});
+}
+View.prototype.resetView=function(h){h=h||this.home;this.home=h;this.yaw=h.yaw;this.pitch=h.pitch;this.zoom=h.zoom||1;this.target=h.target.slice();this.dirty=true;};
+View.prototype.setup=function(){
+  const cv=this.cv,W=cv.clientWidth,H=cv.clientHeight;if(!W||!H)return false;
+  const dpr=window.devicePixelRatio||1;
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);}
+  this.ctx.setTransform(dpr,0,0,dpr,0,0);this.W=W;this.H=H;
+  this.cy=Math.cos(this.yaw);this.sy=Math.sin(this.yaw);this.cp=Math.cos(this.pitch);this.sp=Math.sin(this.pitch);
+  const f=this.home.fit;this.dist=f.dist||3200;
+  this.scale=Math.min((W-2*(f.pad||0))/f.w,H/f.h)*this.zoom*(this.zoomMul||1);
+  this.cxs=W/2+(f.dx||0);this.cys=H/2+(f.dy||0);
+  return true;};
+View.prototype.v=function(p){const x=p[0]-this.target[0],y=p[1]-this.target[1],z=p[2]-this.target[2];const X=x*this.cy-y*this.sy,Y=x*this.sy+y*this.cy;return [X,Y*this.cp-z*this.sp,Y*this.sp+z*this.cp];};
+View.prototype.p=function(p){const v=this.v(p);const k=this.dist/(this.dist+v[1])*this.scale;return [this.cxs+v[0]*k,this.cys-v[2]*k,v[1]];};
+function hull2(P){P=P.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]);const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);const lo=[],up=[];for(const p of P){while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p);}for(let i=P.length-1;i>=0;i--){const p=P[i];while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p);}up.pop();lo.pop();return lo.concat(up);}
+View.prototype.drawObj=function(o){
+  if(o.hull){const H=hull2(o.hull.map(q=>this.p(q))),c=this.ctx;c.beginPath();H.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.globalAlpha=o.alpha==null?1:o.alpha;c.fillStyle=o.col;c.fill();c.globalAlpha=Math.min(1,(o.alpha||1)+0.3);c.strokeStyle=o.col;c.lineWidth=1;c.stroke();c.globalAlpha=1;if(o.part)this.drawn.push({P:H,part:o.part});o.vis=[];return;}
+  const ctx=this.ctx,base=hex2rgb(o.col),id=o.part?this.idOf(o.part):null,sel=id!=null&&this.sel===id,hov=id!=null&&this.hov===id&&!sel;
+  const acc=hex2rgb(C.accent);o.vis=[];
+  o.faces.forEach((f,fi)=>{
+    const P=f.pts.map(q=>this.p(q));
+    let a=0;for(let i=0;i<P.length;i++){const p=P[i],q=P[(i+1)%P.length];a+=p[0]*q[1]-q[0]*p[1];}
+    if(a>=0)return; // back face
+    o.vis.push(fi);
+    const n=newell(f.pts),d=Math.max(0,n[0]*LD[0]+n[1]*LD[1]+n[2]*LD[2]);
+    let col=base.map(v=>v*(0.62+0.38*d));
+    if(sel)col=mixc(col,acc,0.38);else if(hov)col=mixc(col,acc,0.18);
+    ctx.beginPath();P.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();
+    ctx.globalAlpha=o.alpha==null?1:o.alpha;
+    ctx.fillStyle=rgbs(col);ctx.fill();
+    if(f.seam){ctx.strokeStyle=rgbs(col);ctx.lineWidth=0.7;ctx.stroke();}
+    else{ctx.strokeStyle=sel?C.accent:rgbs(mixc(col,C.dark?[255,255,255]:[0,0,0],C.dark?0.12:0.28));ctx.lineWidth=sel?1.8:0.7;ctx.stroke();}
+    ctx.globalAlpha=1;
+    if(o.part)this.drawn.push({P,part:o.part});
+  });
+  if(o.after)o.after(this,o);
+};
+View.prototype.pick=function(x,y){for(const l of this.labelHits)if(x>=l.x&&x<=l.x+l.w&&y>=l.y&&y<=l.y+l.h)return l.part;for(let i=this.drawn.length-1;i>=0;i--)if(pip(x,y,this.drawn[i].P))return this.drawn[i].part;return null;};
+View.prototype.render=function(){
+  if(!this.setup())return false;
+  const ctx=this.ctx;ctx.clearRect(0,0,this.W,this.H);
+  this.drawn=[];this.labelHits=[];
+  const S={pre:[],stack:[],mid:[],free:[],post:[],labels:[],notes:[],stackC:null,triad:true};
+  this.build(S,this);
+  S.pre.forEach(o=>this.drawObj(o));
+  const mids=S.mid.map(o=>({o,d:this.v(o.c)[1]}));
+  if(S.stack.length){let c=S.stackC;if(!c){c=[0,0,0];let n=0;S.stack.forEach(L=>L.forEach(o=>{c[0]+=o.c[0];c[1]+=o.c[1];c[2]+=o.c[2];n++;}));c=c.map(v=>v/Math.max(1,n));}mids.push({st:true,d:this.v(c)[1]});}
+  mids.sort((a,b)=>b.d-a.d);
+  mids.forEach(m=>{if(m.st)S.stack.forEach(L=>L.map(o=>({o,d:this.v(o.c)[1]})).sort((a,b)=>b.d-a.d).forEach(x=>this.drawObj(x.o)));else this.drawObj(m.o);});
+  S.free.map(o=>({o,d:this.v(o.c)[1]})).sort((a,b)=>b.d-a.d).forEach(x=>this.drawObj(x.o));
+  S.post.forEach(f=>f(this));
+  this.cueOn=!!S.cue;
+  if(S.labels.length)this.drawLabels(S.labels);
+  if(S.cue)this.drawCue();
+  if(S.triad)this.drawTriad();
+  if(S.notes.length)this.drawNotes(S.notes);
+  return true;};
+View.prototype.poly3=function(pts,fill,stroke,lw,dash,alpha){const P=pts.map(q=>this.p(q)),c=this.ctx;c.beginPath();P.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();if(alpha!=null)c.globalAlpha=alpha;if(fill){c.fillStyle=fill;c.fill();}if(stroke){c.setLineDash(dash||[]);c.strokeStyle=stroke;c.lineWidth=lw||1;c.stroke();c.setLineDash([]);}c.globalAlpha=1;return P;};
+View.prototype.pl3=function(pts,col,lw,dash){const P=pts.map(q=>this.p(q)),c=this.ctx;c.setLineDash(dash||[]);c.beginPath();P.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.strokeStyle=col;c.lineWidth=lw||1.5;c.lineCap='round';c.lineJoin='round';c.stroke();c.setLineDash([]);return P;};
+function head2(c,s,t,h,col){const an=Math.atan2(t[1]-s[1],t[0]-s[0]);c.beginPath();c.moveTo(t[0],t[1]);c.lineTo(t[0]-h*Math.cos(an-0.45),t[1]-h*Math.sin(an-0.45));c.lineTo(t[0]-h*Math.cos(an+0.45),t[1]-h*Math.sin(an+0.45));c.closePath();c.fillStyle=col;c.fill();}
+View.prototype.arrow3=function(a,b,col,lw,hd,dbl,dash){const p=this.p(a),q=this.p(b),c=this.ctx,L=Math.hypot(q[0]-p[0],q[1]-p[1]);c.setLineDash(dash||[]);c.beginPath();c.moveTo(p[0],p[1]);c.lineTo(q[0],q[1]);c.strokeStyle=col;c.lineWidth=lw||2;c.lineCap='round';c.stroke();c.setLineDash([]);if(L<3)return;const h=Math.min(hd||8,L*0.45);head2(c,p,q,h,col);if(dbl)head2(c,q,p,h,col);};
+View.prototype.text=function(x,y,s,o){o=o||{};const c=this.ctx;c.font=(o.w||600)+' '+(o.size||12)+'px '+FONT;c.textAlign=o.align||'left';c.textBaseline='middle';c.lineJoin='round';c.lineWidth=3.5;c.strokeStyle=o.halo||C['bg3d'];c.strokeText(s,x,y);c.fillStyle=o.col||C['text-primary'];c.fillText(s,x,y);};
+View.prototype.tag3=function(p3,s,o){const p=this.p(p3);this.text(p[0],p[1],s,o);};
+function rr(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.lineTo(x+w-r,y);c.quadraticCurveTo(x+w,y,x+w,y+r);c.lineTo(x+w,y+h-r);c.quadraticCurveTo(x+w,y+h,x+w-r,y+h);c.lineTo(x+r,y+h);c.quadraticCurveTo(x,y+h,x,y+h-r);c.lineTo(x,y+r);c.quadraticCurveTo(x,y,x+r,y);c.closePath();}
+/* side-column callout labels: never overlap each other */
+View.prototype.drawLabels=function(L){
+  const c=this.ctx,W=this.W,H=this.H,h=24,gap=5;c.font='600 12.5px '+FONT;
+  L.forEach(l=>{const p=this.p(l.a);l.sx=p[0];l.sy=p[1];l.w=c.measureText(l.t).width+(l.v?22:0)+16;});
+  const left=L.filter(l=>l.side?l.side==='L':l.sx<W/2),right=L.filter(l=>l.side?l.side==='R':l.sx>=W/2);
+  const top=this.labTop||8;
+  const place=(arr2,bot)=>{arr2.sort((a,b)=>a.sy-b.sy);let y=top;arr2.forEach(l=>{l.ly=Math.max(l.sy-h/2,y);y=l.ly+h+gap;});let lim=bot-h;for(let i=arr2.length-1;i>=0;i--){if(arr2[i].ly>lim)arr2[i].ly=lim;lim=arr2[i].ly-h-gap;}};
+  place(left,H-74);place(right,this.cueOn?H-100:H-8);
+  left.forEach(l=>l.lx=10);right.forEach(l=>l.lx=W-10-l.w);
+  const isSel=l=>l.part&&this.sel===this.idOf(l.part);
+  L.forEach(l=>{const ex=l.lx<W/2?l.lx+l.w:l.lx,ey=l.ly+h/2;const col=isSel(l)?C.accent:l.v&&l.v!=='ok'&&l.v!=='na'?VCOL(l.v):C['text-muted'];
+    c.strokeStyle=col;c.lineWidth=l.v==='fail'?1.6:1;c.beginPath();c.moveTo(l.sx,l.sy);c.lineTo(ex,ey);c.stroke();
+    c.fillStyle=col;c.beginPath();c.arc(l.sx,l.sy,3,0,Math.PI*2);c.fill();});
+  L.forEach(l=>{const sel=isSel(l);rr(c,l.lx,l.ly,l.w,h,7);c.fillStyle=rgbs(hex2rgb(C['surface-1']),0.94);c.fill();c.strokeStyle=sel?C.accent:l.v==='fail'?C.critical:l.v==='warn'?C.warning:C.border;c.lineWidth=sel||l.v==='fail'||l.v==='warn'?2:1;c.stroke();
+    let x=l.lx+8;if(l.v){c.font='800 13px '+FONT;c.textAlign='left';c.textBaseline='middle';c.fillStyle=VCOL(l.v);c.fillText(VG(l.v),x,l.ly+h/2+1);x+=20;}
+    c.font='600 12.5px '+FONT;c.textAlign='left';c.textBaseline='middle';c.fillStyle=C['text-primary'];c.fillText(l.t,x,l.ly+h/2+1);
+    if(l.part)this.labelHits.push({x:l.lx,y:l.ly,w:l.w,h,part:l.part});});
+};
+View.prototype.drawTriad=function(){
+  const c=this.ctx,ox=40,oy=this.H-38,L=26;
+  rr(c,6,this.H-74,70,68,8);c.fillStyle=rgbs(hex2rgb(C['surface-1']),0.85);c.fill();const used=[];const place=(x,y)=>{for(let i=0;i<4;i++){if(used.every(u=>Math.hypot(u[0]-x,u[1]-y)>=12))break;x+=11;}used.push([x,y]);return [x,y];};
+  [[1,0,0,'X'],[0,1,0,'Y'],[0,0,1,'Z']].forEach(a=>{
+    const X=a[0]*this.cy-a[1]*this.sy,Yd=a[0]*this.sy+a[1]*this.cy,U=Yd*this.sp+a[2]*this.cp,dep=Yd*this.cp-a[2]*this.sp;
+    const dx=X*L,dy=-U*L,len=Math.hypot(dx,dy);
+    if(len<13){c.strokeStyle=C['text-primary'];c.lineWidth=1.5;c.beginPath();c.arc(ox,oy,6,0,Math.PI*2);c.stroke();if(dep<0){c.beginPath();c.arc(ox,oy,2.2,0,Math.PI*2);c.fillStyle=C['text-primary'];c.fill();}const q=place(ox+11,oy+10);this.text(q[0],q[1],a[3],{size:11,w:700});return;}
+    c.strokeStyle=C['text-primary'];c.lineWidth=1.8;c.beginPath();c.moveTo(ox,oy);c.lineTo(ox+dx,oy+dy);c.stroke();head2(c,[ox,oy],[ox+dx,oy+dy],6,C['text-primary']);
+    const q=place(ox+dx*1.32,oy+dy*1.32);this.text(q[0],q[1],a[3],{size:11,w:700,align:'center'});});
+};
+View.prototype.drawCue=function(){
+  const c=this.ctx,W=this.W,H=this.H,cx=W-76,cy=H-48,L=19;
+  rr(c,W-152,H-94,144,86,8);c.fillStyle=rgbs(hex2rgb(C['surface-1']),0.9);c.fill();c.strokeStyle=C.border;c.lineWidth=1;c.stroke();
+  [[0,1,'기둥(뒤)'],[-1,0,'EFEM'],[0,-1,'정면'],[1,0,'']].forEach(a=>{const X=a[0]*this.cy-a[1]*this.sy,U=(a[0]*this.sy+a[1]*this.cy)*this.sp;const n=Math.hypot(X,U)||1;const dx=X/n,dy=-U/n;
+    const col=a[2]?C['text-primary']:C['text-muted'];c.strokeStyle=col;c.lineWidth=a[2]?1.8:1;c.beginPath();c.moveTo(cx,cy);c.lineTo(cx+dx*L,cy+dy*L);c.stroke();if(!a[2])return;head2(c,[cx,cy],[cx+dx*L,cy+dy*L],6,col);
+    if(Math.abs(dx)>Math.abs(dy))this.text(cx+dx*(L+5),cy+dy*L,a[2],{size:11.5,w:700,align:dx<0?'right':'left'});else this.text(cx+dx*L,cy+dy*(L+9),a[2],{size:11.5,w:700,align:'center'});});
+};
+View.prototype.drawNotes=function(N){const c=this.ctx;let y=8;c.font='600 12px '+FONT;N.forEach(n=>{const t=typeof n==='string'?n:n.t,w=c.measureText(t).width+16;rr(c,8,y,w,22,6);c.fillStyle=rgbs(hex2rgb(C['surface-1']),0.92);c.fill();c.strokeStyle=n.col||C.border;c.lineWidth=1;c.stroke();c.fillStyle=n.col||C['text-secondary'];c.textAlign='left';c.textBaseline='middle';c.fillText(t,16,y+12);y+=27;});};
+
+/* =====================================================================
+   Machine model — proportions from the official schematic (1 px ≈ 1.15 mm).
+   Front faces −Y, column at the back (+Y), EFEM on the left (−X), Z up.
+   ===================================================================== */
+const STD_SITES=[[0,0],[2,0],[4,0],[6,0],[2,2],[4,4],[0,2],[0,4],[0,6],[-2,2],[-4,4],[-2,0],[-4,0],[-6,0],[-2,-2],[-4,-4],[0,-2],[0,-4],[0,-6],[2,-2],[4,-4]];
+const DIES=arr(g(D,'die_field')).map(obj).filter(Boolean).map(d=>{
+  const x=isNum(d.x_mm)?d.x_mm:isNum(d.site_x)?d.site_x*20:null,y=isNum(d.y_mm)?d.y_mm:isNum(d.site_y)?d.site_y*20:null;
+  return {name:d.die!=null&&d.die!==''?String(d.die):'Die ?',x,y,dx:isNum(d.dx)?d.dx:null,dy:isNum(d.dy)?d.dy:null};}).filter(d=>d.x!=null&&d.y!=null);
+const SITES_MM=DIES.length?DIES.map(d=>[d.x,d.y]):STD_SITES.map(q=>[q[0]*20,q[1]*20]);
+const Z={stage:216,scan:277,chuck:331,wafer:351,wt:355};
+function machine(S,o){
+  const e=o.e||0;
+  const dB=60*e,dS=110*e,dSc=170*e,dP=200*e,dC=250*e,dW=300*e,dH=360*e;
+  const WT=Z.wt+dW;
+  if(o.avt!==false){
+    S.pre.push(mkBox(0,75,0,760,890,95,C['m-avt'],'avt',{after:avtDecal}));
+    [[-250,-209],[250,-209],[-250,362],[250,362],[0,72]].forEach(q=>S.pre.push(mkCyl(q[0],q[1],95,q[0]===0?14:10,26+dB,C['m-pzt'],'avt',{n:12})));
+  }
+  if(o.body!==false){
+    S.pre.push(mkBox(0,76.5,121+dB,640,727,95,C['m-body'],'body'));
+    S.mid.push(mkBox(0,374,216+dB,360,132,322,C['m-body'],'body'));
+    S.mid.push(mkBox(0,349.5,538+dB,360,181,222+(dH-dB),C['m-body'],'body'));
+  }
+  const L0=[mkBox(0,0,Z.stage+dS,360,360,61,C['m-stage'],'stage',{after:(v,b)=>{const z=246+dS,cl=C['text-primary'];if(b.vis.includes(2))v.arrow3([-120,-180.6,z],[120,-180.6,z],cl,3.6,11,true);else if(b.vis.includes(4))v.arrow3([180.6,-120,z],[180.6,120,z],cl,3.6,11,true);else if(b.vis.includes(5))v.arrow3([-180.6,-120,z],[-180.6,120,z],cl,3.6,11,true);}})];
+  const L1=[],zs=Z.scan+dSc;
+  const wall=(x,y,w,d,aft)=>L1.push(mkBox(x,y,zs,w,d,54,C['m-scan'],'scanner',{after:aft}));
+  wall(-96,-161,148,18);wall(96,-161,148,18,(v,b)=>{if(b.vis.includes(2))v.arrow3([38,-170.6,304+dSc],[152,-170.6,304+dSc],C['text-secondary'],2,8,true,[5,4]);});
+  wall(0,161,340,18);wall(-161,0,18,304);wall(161,-87,18,130);wall(161,87,18,130);
+  L1.push(mkBox(0,0,281+dP,260,260,50,C['m-plate'],'scanner'));
+  [[-141,80],[-141,-80],[141,80],[141,-80]].forEach(q=>L1.push(mkBox(q[0],q[1],zs+10,22,10,32,C['m-hinge'],'flexure')));
+  L1.push(mkBox(0,-150,zs+14,40,40,26,C['m-pzt'],'ypzt'));
+  L1.push(mkBox(150,0,zs+14,40,40,26,C['m-pzt'],'xpzt'));
+  [['X1',90,161,24,14],['Y1',-60,161,24,14],['Y2',161,45,14,24],['X2',-90,-161,24,14]].forEach(q=>L1.push(mkBox(q[1],q[2],zs+54,q[3],q[4],12,C.accent,'detector',{after:o.detTags?(v=>v.tag3([q[1]+(q[2]>150?0:q[1]>150?20:0),q[2]+(q[2]>150?20:q[2]<-150?-20:0),zs+66],q[0],{size:11.5,w:800,col:C.accent,align:'center'})):null})));
+  const L2=[mkCyl(0,0,Z.chuck+dC,152,20,C['m-chuck'],'chuck',{n:44})];
+  const L3=[mkCyl(0,0,Z.wafer+dW,150,4,C['m-wafer'],'wafer',{n:56,after:v=>waferDecal(v,o,WT)})];
+  S.stack=[L0,L1,L2,L3];S.stackC=[0,0,300+dSc];
+  if(o.head!==false){
+    const zt=dH;
+    S.free.push(mkBox(0,199.5,505+dH,140,119,295,C['m-zst'],'zstage',{after:(v,b)=>{const x=b.vis.includes(5)?-70.6:b.vis.includes(4)?70.6:null;if(x!=null)v.arrow3([x,199.5,560+dH],[x,199.5,770+dH],C['text-primary'],3.4,11,true);}}));
+    S.free.push(mkBox(0,80.5,636+dH,110,119,142,C['m-fst'],'fstage',{after:(v,b)=>{const x=b.vis.includes(5)?-55.6:b.vis.includes(4)?55.6:null;if(x!=null)v.arrow3([x,80.5,665+dH],[x,80.5,752+dH],C['text-primary'],2.6,9,true);}}));
+    S.free.push(mkBox(0,-46,625+dH,110,134,153,C['m-vis'],'vision'));
+    S.free.push(mkCone(0,-46,625+dH,46,[0,-20,WT+0.5],24,C['m-cone'],'vision',{alpha:0.32,hull:true}));
+    S.free.push(mkBox(0,94.5,412+zt,80,91,198,C['m-zsc'],'zscan'));
+    const cz=400+zt,tilt=0.207;
+    S.free.push(mkBox(0,43,cz-2,10,117,4,C['m-tip'],'tip',{tf:p=>rotX(p,tilt,[43,cz])}));
+    S.free.push(mkCone(0,0,388+zt,6,[0,0,Z.wt+14+dH],4,C['m-tip'],'tip',{ph:Math.PI/4,smooth:false}));
+  }
+  if(o.efem)S.mid.push(mkBox(-585,0,0,230,400,480,C['m-efem'],'efem',{after:(v,b)=>{const cl=C['text-muted'];if(b.vis.includes(2))v.poly3([[-660,-200.6,250],[-510,-200.6,250],[-510,-200.6,330],[-660,-200.6,330]],null,cl,1.2);if(b.vis.includes(4))v.poly3([[-469.4,-90,330],[-469.4,90,330],[-469.4,90,430],[-469.4,-90,430]],rgbs(hex2rgb(cl),0.25),cl,1.2);}}));
+  if(o.loadPath)S.post.push(v=>{const z=392,pts=[];for(let i=0;i<48;i++){const a=i/48*2*Math.PI;pts.push([-310+150*Math.cos(a),150*Math.sin(a),z]);}v.poly3(pts,rgbs(hex2rgb(C['m-wafer']),0.35),C['text-secondary'],1.2,[5,4]);v.arrow3([-468,0,z+2],[-150,0,z+2],C.accent,2.6,11,false,[8,6]);});
+  if(o.encl)S.post.push(v=>wireBox(v,[-430,430],[-410,565],[0,860]));
+}
+function wireBox(v,X,Y,Zr){const col=C['text-muted'];const P=(i,j,k)=>[X[i],Y[j],Zr[k]];
+  v.poly3([P(0,0,1),P(1,0,1),P(1,1,1),P(0,1,1)],rgbs(hex2rgb(C['text-muted']),0.05),col,1.4);
+  [[0,0],[1,0],[1,1],[0,1]].forEach(q=>v.pl3([P(q[0],q[1],0),P(q[0],q[1],1)],col,1.4));
+  v.poly3([P(0,0,0),P(1,0,0),P(1,1,0),P(0,1,0)],null,col,1.4);}
+function avtDecal(v,o){const col=C['text-secondary'];if(o.vis.includes(2)){const y=-370.6;[-250,250].forEach(xc=>{const pts=[[xc,y,88]];for(let i=0;i<=8;i++)pts.push([xc+(i%2?11:-11),y,80-i*7.5]);pts.push([xc,y,8]);v.pl3(pts,col,1.6);});v.pl3([[-38,y,62],[-38,y,14],[38,y,14],[38,y,62]],col,1.6);v.pl3([[0,y,95],[0,y,34]],col,1.6);v.pl3([[-26,y,34],[26,y,34]],col,3.2);return;}
+  if(!o.vis.includes(4))return;const x=380.6;
+  [-209,362].forEach(yc=>{const pts=[[x,yc,88]];for(let i=0;i<=8;i++)pts.push([x,yc+(i%2?11:-11),80-i*7.5]);pts.push([x,yc,8]);v.pl3(pts,col,1.6);});
+  v.pl3([[x,34,62],[x,34,14],[x,110,14],[x,110,62]],col,1.6);v.pl3([[x,72,95],[x,72,34]],col,1.6);v.pl3([[x,46,34],[x,98,34]],col,3.2);}
+function sqPts(T,x,y,h){return [T(x-h,y-h),T(x+h,y-h),T(x+h,y+h),T(x-h,y+h)];}
+function waferDecal(v,o,z){
+  const W2=(x,y)=>[x,y,z+0.3];
+  SITES_MM.forEach(d=>v.poly3(sqPts(W2,d[0],d[1],7.5),C['m-die'],rgbs(hex2rgb(C['text-muted']),0.8),0.8));
+  v.poly3([W2(-7,-150),W2(7,-150),W2(0,-141)],C['text-muted']);
+  if(o.waferExtra)o.waferExtra(v,W2,z);
+}
+
+/* =====================================================================
+   Parts — ids fixed by pass.xy.diagnosis/1, mapped to 3D pieces
+   ===================================================================== */
+const PDEF={
+ anti_vibration:{n:'Anti-Vibration Table (방진 테이블)',s:'방진 테이블',what:'장비 맨 아래의 진동 차단 받침입니다. 스프링과 댐퍼가 본체를 떠받쳐 바닥 진동이 올라오지 않게 합니다.'},
+ body:{n:'Body (본체)',s:'본체 (Body)',what:'ㄴ자 모양의 뼈대입니다. 두꺼운 아랫부분 위에 스테이지들이 놓이고, 뒤(+Y) 기둥이 위로 올라가 헤드(Z Stage)를 붙잡습니다.'},
+ xy_stage:{n:'XY Stage (장거리 XY 스테이지)',s:'XY Stage',what:'본체 위에서 300 mm 범위로 크게 움직여, 잴 Die를 Tip 아래로 가져옵니다.'},
+ xy_scanner_x:{n:'XY Scanner — X 구동 (X PZT)',s:'XY Scanner X 구동',what:'시료 XY 스캐너 안에서 상판을 X 방향으로 미는 압전 소자(PZT)입니다. Y 라인을 잴 때 스캐너를 주로 X로 옮겨 둡니다.'},
+ xy_scanner_y:{n:'XY Scanner — Y 구동 (Y PZT)',s:'XY Scanner Y 구동',what:'상판을 Y 방향으로 미는 압전 소자입니다. X 라인을 잴 때 스캐너를 주로 Y로 옮겨 둡니다. Y로 밀 때 상판이 돌면 X 오차가 Die의 Y 위치에 비례해 커집니다(θx).'},
+ chuck:{n:'척 / θ (시료 고정)',s:'척 / θ',what:'웨이퍼를 붙잡는 판(척)과 방향을 맞추는 회전축(θ)입니다. XY Scanner 상판 위에 체결되어 있습니다.'},
+ sample:{n:'Sample (시료 / 웨이퍼)',s:'시료 (웨이퍼)',what:'측정하는 기준 웨이퍼입니다. Die가 20 mm 간격으로 놓여 있습니다.'},
+ z_stage:{n:'Z Stage (Z 스테이지)',s:'Z Stage',what:'본체 기둥 앞면에 붙은 큰 상하 이동축입니다. F Stage(비전)와 Z Scanner(Tip)를 함께 싣고 움직입니다.'},
+ f_stage:{n:'F Stage (초점 스테이지)',s:'F Stage',what:'비전 카메라를 위아래로 움직여 초점을 맞춥니다.'},
+ vision:{n:'Vision (비전 카메라)',s:'Vision (비전)',what:'패턴을 보고 측정 위치를 Tip 아래로 맞추는(비전 정렬) 카메라입니다. 아래로 뻗은 원뿔이 광학 경로입니다.'},
+ z_scanner_tip:{n:'Z Scanner / Tip (Z 스캐너 · 탐침)',s:'Z Scanner',what:'헤드 아래 끝의 미세 상하 구동부와, 그 끝 캔틸레버에 달린 Tip(탐침)입니다. Tip이 내려앉아 표면을 더듬습니다.'},
+ efem:{n:'EFEM (웨이퍼 로더)',s:'EFEM (웨이퍼 로더)',what:'장비 정면에서 볼 때 왼쪽(−X), 인클로저 밖의 웨이퍼 반송 장치입니다. 웨이퍼를 왼쪽에서 넣어 척 위에 올립니다.'},
+ xy_scanner:{n:'XY Scanner (시료 XY 스캐너)',s:'XY Scanner (몸체)',what:'XY Stage 위에서 시료를 약 100 µm 범위로 아주 정밀하게 옮깁니다. 플렉셔 + X PZT + Y PZT + 위치 디텍터 4개(X1·X2·Y1·Y2)로 되어 있고, 측정 라인 위치(스캐너 오프셋)를 잡아 둡니다. 색은 X·Y 구동 판정 중 나쁜 쪽입니다.'},
+ encl:{n:'Acoustic Enclosure (방음 인클로저)',s:'방음 인클로저',what:'장비 전체를 감싸는 방음 덮개입니다. 바깥 소음과 공기 흐름을 막습니다.'}
+};
+const KEY2ID={avt:'anti_vibration',body:'body',stage:'xy_stage',xpzt:'xy_scanner_x',ypzt:'xy_scanner_y',scanner:'xy_scanner',flexure:'xy_scanner',detector:'xy_scanner',chuck:'chuck',wafer:'sample',zstage:'z_stage',fstage:'f_stage',vision:'vision',zscan:'z_scanner_tip',tip:'z_scanner_tip',efem:'efem',encl:'encl'};
+const KEYLAB={tip:'Tip (캔틸레버)',flexure:'플렉셔',detector:'디텍터 X1·X2·Y1·Y2'};
+const PV={};
+arr(g(D,'parts')).map(obj).filter(Boolean).forEach(p=>{if(typeof p.id==='string')PV[p.id]={v:VK(p.verdict),r:p.reason,raw:p.verdict};});
+function pver(id){if(id==='xy_scanner')return worst(pver('xy_scanner_x'),pver('xy_scanner_y'));return PV[id]?PV[id].v:'na';}
+function pvText(id){if(id==='encl')return '판정 대상 아님';if(id==='xy_scanner')return VT[pver(id)];return PV[id]?VT[PV[id].v]:NAT;}
+const PLIST=[['g','시료 쪽 (아래에서 위로)'],['anti_vibration'],['body'],['xy_stage'],['xy_scanner_x'],['xy_scanner_y'],['chuck'],['sample'],['g','헤드 (본체 기둥에 고정)'],['z_stage'],['f_stage'],['vision'],['z_scanner_tip'],['g','둘레'],['efem']];
+function tintCol(base,v){
+  if(v==='fail')return mixHex(base,C.critical,0.66);
+  if(v==='warn')return mixHex(base,C.warning,0.62);
+  if(v==='ok')return mixHex(base,C.good,C.dark?0.2:0.28);
+  return mixHex(base,C['m-na'],0.6);
+}
+function tintScene(S){const f=o=>{if(!o||!o.part)return;const id=KEY2ID[o.part];if(!id||id==='encl')return;o.col=tintCol(o.col,pver(id));};S.pre.forEach(f);S.mid.forEach(f);S.free.forEach(f);S.stack.forEach(L=>L.forEach(f));}
+
+/* ---------- 3D view 1: machine coloured by verdict ---------- */
+const HW={e:0,eT:0,sel:null,labels:true,encl:false};
+function hwLabels(e){
+  const dB=60*e,dS=110*e,dSc=170*e,dC=250*e,dW=300*e,dH=360*e;
+  const L=[['avt',[300,-370,48]],['body',[-260,-287,170+dB]],['stage',[150,-180,250+dS]],['scanner',[-150,-170,300+dSc]],['ypzt',[0,-170,306+dSc]],['xpzt',[170,0,306+dSc]],['chuck',[125,-85,341+dC]],['wafer',[-90,-110,355+dW]],
+    ['zstage',[60,140,790+dH]],['fstage',[-55,80,700+dH]],['vision',[-55,-113,700+dH]],['zscan',[40,49,520+dH]],['tip',[0,0,375+dH]],['efem',[-600,-200,430]]];
+  if(e>0.5)L.push(['flexure',[141,-80,330+dSc]],['detector',[-90,-161,343+dSc]]);
+  if(HW.encl)L.push(['encl',[-430,-410,860]]);
+  const SIDE={body:'L',efem:'L',scanner:'L',wafer:'L',vision:'L',fstage:'L',detector:'L',encl:'L',zstage:'R',zscan:'R',tip:'R',chuck:'R',ypzt:'R',xpzt:'R',stage:'R',avt:'R',flexure:'R'};
+  return L.map(q=>{const id=KEY2ID[q[0]];return {a:q[1],t:KEYLAB[q[0]]||PDEF[id].s,v:id==='encl'?'na':pver(id),part:q[0],side:SIDE[q[0]]};});
+}
+const V1=new View($('cv1'),{
+  home:{yaw:0.28,pitch:0.34,zoom:1,target:[-140,20,400],fit:{w:1330,h:1150,pad:150,dist:3400,dy:-28}},
+  yawR:[-1.2,1.2],idOf:k=>KEY2ID[k]||k,
+  build:(S,v)=>{v.sel=HW.sel;v.zoomMul=1/(1+0.42*HW.e);machine(S,{e:HW.e,efem:true,loadPath:HW.e<0.05,encl:HW.encl,detTags:HW.e>0.5});tintScene(S);if(HW.labels)S.labels=hwLabels(HW.e);S.cue=true;v.target[2]=400+190*HW.e;},
+  onPick:(k)=>{const id=k?KEY2ID[k]||null:null;selectPart(id&&id===HW.sel?null:id);},
+  onHover:(v,x,y,e)=>{if(x==null){v.hov=null;hideTip();v.cv.style.cursor='';v.dirty=true;return;}const k=v.pick(x,y),id=k?KEY2ID[k]:null;if(id!==v.hov){v.hov=id;v.dirty=true;}v.cv.style.cursor=id?'pointer':'';
+    if(id){const vv=id==='encl'?'na':pver(id);showTip(e.clientX,e.clientY,`<b>${esc(PDEF[id].n)}</b><br>${VG(vv)} ${esc(pvText(id))}`);}else hideTip();}
+});
+function renderPartCard(){
+  const id=HW.sel,el=$('partCard');
+  if(!id){
+    const bad=Object.keys(PDEF).filter(k=>k!=='xy_scanner'&&k!=='encl'&&PV[k]&&(PV[k].v==='fail'||PV[k].v==='warn')).sort((a,b)=>RANK[PV[b].v]-RANK[PV[a].v]);
+    el.innerHTML='<h3>부품을 눌러 보세요</h3><div class="row">3D 그림이나 오른쪽 목록에서 부품을 누르면 <b>무엇을 하는 부품인지</b>와 <b>이번 진단의 판정 이유</b>가 여기에 나옵니다. 분해 보기를 누르면 스캐너 안의 PZT·플렉셔·디텍터가 보입니다.</div>'+
+      `<div class="row"><span class="lab">주의·이상 판정 부품</span>${bad.length?bad.map(k=>`<div style="margin:3px 0">${chip(PV[k].v,esc(PDEF[k].s))} ${tx(PV[k].r)}</div>`).join(''):(Object.keys(PV).length?'없음 — 모든 부품이 정상 또는 판정 없음':NAH)}</div>`;return;}
+  const P=PDEF[id];
+  let h=`<h3>${esc(P.n)}</h3>`;
+  if(id==='xy_scanner'){
+    h+=`<div>${chip(pver(id),'X·Y 구동 중 나쁜 쪽: '+VT[pver(id)])}</div><div class="row"><span class="lab">하는 일</span>${P.what}</div><div class="row"><span class="lab">이번 진단 판정 — 이유</span>`+
+      ['xy_scanner_x','xy_scanner_y'].map(k=>`<div style="margin:4px 0">${chip(pver(k),esc(PDEF[k].s)+' — '+esc(pvText(k)))} ${PV[k]?tx(PV[k].r):NAH}</div>`).join('')+'</div>';
+  }else if(id==='encl'){
+    h+=`<div>${chip('na','판정 대상 아님')}</div><div class="row"><span class="lab">하는 일</span>${P.what}</div><div class="row"><span class="lab">이번 진단 판정</span>진단 스키마의 부품 목록에 없는 덮개입니다.</div>`;
+  }else{
+    const pv=PV[id];
+    h+=`<div>${chip(pver(id),esc(pvText(id)))}${pv&&pv.raw!=null&&VK(pv.raw)!==pv.raw?' <span class="note">(원래 값: '+esc(pv.raw)+')</span>':''}</div><div class="row"><span class="lab">하는 일</span>${P.what}</div><div class="row"><span class="lab">이번 진단 판정 — 이유</span>${pv?tx(pv.r):NAH}</div>`;
+  }
+  el.innerHTML=h;
+}
+function renderPartList(){
+  $('partList').innerHTML=PLIST.map(q=>{if(q[0]==='g')return `<li class="grp">${q[1]}</li>`;const id=q[0],v=pver(id);return `<li data-p="${id}" class="${HW.sel===id?'sel':''}" tabindex="0" role="button"><span>${esc(PDEF[id].n)}</span>${chip(v,esc(pvText(id)))}</li>`;}).join('');
+  $('partList').querySelectorAll('li[data-p]').forEach(li=>{li.onclick=()=>selectPart(li.dataset.p===HW.sel?null:li.dataset.p);li.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();li.click();}};});
+}
+function selectPart(id){HW.sel=id||null;if(id==='encl'&&!HW.encl)setEncl(true);if(id==='xy_scanner_x'&&HW.eT===0)setExplode(1);renderPartCard();renderPartList();V1.dirty=true;}
+function setExplode(t){HW.eT=t;$('explodeBtn').setAttribute('aria-pressed',t?'true':'false');V1.dirty=true;}
+function setEncl(b){HW.encl=b;$('enclBtn').setAttribute('aria-pressed',String(b));$('enclBtn').textContent=b?'방음 인클로저 숨기기':'방음 인클로저 보이기';V1.dirty=true;}
+$('explodeBtn').onclick=()=>setExplode(HW.eT?0:1);
+$('enclBtn').onclick=()=>setEncl(!HW.encl);
+$('labelBtn').onclick=()=>{HW.labels=!HW.labels;$('labelBtn').setAttribute('aria-pressed',String(HW.labels));V1.dirty=true;};
+$('reset1').onclick=()=>V1.resetView();
+
+/* =====================================================================
+   Wafer evidence — arrows on the 3D wafer and on a 2D top view
+   ===================================================================== */
+const maxMag=DIES.reduce((m,d)=>d.dx!=null&&d.dy!=null?Math.max(m,Math.hypot(d.dx,d.dy)):m,0);
+const K0=maxMag>0?clamp(40/maxMag,2,4000):40;
+let kStep=0;
+const arrowK=()=>K0*Math.pow(2,kStep/2);
+function refLen(K){const c=[0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20];let r=c[0];c.forEach(x=>{if(x*K<=55)r=x;});return r;}
+const fmtRef=r=>String(r);
+function dieTip(d){return `<b>${esc(d.name)}</b> · X ${num(d.x,0)} mm, Y ${num(d.y,0)} mm<br>`+(d.dx==null||d.dy==null?NAT:`dx ${sgn(d.dx,3)} µm, dy ${sgn(d.dy,3)} µm`);}
+const V2=new View($('cv2'),{
+  home:{yaw:0,pitch:1.18,zoom:1,target:[0,-14,300],fit:{w:440,h:480,pad:0,dist:2600,dy:-8}},
+  build:(S,v)=>{const store=[];const K=arrowK();
+    machine(S,{avt:false,body:false,head:false,efem:false,waferExtra:(vv,W2,z)=>{
+      DIES.forEach(d=>{const p=vv.p(W2(d.x,d.y));store.push({x:p[0],y:p[1],d});if(d.dx==null||d.dy==null){vv.pl3([W2(d.x-5,d.y-5),W2(d.x+5,d.y+5)],C['text-muted'],1.4);vv.pl3([W2(d.x-5,d.y+5),W2(d.x+5,d.y-5)],C['text-muted'],1.4);return;}vv.arrow3(W2(d.x,d.y),W2(d.x+d.dx*K,d.y+d.dy*K),C.pos,2.6,8);});
+      if(DIES.length){const r=refLen(K),b0=W2(-150,-206),b1=W2(-150+r*K,-206);vv.pl3([b0,b1],C['text-primary'],2.2);const p=vv.p(b1);vv.text(p[0]+6,p[1],'= '+fmtRef(r)+' µm',{size:11.5,col:C['text-secondary']});}}});
+    S.post.push(vv=>{vv.hits=store;});
+    S.notes=[DIES.length?{t:'화살표: Die 이동 (dx, dy) · 1 µm = '+Math.round(K)+' mm 길이로 표시',col:C['text-secondary']}:{t:'Die 이동 데이터 없음',col:C['text-secondary']}];S.cue=true;},
+  onHover:(v,x,y,e)=>{if(x==null){hideTip();return;}let best=null,bd=22;(v.hits||[]).forEach(h=>{const d=Math.hypot(h.x-x,h.y-y);if(d<bd){bd=d;best=h;}});if(best)showTip(e.clientX,e.clientY,dieTip(best.d));else hideTip();}
+});
+$('reset2').onclick=()=>V2.resetView();
+function renderTopView(){
+  const svg=$('topView'),W=440,H=420,cx=220,cy=200,s=1.1,K=arrowK();
+  const X=u=>cx+u*s,Y=v=>cy-v*s;
+  const T=(x,y,t,a)=>`<text x="${x}" y="${y}" font-size="${(a&&a.size)||12}" fill="${(a&&a.fill)||C['text-secondary']}" font-weight="${(a&&a.w)||600}" text-anchor="${(a&&a.anchor)||'middle'}" dominant-baseline="middle" stroke="${C['surface-1']}" stroke-width="3" paint-order="stroke">${t}</text>`;
+  let h=`<rect x="0" y="0" width="${W}" height="${H}" rx="10" fill="${C['surface-1']}"/>`;
+  h+=`<circle cx="${cx}" cy="${cy}" r="${150*s}" fill="${C['surface-2']}" stroke="${C.border}" stroke-width="1.5"/>`;
+  h+=`<path d="M${X(-7)},${Y(-150)} L${X(7)},${Y(-150)} L${X(0)},${Y(-141)} Z" fill="${C['text-muted']}"/>`;
+  h+=`<line x1="${X(-150)}" y1="${cy}" x2="${X(150)}" y2="${cy}" stroke="${C.grid}" stroke-dasharray="3 3"/><line x1="${cx}" y1="${Y(-150)}" x2="${cx}" y2="${Y(150)}" stroke="${C.grid}" stroke-dasharray="3 3"/>`;
+  SITES_MM.forEach(q=>{h+=`<rect x="${X(q[0]-7.5)}" y="${Y(q[1]+7.5)}" width="${15*s}" height="${15*s}" fill="${C['m-die']}" stroke="${C['text-muted']}" stroke-width="0.8"/>`;});
+  const col=C.pos;
+  DIES.forEach((d,i)=>{
+    if(d.dx==null||d.dy==null){h+=`<path d="M${X(d.x)-4},${Y(d.y)-4} l8,8 M${X(d.x)-4},${Y(d.y)+4} l8,-8" stroke="${C['text-muted']}" stroke-width="1.4"/>`;return;}
+    const x1=X(d.x),y1=Y(d.y),x2=X(d.x+d.dx*K),y2=Y(d.y+d.dy*K),L=Math.hypot(x2-x1,y2-y1);
+    h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.4" stroke-linecap="round"/>`;
+    if(L>3){const a=Math.atan2(y2-y1,x2-x1),hd=Math.min(7,L*0.45);h+=`<path d="M${x2},${y2} L${x2-hd*Math.cos(a-0.45)},${y2-hd*Math.sin(a-0.45)} L${x2-hd*Math.cos(a+0.45)},${y2-hd*Math.sin(a+0.45)} Z" fill="${col}"/>`;}
+  });
+  DIES.forEach((d,i)=>{h+=`<rect data-i="${i}" x="${X(d.x)-11}" y="${Y(d.y)-11}" width="22" height="22" fill="transparent"/>`;});
+  if(DIES.length){const r=refLen(K);h+=`<line x1="${X(-150)}" y1="${H-12}" x2="${X(-150)+r*K*s}" y2="${H-12}" stroke="${C['text-primary']}" stroke-width="2.2"/>`+T(X(-150)+r*K*s+6,H-12,'= '+fmtRef(r)+' µm',{anchor:'start',size:11.5});}
+  else h+=`<rect x="${cx-80}" y="${cy-15}" width="160" height="30" rx="7" fill="${C['surface-1']}" stroke="${C.border}"/>`+T(cx,cy,'Die 이동 데이터 없음',{size:13,fill:C['text-muted']});
+  h+=T(cx,14,'↑ 뒤 (기둥)',{w:700})+T(cx,cy+150*s+18,'↓ 정면',{w:700})+T(6,cy,'← EFEM',{anchor:'start',w:700});
+  svg.innerHTML=h;
+  svg.querySelectorAll('rect[data-i]').forEach(r=>{r.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,dieTip(DIES[+r.dataset.i])));r.addEventListener('mouseleave',hideTip);});
+}
+function renderK(){const K=arrowK();$('kSv').textContent=DIES.length?`1 µm = ${Math.round(K)} mm (최대 화살표 ${Math.round(maxMag*K)} mm, 웨이퍼 지름 300 mm)`:NAT;$('kS').disabled=!DIES.length;}
+$('kS').oninput=e=>{kStep=+e.target.value;renderK();renderTopView();V2.dirty=true;};
+function renderShape(){
+  const sh=obj(g(D,'shape'));
+  if(!sh){$('shapeBox').innerHTML='<div class="empty">오차 모양(평면 피팅) — 데이터 없음</div>';return;}
+  const row=(ax,th,sc)=>{const s=obj(sh[ax])||{};return `<tr><td><b class="ax" style="color:${AXC(ax)}">${ax}</b></td><td>${th}</td><td class="r">${nfs(s.theta,2)}</td><td class="r">${nfs(s.theta_t,1)}</td><td>${sc}</td><td class="r">${nfs(s.scale_ppm,2)}</td><td class="r">${nfs(s.scale_t,1)}</td><td class="r">${nfs(s.mean,3)}</td></tr>`;};
+  $('shapeBox').innerHTML='<h3>오차 모양 — Die 위치에 평면 피팅</h3><table><tr><th>축</th><th>회전 성분</th><th class="r">θ (µrad)</th><th class="r">t</th><th>배율 성분</th><th class="r">배율 (ppm)</th><th class="r">t</th><th class="r">평균 (µm)</th></tr>'+
+    row('X','θx (Y 위치에 비례)','Sx (X 위치에 비례)')+row('Y','θy (X 위치에 비례)','Sy (Y 위치에 비례)')+'</table><div class="note">|t| ≥ 3이면 우연으로 보기 어려운 성분입니다. θ × 0.24 µm/µrad ≈ ±120 mm Die 사이의 Range 기여.</div>';
+}
+
+/* =====================================================================
+   Where it arises — positioning-log stage θ bars
+   ===================================================================== */
+function renderWhere(){
+  const pl=obj(g(D,'positioning_log'));
+  $('whereChip').innerHTML=pl?statusChip(pl.status):chip('na',NAT);
+  if(!pl){$('whereBars').innerHTML='<div class="empty">데이터 없음 — Positioning Log를 읽지 못했거나 진단에 포함되지 않았습니다.</div>';$('whereLines').innerHTML='';return;}
+  const st=arr(pl.stages).map(obj).filter(Boolean),fin=obj(pl.final);
+  const rows=st.map(s=>({n:s.name,a:s.axis,th:s.theta,t:s.t,fin:false}));
+  if(fin)rows.push({n:'최종 착지 (HZ1_O)',a:fin.axis,th:fin.theta,t:fin.t,fin:true});
+  if(!rows.length){$('whereBars').innerHTML='<div class="empty">단계별 θ — 데이터 없음</div>';}
+  else{
+    const M=Math.max(...rows.map(r=>isNum(r.th)?Math.abs(r.th):0))*1.1||1;
+    let h=`<div class="sbax"><div></div><div style="position:relative;height:16px"><span style="position:absolute;left:0">−${num(M,1)}</span><span style="position:absolute;left:50%;transform:translateX(-50%)">0</span><span style="position:absolute;right:0">+${num(M,1)} µrad</span></div><div></div></div>`;
+    rows.forEach(r=>{
+      const sig=isNum(r.t)&&Math.abs(r.t)>=3,col=r.fin?C['series-2']:C['series-1'];
+      let bar='';if(isNum(r.th)){const w=Math.abs(r.th)/M*50;bar=`<div class="f" style="left:${r.th<0?50-w:50}%;width:${w}%;background:${col};opacity:${sig?1:0.38}"></div>`;}
+      h+=`<div class="sb${r.fin?' fin':''}"><div>${tx(r.n)} <span class="ax" style="color:${AXC(r.a)}">${r.a?esc(r.a):''}</span></div><div class="sbt"><div class="z"></div>${bar}</div>`+
+         `<div class="sbv">${isNum(r.th)?`θ ${sgn(r.th,2)} µrad · t ${nfs(r.t,1)}${isNum(r.t)&&!sig?' <span class="na-t">(|t| &lt; 3)</span>':''}`:NAH}</div></div>`;
+    });
+    $('whereBars').innerHTML=h+`<div class="legend" style="margin-top:6px"><span><svg width="18" height="10"><rect width="18" height="10" rx="2" fill="${C['series-1']}"/></svg> 비전 로그 단계</span><span><svg width="18" height="10"><rect width="18" height="10" rx="2" fill="${C['series-2']}"/></svg> 최종 착지</span></div>`;
+  }
+  const vl=arr(pl.verdict_lines).filter(x=>x!=null&&x!=='');
+  $('whereLines').innerHTML=vl.length?`<div class="box info"><b>구간 판정</b><ul>${vl.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:'<div class="note" style="margin-top:8px">구간 판정 문장 — 데이터 없음</div>';
+}
+
+/* =====================================================================
+   Scanner offsets — recipe + reference + fine = applied
+   ===================================================================== */
+function closeUp(svg,lines,o){
+  o=o||{};const W=330,H=250;
+  let ext=40;lines.forEach(l=>{if(isNum(l.x))ext=Math.max(ext,Math.abs(l.x)+16);if(isNum(l.y))ext=Math.max(ext,Math.abs(l.y)+16);});
+  const s=Math.min((W-40)/(2*ext),(H-56)/(2*ext)),ox=W/2,oy=H/2+6,X=u=>ox+u*s,Y=v=>oy-v*s,P=ext*2;
+  const T=(x,y,t,a)=>`<text x="${x}" y="${y}" font-size="${(a&&a.size)||11.5}" fill="${(a&&a.fill)||C['text-primary']}" font-weight="${(a&&a.w)||600}" text-anchor="${(a&&a.anchor)||'middle'}" dominant-baseline="middle" stroke="${C['surface-1']}" stroke-width="3.5" paint-order="stroke">${t}</text>`;
+  let h=`<rect x="0" y="0" width="${W}" height="${H}" rx="8" fill="${C['surface-1']}" stroke="${C.border}"/>`;
+  h+=`<rect x="${X(-P)}" y="${Y(0)}" width="${P*s}" height="${P*s}" fill="${C['m-pattern']}" fill-opacity="0.45"/><rect x="${X(0)}" y="${Y(P)}" width="${P*s}" height="${P*s}" fill="${C['m-pattern']}" fill-opacity="0.45"/>`;
+  h+=`<rect x="1" y="1" width="${W-2}" height="${H-2}" rx="8" fill="none" stroke="${C.border}"/>`;
+  lines.forEach(l=>{if(!isNum(l.x)||!isNum(l.y))return;const hx=l.kind==='x'?10:0,hy=l.kind==='y'?10:0;
+    h+=`<line x1="${X(l.x-hx)}" y1="${Y(l.y-hy)}" x2="${X(l.x+hx)}" y2="${Y(l.y+hy)}" stroke="${l.col}" stroke-width="${l.dash?2:4}" stroke-linecap="round"${l.dash?' stroke-dasharray="4 3"':''}/>`;
+    if(!l.lab)return;
+    const pos=l.pos||(l.kind==='x'?'below':'above');let lx,ly,anchor='middle';
+    if(pos==='below'){lx=X(l.x);ly=Y(l.y-hy)+15;}
+    else if(pos==='above'){lx=X(l.x);ly=Y(l.y+hy)-12;}
+    else if(pos==='right'){lx=X(l.x+hx)+7;ly=Y(l.y);anchor='start';}
+    else{lx=X(l.x-hx)-7;ly=Y(l.y);anchor='end';}
+    if(anchor==='middle'){const w=[...l.lab].reduce((a,ch)=>a+(ch.charCodeAt(0)>0x1100?11.5:6.6),0)/2;lx=clamp(lx,w+4,W-w-4);}
+    h+=T(lx,ly,l.lab,{anchor,fill:l.dash?C['text-secondary']:C['text-primary'],w:l.dash?600:700});});
+  h+=`<circle cx="${X(0)}" cy="${Y(0)}" r="4.5" fill="${C['text-primary']}" stroke="${C['surface-1']}" stroke-width="1.5"/>`+T(X(0)-8,Y(0)-11,'정렬점 (꼭짓점)',{anchor:'end'});
+  const sb=10;h+=`<line x1="12" y1="${H-14}" x2="${12+sb*s}" y2="${H-14}" stroke="${C['text-primary']}" stroke-width="2"/>`+T(16+sb*s,H-14,'10 µm',{anchor:'start',size:11,fill:C['text-secondary']});
+  h+=T(W-6,12,'↑ 뒤(기둥) · ← EFEM · ↓ 정면',{anchor:'end',size:10.5,fill:C['text-secondary']});
+  if(o.warn)h+=T(W/2,28,o.warn,{fill:C.critical,w:800,size:12});
+  svg.innerHTML=h;
+}
+function renderOffsets(){
+  const so=obj(g(D,'scanner_offsets')),om=SPEC.offset_max;
+  $('omTxt').textContent=isNum(om)?`한계 ±${specTxt(om)} µm (레시피 + 보정을 더한 적용 값 기준)`:'한계 데이터 없음';$('omTag').innerHTML=provTag();
+  if(!so){$('offTables').innerHTML='<div class="empty">데이터 없음</div>';closeUp($('offFig'),[]);$('offFigNote').textContent='개념도 — 오프셋 데이터 없음';return;}
+  let h='';const figL=[];
+  [['X_line','X 라인 (X 측정)','x','X'],['Y_line','Y 라인 (Y 측정)','y','Y']].forEach(([k,lab,kind,ax])=>{
+    const L=obj(so[k]);
+    if(!L){h+=`<h3>${lab}</h3><div class="empty">데이터 없음</div>`;return;}
+    const rc=pair(L.recipe),rf=pair(L.ref),fn=pair(L.fine),ap=pair(L.applied);
+    const scale=Math.max(isNum(om)?om:0,ap?offMax(ap):0)*1.15||1;
+    const mini=v=>{if(!isNum(v))return '';const w=Math.min(Math.abs(v)/scale*50,50),bad=isNum(om)&&Math.abs(v)>om;const lim=isNum(om)?om/scale*50:null;
+      return `<div style="position:relative;height:12px;width:120px;background:var(--surface-2);border-radius:3px;display:inline-block;vertical-align:middle"><div style="position:absolute;left:50%;top:-2px;bottom:-2px;border-left:1px solid ${C['text-muted']}"></div>`+
+        `<div style="position:absolute;top:2px;bottom:2px;left:${v<0?50-w:50}%;width:${w}%;background:${bad?C.warning:C.good};border-radius:2px"></div>`+
+        (lim!=null?`<div style="position:absolute;top:-3px;bottom:-3px;left:${50-lim}%;border-left:2px dashed ${C.critical}"></div><div style="position:absolute;top:-3px;bottom:-3px;left:${50+lim}%;border-left:2px dashed ${C.critical}"></div>`:'')+'</div>';};
+    h+=`<h3 style="margin-top:6px">${lab} ${offChip(ap,om)}</h3><table><tr><th>성분</th><th class="r">레시피</th><th class="r">+ 기준 보정</th><th class="r">+ 미세 보정</th><th class="r">= 적용</th><th>${isNum(om)?`±${specTxt(om)} µm 대비`:'한계 대비'}</th></tr>`;
+    [0,1].forEach(i=>{h+=`<tr><td><b class="ax" style="color:${AXC(i?'Y':'X')}">${i?'Y':'X'}</b></td><td class="r">${rc?nfs(rc[i],1):NAH}</td><td class="r">${rf?nfs(rf[i],2):NAH}</td><td class="r">${fn?nfs(fn[i],2):NAH}</td><td class="r"><b>${ap?nfs(ap[i],1):NAH}</b></td><td>${ap?mini(ap[i]):''}</td></tr>`;});
+    h+='</table>';
+    if(rc&&rf&&fn&&ap){const bad=[0,1].filter(i=>[rc[i],rf[i],fn[i],ap[i]].every(isNum)&&Math.abs(rc[i]+rf[i]+fn[i]-ap[i])>0.06);if(bad.length)h+=`<div class="note" style="color:${C.critical}">레시피 + 보정의 합이 적용 값과 다릅니다 (${bad.map(i=>(i?'Y':'X')+': '+num(rc[i]+rf[i]+fn[i],2)+' ≠ '+num(ap[i],2)).join(', ')}) — 다른 보정이 더 있을 수 있습니다.</div>`;}
+    h+=`<div class="note">Lot·Die 건수 n = ${nf(L.n,0)}</div>`;
+    const pos=rc||ap;if(pos)figL.push({kind,x:pos[0]==null?0:pos[0],y:pos[1]==null?0:pos[1],col:AXC(ax),lab:`${ax} 라인 (${nfsT(pos[0])}, ${nfsT(pos[1])})`});
+  });
+  h+=`<div class="note">출처: ${tx(so.source)}</div>`;
+  $('offTables').innerHTML=h;
+  closeUp($('offFig'),figL);
+  $('offFigNote').textContent='개념도(체커보드 패턴, 크기 비율은 대략) — 선 위치는 정렬점(꼭짓점) 기준 레시피 오프셋입니다. 실제 스캐너 위치는 여기에 기준·미세 보정이 더해진 "적용" 값입니다.';
+}
+const nfsT=v=>isNum(v)?sgn(v,1):'?';
+
+/* =====================================================================
+   What-if — recipe Y offset of the X line
+   ===================================================================== */
+const WI={rows:[],i:0,cur:-1,rec:-1};
+function initWI(){
+  const rows=arr(g(D,'whatif','rows')).map(obj).filter(r=>r&&isNum(r.recipe_y)).slice().sort((a,b)=>a.recipe_y-b.recipe_y);
+  WI.rows=rows;WI.cur=rows.findIndex(r=>r.current===true);
+  let best=-1;rows.forEach((r,i)=>{if(r.recipe_y===0)return;if(!(isNum(r.pass_lots)&&isNum(r.lots)&&r.lots>0&&r.pass_lots>=r.lots))return;if(best<0||Math.abs(r.recipe_y)<Math.abs(rows[best].recipe_y))best=i;});
+  WI.rec=best;WI.i=best>=0?best:(WI.cur>=0?WI.cur:0);
+  if(HS.off!=null){const j=rows.findIndex(r=>r.recipe_y===+HS.off);if(j>=0)WI.i=j;}
+}
+function bl(lab,mean,max,spec,unitD){
+  const vals=[mean,max,spec].filter(isNum);if(!vals.length)return `<div class="bl"><div class="t"><span>${lab}</span>${NAH}</div></div>`;
+  const scale=Math.max(...vals)*1.25||1,ok=isNum(max)&&isNum(spec)?max<=spec:null,col=ok===false?C.critical:C.good;
+  const pc=v=>clamp(v/scale*100,0,100).toFixed(1)+'%';
+  return `<div class="bl"><div class="t"><span>${lab}</span><b>${nf(mean,unitD)} / ${nf(max,unitD)} µm ${ok==null?'':chip(ok?'ok':'fail',ok?'Spec 안':'Spec 밖')}</b></div><div class="trk">`+
+    (isNum(mean)?`<div class="fill" style="width:${pc(mean)};background:${col}"></div>`:'')+(isNum(max)?`<div class="mx" style="left:${pc(max)}"></div>`:'')+(isNum(spec)?`<div class="spec" style="left:${pc(spec)}"></div>`:'')+'</div></div>';
+}
+function renderWI(){
+  const el=$('wiBody'),wi=obj(g(D,'whatif'));
+  if(!WI.rows.length){el.innerHTML='<div class="empty">데이터 없음 — What-if 표가 진단에 없습니다.</div>';return;}
+  const R=WI.rows[WI.i],n=WI.rows.length;
+  const tick=(r,i)=>`<span style="${i===WI.rec?'color:'+C.good+';font-weight:800':i===WI.cur?'font-weight:800;color:'+C['text-primary']:''}">${sgn(r.recipe_y,0)}${i===WI.rec?' ✔':''}${i===WI.cur?' ●':''}</span>`;
+  const pl=r=>isNum(r.pass_lots)&&isNum(r.lots)?`${num(r.pass_lots,0)}/${num(r.lots,0)}`:NAT;
+  const xl=obj(g(D,'scanner_offsets','X_line')),xr=pair(g(xl,'recipe')),lx=xr&&isNum(xr[0])?xr[0]:0;
+  let h=`<p class="sub" style="margin-top:-4px">X 라인을 잴 때 스캐너를 Y로 덜 밀면 회전이 줄어 X 오차가 작아집니다. 가정: ${tx(wi&&wi.assumption)}. Spec: ${isNum(SPEC.range)||isNum(SPEC.stddev)?`Range ≤ ${specTxt(SPEC.range)} µm, StdDev ≤ ${specTxt(SPEC.stddev)} µm`:NAT}. <b>권장</b> = 모든 Lot이 PASS인 행 중 |레시피 Y|가 가장 작은 행(0 제외 — 선이 꼭짓점을 지나 쓸 수 없음).</p>`;
+  h+=`<div class="two"><div class="side"><div class="h"><label for="wiS">X 라인 레시피 Y 오프셋 (µm)</label></div><input type="range" id="wiS" min="0" max="${n-1}" step="1" value="${WI.i}" style="width:100%"${n<2?' disabled':''}>`+
+     `<div class="wticks">${WI.rows.map(tick).join('')}</div><div class="legend" style="margin-top:4px">${WI.cur>=0?chip('info','현재 '+sgn(WI.rows[WI.cur].recipe_y,0)+' µm'):chip('na','현재 행 표시 없음')}${WI.rec>=0?chip('ok','권장 '+sgn(WI.rows[WI.rec].recipe_y,0)+' µm'):chip('warn','권장 없음 — 모든 Lot PASS인 행이 없음')}</div>`+
+     `<div class="read"><div><span>레시피 Y 오프셋</span><b>${sgn(R.recipe_y,1)} µm</b></div><div><span>실제 스캐너 Y</span><b>${nfs(R.scanner_y,1)} µm</b></div><div><span>예측 θ</span><b>${nf(R.theta,2)} µrad</b></div><div><span>PASS Lot</span><b>${pl(R)}</b></div></div>`+
+     `<div class="h">예측 (막대 = 평균, 검은 선 = 최대, 빨간 점선 = Spec)</div>${bl('Range 평균 / 최대',R.range_mean,R.range_max,SPEC.range,2)}${bl('StdDev 평균 / 최대',R.std_mean,R.std_max,SPEC.stddev,3)}</div>`+
+     `<div><svg id="wiFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="레시피 오프셋별 X 라인 위치"></svg><div class="note">개념도 — 실선 = 고른 오프셋의 X 라인, 점선 = 현재 레시피.</div></div></div>`;
+  h+='<table style="margin-top:12px"><tr><th class="r">레시피 Y (µm)</th><th class="r">실제 스캐너 Y (µm)</th><th class="r">예측 θ (µrad)</th><th class="r">Range 평균 / 최대 (µm)</th><th class="r">Std 평균 / 최대 (µm)</th><th class="r">PASS Lot</th></tr>'+
+    WI.rows.map((r,i)=>`<tr data-i="${i}" class="${i===WI.i?'hl':''} ${i===WI.cur?'cur':''}" style="cursor:pointer"><td class="r">${sgn(r.recipe_y,1)}${i===WI.cur?' '+chip('info','현재'):''}${i===WI.rec?' '+chip('ok','권장'):''}</td><td class="r">${nfs(r.scanner_y,1)}</td><td class="r">${nf(r.theta,2)}</td><td class="r">${nf(r.range_mean,2)} / ${nf(r.range_max,2)}</td><td class="r">${nf(r.std_mean,3)} / ${nf(r.std_max,3)}</td><td class="r">${pl(r)}</td></tr>`).join('')+'</table>';
+  el.innerHTML=h;
+  const cur=WI.cur>=0?WI.rows[WI.cur]:null,lines=[];
+  if(cur&&WI.cur!==WI.i)lines.push({kind:'x',x:lx,y:cur.recipe_y,col:C['text-muted'],dash:true,lab:'현재 ('+sgn(cur.recipe_y,0)+')',pos:'left'});
+  lines.push({kind:'x',x:lx,y:R.recipe_y,col:C['series-1'],lab:'X 라인 ('+sgn(R.recipe_y,0)+')',pos:'right'});
+  closeUp($('wiFig'),lines,{warn:R.recipe_y===0?'꼭짓점 위 → 사용 불가':null});
+  $('wiS').oninput=e=>{WI.i=+e.target.value;renderWI();};
+  el.querySelectorAll('tr[data-i]').forEach(tr=>tr.onclick=()=>{WI.i=+tr.dataset.i;renderWI();});
+}
+
+/* =====================================================================
+   Drift — lot means vs time, within-lot slopes, transient
+   ===================================================================== */
+function niceTicks(lo,hi,n){if(!(hi>lo)){lo-=0.5;hi+=0.5;}const st0=(hi-lo)/n,mag=Math.pow(10,Math.floor(Math.log10(st0))),e=st0/mag;const step=(e>=7.5?10:e>=3.5?5:e>=1.5?2:1)*mag;const a=Math.floor(lo/step+1e-9)*step,b=Math.ceil(hi/step-1e-9)*step;const t=[];for(let v=a;v<=b+step*1e-6;v+=step)t.push(+v.toFixed(10));return {lo:a,hi:b,t,step};}
+const decOf=step=>Math.max(0,Math.min(4,-Math.floor(Math.log10(step)+1e-9)));
+function timeTicks(t0,t1){
+  const span=(t1-t0)/60000,steps=[5,10,15,30,60,120,180,360,720,1440,2880,10080];let st=steps[steps.length-1];
+  for(const s of steps){if(span/s<=6){st=s;break;}}
+  const out=[],d=new Date(t0);d.setSeconds(0,0);
+  if(st<1440){let m=d.getHours()*60+d.getMinutes();m=Math.ceil(m/st)*st;d.setHours(0,0,0,0);let t=d.getTime()+m*60000;while(t<=t1){out.push(t);t+=st*60000;}}
+  else{d.setHours(0,0,0,0);let t=d.getTime();if(t<t0)t+=86400000;while(t<=t1){out.push(t);t+=st*60000;}}
+  return out;
+}
+const p2=v=>String(v).padStart(2,'0');
+function renderDriftChart(){
+  const el=$('driftChart'),lm=arr(g(D,'drift','lot_means')).map(obj).filter(Boolean);
+  if(!lm.length){el.innerHTML='<div class="empty">데이터 없음</div>';return;}
+  const ts=lm.map(r=>typeof r.start==='string'?Date.parse(r.start):NaN),useT=ts.every(isFinite)&&lm.length>1&&Math.max(...ts)>Math.min(...ts);
+  const xs=useT?ts:lm.map((_,i)=>i);
+  const W=1040,PH=140,ML=60,MR=86,MT=22,MB=36,GAP=40,panels=[['x','X'],['y','Y']];
+  const H=MT+panels.length*PH+(panels.length-1)*GAP+MB;
+  const x0=Math.min(...xs),x1=Math.max(...xs),xr=(x1-x0)||1,X=v=>ML+(lm.length===1?0.5:(v-x0)/xr)*(W-ML-MR);
+  const multiDay=useT&&new Date(x0).toDateString()!==new Date(x1).toDateString();
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Lot 평균의 시간 추이 (X, Y)">`;
+  const TT=(x,y,t,a)=>`<text x="${x}" y="${y}" font-size="${(a&&a.size)||12}" fill="${(a&&a.fill)||C['text-muted']}" font-weight="${(a&&a.w)||400}" text-anchor="${(a&&a.anchor)||'middle'}" dominant-baseline="middle">${t}</text>`;
+  panels.forEach(([k,ax],pi)=>{
+    const top=MT+pi*(PH+GAP),col=AXC(ax),vals=lm.map(r=>isNum(r[k])?r[k]:null),vv=vals.filter(v=>v!=null);
+    s+=TT(ML,top-12,`${ax} Lot 평균 (µm)`,{anchor:'start',fill:C['text-secondary'],w:700,size:12.5});
+    if(!vv.length){s+=TT((ML+W-MR)/2,top+PH/2,NAT,{size:13});return;}
+    const nt=niceTicks(Math.min(...vv),Math.max(...vv),4),Y=v=>top+PH-(v-nt.lo)/((nt.hi-nt.lo)||1)*PH,dd=decOf(nt.step);
+    nt.t.forEach(t=>{s+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(t)}" y2="${Y(t)}" stroke="${C.grid}" stroke-width="1"/>`+TT(ML-8,Y(t),num(t,dd),{anchor:'end'});});
+    s+=`<line x1="${ML}" x2="${W-MR}" y1="${top+PH}" y2="${top+PH}" stroke="${C.axis}" stroke-width="1"/>`;
+    let d='';vals.forEach((v,i)=>{if(v==null)return;d+=(d?'L':'M')+X(xs[i]).toFixed(1)+','+Y(v).toFixed(1);});
+    s+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    vals.forEach((v,i)=>{if(v==null)return;s+=`<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="4" fill="${col}" stroke="${C['surface-1']}" stroke-width="1.5"/>`;});
+    let li=-1;vals.forEach((v,i)=>{if(v!=null)li=i;});
+    s+=TT(X(xs[li])+10,Y(vals[li]),`${ax} ${num(vals[li],3)}`,{anchor:'start',fill:col,w:700,size:12.5});
+  });
+  const yb=MT+panels.length*PH+(panels.length-1)*GAP;
+  if(useT){timeTicks(x0,x1).forEach(t=>{const d=new Date(t);s+=`<line x1="${X(t)}" x2="${X(t)}" y1="${yb}" y2="${yb+5}" stroke="${C.axis}"/>`+TT(X(t),yb+17,(multiDay?p2(d.getMonth()+1)+'-'+p2(d.getDate())+' ':'')+p2(d.getHours())+':'+p2(d.getMinutes()));});}
+  else{const every=Math.ceil(lm.length/12);lm.forEach((r,i)=>{if(i%every)return;s+=TT(X(i),yb+17,esc(r.lot!=null?r.lot:'Lot '+(i+1)),{size:11});});}
+  lm.forEach((r,i)=>{const x=X(xs[i]),w=Math.max(10,(W-ML-MR)/Math.max(1,lm.length)*0.9);s+=`<rect data-i="${i}" x="${x-w/2}" y="${MT-4}" width="${w}" height="${yb-MT+8}" fill="transparent"/>`;});
+  s+='</svg>';
+  el.innerHTML=s+`<div class="note">${useT?'가로축 = Lot 시작 시각':'가로축 = Lot 순서 (시작 시각 없음)'} · 패널마다 세로 범위가 다릅니다.</div>`;
+  el.querySelectorAll('rect[data-i]').forEach(rc=>{const r=lm[+rc.dataset.i];rc.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,`<b>${tx(r.lot)}</b> · ${dt(r.start)}<br>X ${nfs(r.x,3)} µm · Y ${nfs(r.y,3)} µm`));rc.addEventListener('mouseleave',hideTip);});
+}
+function renderDrift(){
+  const dr=obj(g(D,'drift'));
+  $('driftChip').innerHTML=dr?statusChip(dr.status):chip('na',NAT);
+  $('driftReasons').innerHTML=dr?listHTML(dr.reasons):'<div class="empty">드리프트 — 데이터 없음</div>';
+  renderDriftChart();
+  const wl=arr(g(dr,'within_lot')).map(obj).filter(Boolean);
+  $('withinLot').innerHTML=wl.length?'<table><tr><th>Lot</th><th>축</th><th class="r">기울기 (µm/Die)</th><th class="r">r</th></tr>'+wl.map(w=>`<tr${isNum(w.r)&&Math.abs(w.r)>=0.7?' class="hl"':''}><td>${tx(w.lot)}</td><td><b class="ax" style="color:${AXC(w.axis)}">${tx(w.axis)}</b></td><td class="r">${nfs(w.slope_um_per_die,4)}</td><td class="r">${nfs(w.r,2)}</td></tr>`).join('')+'</table><div class="note">파란 행 = |r| ≥ 0.7 (Lot 안에서 측정 순서대로 뚜렷하게 흐름)</div>':'<div class="empty">데이터 없음</div>';
+  const tr=obj(g(D,'transient'));
+  $('transChip').innerHTML=tr?statusChip(tr.status):chip('na',NAT);
+  $('transient').innerHTML=tr?'<table><tr><th>축</th><th class="r">Die 1</th><th class="r">Die 2</th><th class="r">Die 3</th></tr>'+['X','Y'].map(a=>{const t=obj(tr[a])||{};return `<tr><td><b class="ax" style="color:${AXC(a)}">${a}</b></td><td class="r">${nfs(t.die1,2)}</td><td class="r">${nfs(t.die2,2)}</td><td class="r">${nfs(t.die3,2)}</td></tr>`;}).join('')+'</table><div class="note">Lot을 시작하고 처음 잰 Die들의 편차(µm) — 0에 가까워지는 속도로 시작 과도(흔들림)를 봅니다.</div>':'<div class="empty">데이터 없음</div>';
+}
+
+/* =====================================================================
+   Rotation test (workstream C)
+   ===================================================================== */
+function kappaChip(k){if(!isNum(k))return chip('na','κ '+NAT);const v=isNum(SPEC.kappa_max)&&k>SPEC.kappa_max?'fail':isNum(SPEC.kappa_warn)&&k>SPEC.kappa_warn?'warn':isNum(SPEC.kappa_max)?'ok':'na';return chip(v,`κ ${num(k,3)} µrad/µm`);}
+function renderRotTest(){
+  const rt=obj(g(D,'rotation_test')),el=$('rotTest');
+  if(!rt){el.innerHTML=`<div class="box warn"><b>미측정 — 출하 검사/스캐너 교체·선형화 후 필수</b><div style="margin-top:4px;font-size:13.5px">스캐너를 한 축으로 구동하면서 서로 멀리 떨어진 두 지점의 이동을 비교해 1 µm 구동당 회전(κ)을 잽니다. 기준: ${isNum(SPEC.kappa_max)?`κ ≤ ${specTxt(SPEC.kappa_max)} µrad/µm (경고 ${specTxt(SPEC.kappa_warn)})`:NAT}${provTag()}</div></div>`;return;}
+  const locs=arr(rt.locations).map(obj).filter(Boolean);
+  el.innerHTML=`<div class="vrow">${statusChip(rt.status)}${kappaChip(rt.kappa)}${provTag()}</div>`+
+    `<div class="kv"><span>시험 일자</span><b>${dt(rt.date)}</b><span>시점</span><b>${tx(rt.stage)}</b><span>구동 축</span><b>${tx(rt.axis)}</b><span>서보</span><b>${rt.loop==='closed'?'폐루프 (closed)':rt.loop==='open'?'개루프 (open)':tx(rt.loop)}</b><span>두 지점 거리</span><b>${nf(rt.distance_mm,0)} mm</b><span>κ (회전/구동)</span><b>${nf(rt.kappa,3)} µrad/µm <span class="note">(${isNum(SPEC.kappa_max)?`경고 ${specTxt(SPEC.kappa_warn)} · 한계 ${specTxt(SPEC.kappa_max)}`:'규격 데이터 없음'})</span></b></div>`+
+    (locs.length?'<table style="margin-top:10px"><tr><th>지점</th><th class="r">스테이지 X (mm)</th><th class="r">이동 비 (gain)</th><th class="r">직교 성분 (mrad)</th><th class="r">n</th></tr>'+locs.map(l=>`<tr><td>${tx(l.name)}</td><td class="r">${nfs(l.stage_x_mm,0)}</td><td class="r">${nf(l.gain,4)}</td><td class="r">${nfs(l.perp_mrad,1)}</td><td class="r">${nf(l.n,0)}</td></tr>`).join('')+'</table>':'<div class="empty" style="margin-top:8px">지점별 결과 — 데이터 없음</div>')+
+    listHTML(rt.reasons);
+}
+
+/* =====================================================================
+   Decision tree — fixed questions, path chosen from DIAG
+   ===================================================================== */
+function treeEval(){
+  const ver=obj(g(D,'verdict'))||{},T={};
+  const fails=['X','Y'].filter(a=>g(ver,a,'pass')===false),known=['X','Y'].filter(a=>typeof g(ver,a,'pass')==='boolean');
+  T.l1=fails.length?fails:(known.length?['none']:[]);
+  const ra=g(D,'rotation','axis'),rAx=ra==='Y_line'?'Y':ra==='X_line'?'X':null;
+  T.focus=fails[0]||rAx||'X';
+  T.l1ev=known.length?['X','Y'].map(a=>{const v=obj(ver[a])||{};return `${a} Range ${nf(v.range,3)} · Std ${nf(v.stddev,3)} µm (${v.pass===true?'PASS':v.pass===false?'FAIL':NAT})`;}).join(' / ')+` → 살펴볼 축 <b>${T.focus}</b>`:'판정 데이터 없음';
+  const sh=obj(g(D,'shape',T.focus))||{},thW=isNum(SPEC.theta_warn)?SPEC.theta_warn:0.7,vf=obj(ver[T.focus])||{};
+  if(isNum(sh.theta)&&isNum(sh.theta_t)&&Math.abs(sh.theta_t)>=3&&Math.abs(sh.theta)>=thW)T.l2='theta';
+  else if(isNum(vf.stddev)&&isNum(SPEC.stddev)&&(vf.stddev>SPEC.stddev||vf.pass===false))T.l2='repeat';
+  else if(isNum(sh.theta)||isNum(sh.mean)||isNum(vf.range))T.l2='const';
+  else T.l2=null;
+  T.l2ev=`θ${T.focus==='X'?'x':'y'} ${nfs(sh.theta,2)} µrad (t ${nfs(sh.theta_t,1)}, 기준 |t| ≥ 3 · |θ| ≥ ${specTxt(thW)}) · 평균 ${nfs(sh.mean,3)} µm · Std ${nf(vf.stddev,3)} µm`;
+  T.l3=null;T.l3ev='';
+  if(T.l2==='theta'){
+    const pl=obj(g(D,'positioning_log')),fin=obj(g(pl,'final'));
+    if(fin&&isNum(fin.theta)){
+      const lim=0.5*Math.abs(fin.theta);
+      const car=arr(pl.stages).map(obj).filter(s=>s&&(s.axis==null||s.axis===fin.axis)&&isNum(s.theta)&&isNum(s.t)&&Math.abs(s.t)>=3&&Math.abs(s.theta)>=lim);
+      T.l3=car.length?'yes':'no';
+      T.l3ev=`최종 θ ${sgn(fin.theta,2)} µrad (t ${nfs(fin.t,1)}) · 같은 성분을 가진 비전 단계(|t| ≥ 3, |θ| ≥ ${num(lim,2)}): ${car.length?car.map(s=>esc(s.name)+' '+sgn(s.theta,2)).join(', '):'없음'}`;
+    }else{T.l3='na';T.l3ev='Positioning Log — 데이터 없음';}
+  }
+  T.l4=null;T.l4ev='';
+  if(T.l2==='theta'&&T.l3!=='yes'){
+    const r=obj(g(D,'rotation'));
+    if(!r){T.l4='na';T.l4ev='회전 KPI — 데이터 없음';}
+    else{const st=VK(r.status),kh=isNum(r.kappa_eff)&&isNum(SPEC.kappa_warn)&&Math.abs(r.kappa_eff)>=SPEC.kappa_warn;
+      T.l4=st==='fail'||st==='warn'||kh?'yes':st==='ok'?'no':'na';
+      T.l4ev=`회전 상태 ${VT[st]} · θ ${nfs(r.theta,2)} µrad · 적용 스캐너 Y ${nfs(r.scanner_y,1)} µm · κ_eff ${nf(r.kappa_eff,3)} µrad/µm (경고 기준 ${specTxt(SPEC.kappa_warn)})`;}
+  }
+  const ds=VK(g(D,'drift','status')),ts=VK(g(D,'transient','status'));
+  T.l5={drift:g(D,'drift')?(ds==='warn'||ds==='fail'?'yes':ds==='ok'?'no':'na'):'na',trans:g(D,'transient')?(ts==='warn'||ts==='fail'?'yes':ts==='ok'?'no':'na'):'na'};
+  T.l5ev=`드리프트 ${VT[ds]} · Lot 시작 과도 ${VT[ts]}`;
+  return T;
+}
+function renderTree(){
+  const T=treeEval();
+  const opt=(on,b,leaf)=>`<div class="opt${on?' on':''}"><b>${b}</b>${leaf?`<div class="leaf">→ ${leaf}</div>`:''}</div>`;
+  const lv=(n,q,opts,ev,dim)=>`<div class="lv${dim?' dim':''}"><div class="q"><span class="num">${n}</span><span>${q}</span></div><div class="opts">${opts}</div>${ev?`<div class="ev">근거: ${ev}</div>`:''}</div>`;
+  const con=on=>`<div class="con${on?'':' off'}"></div>`;
+  let h='';
+  const r1=T.l1.length>0;
+  h+=lv(1,'Spec Out 축은?',opt(T.l1.includes('X'),'X',null)+opt(T.l1.includes('Y'),'Y',null)+opt(T.l1.includes('none'),'없음 (모두 PASS)','여유와 모양을 계속 봅니다'),T.l1ev,!r1);
+  const r2=r1&&T.l2!=null;
+  h+=con(r2)+lv(2,`오차 모양은? (${T.focus} 축)`,opt(T.l2==='const','일정 (평균 이동)','Range·Std 영향 작음 — 카메라–Tip 오프셋(Tip Pos) 재보정')+opt(T.l2==='repeat','반복성 (흩어짐)','5단계 드리프트·과도 확인')+opt(T.l2==='theta','위치 비례 θ (회전)','3단계로'),r2?T.l2ev:'',!r2);
+  const r3=r2&&T.l2==='theta'&&T.l3!=null;
+  h+=con(r3)+lv(3,'비전 단계가 이미 갖고 있나? (Positioning Log)',opt(T.l3==='yes','예','스테이지 도착·비전 정렬 구간 — Stage Cal·카메라·패턴 점검')+opt(T.l3==='no','아니오','비전 정렬 이후(스캐너 이동·Tip 착지) — 4단계로')+opt(T.l3==='na','판단 불가',NAT+' — 4단계로 진행'),r3?T.l3ev:'',!r3);
+  const r4=r3&&T.l3!=='yes'&&T.l4!=null;
+  h+=con(r4)+lv(4,'스캐너 오프셋과 함께 커지나?',opt(T.l4==='yes','예 → 스캐너 회전','레시피 오프셋 축소(What-if) + 스캐너 회전 시험')+opt(T.l4==='no','아니오','Tip·헤드 쪽 점검 (Tip Positioning, 캔틸레버)')+opt(T.l4==='na','판단 불가',NAT),r4?T.l4ev:'',!r4);
+  const l5=T.l5,r5=l5.drift!=='na'||l5.trans!=='na';
+  h+=con(r5)+lv(5,'시간에 따라 변하나? (드리프트 · 과도)',opt(l5.drift==='yes','드리프트 있음','측정 전 워밍업 또는 더미 Lot')+opt(l5.trans==='yes','Lot 시작 과도 있음','안정화 Die 제외 · 시작 전 더미 측정')+opt(l5.drift==='no'&&l5.trans!=='yes','시간 변화 작음',null),T.l5ev,!r5);
+  $('tree').innerHTML=h;
+}
+
+/* ---------- actions ---------- */
+function renderActions(){
+  const a=arr(g(D,'actions')).filter(x=>x!=null&&x!=='');
+  $('actions').innerHTML=a.length?`<ol style="margin:0;padding-left:22px;font-size:14px">${a.map(x=>`<li style="margin:4px 0">${esc(x)}</li>`).join('')}</ol>`:'<div class="empty">데이터 없음</div>';
+}
+
+/* ---------- render loop, theme, init ---------- */
+function frame(){
+  try{
+    if(Math.abs(HW.e-HW.eT)>0.002){HW.e+=(HW.eT-HW.e)*0.14;if(Math.abs(HW.e-HW.eT)<0.002)HW.e=HW.eT;V1.dirty=true;}
+    if(V1.dirty&&V1.render())V1.dirty=false;
+    if(V2.dirty&&V2.render())V2.dirty=false;
+  }catch(err){window.onerror(err.message,'',0,0,err);throw err;}
+  requestAnimationFrame(frame);
+}
+function renderAll(){renderHeader();renderWarnings();renderKPI();renderPartCard();renderPartList();renderK();renderTopView();renderShape();renderWhere();renderOffsets();renderWI();renderDrift();renderRotTest();renderTree();renderActions();V1.dirty=true;V2.dirty=true;}
+function redrawAll(){readTheme();renderAll();}
+$('themeBtn').onclick=()=>{const r=document.documentElement,cur=r.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.setAttribute('data-theme',dark?'light':'dark');redrawAll();};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redrawAll);
+window.addEventListener('resize',()=>{V1.dirty=true;V2.dirty=true;});
+document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{const el=$(b.dataset.go);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});});
+
+readTheme();
+initWI();
+if(HS.part&&PDEF[HS.part])HW.sel=HS.part;
+if(HS.explode==='1'){HW.e=HW.eT=1;$('explodeBtn').setAttribute('aria-pressed','true');}
+if(HS.encl==='1')setEncl(true);
+if(HS.labels==='0'){HW.labels=false;$('labelBtn').setAttribute('aria-pressed','false');}
+if(HS.k!=null){kStep=clamp(Math.round(+HS.k)||0,-4,4);$('kS').value=kStep;}
+if(HS.yaw!=null)V1.yaw=+HS.yaw;if(HS.pitch!=null)V1.pitch=+HS.pitch;if(HS.zoom!=null)V1.zoom=+HS.zoom;
+renderAll();
+if(HS.scroll)setTimeout(()=>{const el=$(HS.scroll);if(el)el.scrollIntoView();},50);
+// synchronous first paint (so a screenshot never shows an empty canvas)
+V1.render();V2.render();V1.dirty=false;V2.dirty=false;
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

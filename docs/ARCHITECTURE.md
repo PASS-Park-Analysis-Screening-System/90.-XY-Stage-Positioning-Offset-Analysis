@@ -21,6 +21,7 @@
 │   │   ├── pdf_generator.py  # PDF 리포트 생성
 │   │   ├── llm_report.py     # LLM 원인 분석용 Markdown (report_schema: xy-stage-llm-report/1)
 │   │   ├── positioning_log.py # 비전 보정 로그(SamplePositioning·TipPositioning) ↔ HZ1_O 대조
+│   │   ├── troubleshoot_report.py # 진단(pass.xy.diagnosis/1) → 3D 트러블슈팅 HTML 한 파일, 사례 라이브러리 경로
 │   │   └── settings.py       # 사용자 설정 관리
 │   ├── charts/               # 시각화 모듈
 │   │   ├── basic.py          # 범용 차트 (Matplotlib)
@@ -29,6 +30,7 @@
 │   │   ├── interactive.py    # PyQtGraph 2D 위젯 (Trend, Scatter 등)
 │   │   ├── interactive_widgets.py # CrossHair 등 커스텀 위젯 클래스
 │   │   └── surface3d.py      # 3D 표면 차트
+│   ├── resources/            # 번들 리소스: troubleshoot/report_template.html, cases/(사례 라이브러리)
 │   └── ui/                   # UI 컴포넌트 관리
 │       ├── controllers/      # 기능 단위 Mixin (10종 결합하여 App 구성)
 │       ├── widgets/          # 공통 사용 위젯 (StatCard, SystemLogger 등)
