@@ -986,3 +986,47 @@ def test_close_cancels_diagnosis_reads(window):
     assert session.cancelled
     logs = read_run_logs(load(FIXTURES / 'old'), session, workers=1)
     assert logs['status'] == 'error' and all(l['error'] == '중지됨' for l in logs['lots'])
+
+
+# ── 통합: 진단 탭 버튼 → 3D 보고서 · 회전 시험 (워크스트림 A+B+C) ──────────────
+
+def test_report_button_builds_html_from_real_diagnosis(window, tmp_path, monkeypatch):
+    from ui.dialogs import troubleshoot_launcher
+    from core import troubleshoot_report
+    result = load(FIXTURES / 'old')
+    store_logs(result, read_run_logs(result))
+    assert not window.diag_report_btn.isEnabled()          # 진단 전에는 끔
+    window._update_diagnosis(result)
+    _show_tab(window)
+    assert window.diag_report_btn.isEnabled()
+    opened = []
+    monkeypatch.setattr(troubleshoot_launcher.QDesktopServices, 'openUrl',
+                        staticmethod(lambda url: opened.append(url.toLocalFile()) or True))
+    real_write = troubleshoot_report.write_report
+    monkeypatch.setattr(troubleshoot_launcher, 'write_report',
+                        lambda diag, out_dir=None: real_write(diag, out_dir=str(tmp_path)), raising=False)
+    monkeypatch.setattr(troubleshoot_report, 'write_report',
+                        lambda diag, out_dir=None: real_write(diag, out_dir=str(tmp_path)))
+    window._open_diagnosis_report()
+    assert len(opened) == 1 and opened[0].endswith('.html')
+    html = open(opened[0], encoding='utf-8').read()
+    assert '/*__PASS_DIAG__*/' not in html and '"pass.xy.diagnosis/1"' in html
+
+
+def test_rotation_result_reaches_diagnosis_and_json(window):
+    result = load(FIXTURES / 'old')
+    store_logs(result, read_run_logs(result))
+    window._update_diagnosis(result)
+    _show_tab(window)
+    tool = window._xy_diagnosis['source'].get('tool_id')
+    rt = {'date': '2026-11-13', 'stage': '출하 검사', 'axis': 'Y', 'loop': 'closed',
+          'locations': [{'name': 'A', 'stage_x_mm': -120, 'gain': 1.0, 'perp_mrad': 13.0, 'n': 15},
+                        {'name': 'B', 'stage_x_mm': 120, 'gain': 1.0256, 'perp_mrad': 13.0, 'n': 15}],
+          'distance_mm': 240, 'kappa': 0.107, 'status': 'fail', 'reasons': ['시험']}
+    window.set_rotation_test(rt)
+    d = window._xy_diagnosis
+    assert d['rotation_test'] and d['rotation_test']['kappa'] == 0.107
+    assert d['source'].get('tool_id') == tool
+    part = {p['id']: p for p in d['parts']}['xy_scanner_y']
+    assert part['verdict'] == 'fail'
+    json.loads(window._diag_obj.to_json())                  # 저장 JSON에도 들어간다

@@ -140,6 +140,21 @@ class DiagnosisMixin:
         self.diag_save_btn.clicked.connect(self._save_diagnosis_json)
         self.diag_save_btn.setEnabled(False)
         top.addWidget(self.diag_save_btn, 0, Qt.AlignTop)
+        # 3D 보고서·회전 시험·사례 라이브러리: 같은 기능이 Remark → Export 목록에도 있다.
+        # 진단을 본 자리에서 바로 열 수 있게 여기에도 둔다 (지연 import — 탭을 안 열면 안 읽는다).
+        self.diag_report_btn = QPushButton('3D 보고서 열기')
+        self.diag_report_btn.setToolTip('지금 진단으로 3D 트러블슈팅 HTML을 만들어 기본 브라우저로 연다')
+        self.diag_report_btn.clicked.connect(self._open_diagnosis_report)
+        self.diag_report_btn.setEnabled(False)
+        top.addWidget(self.diag_report_btn, 0, Qt.AlignTop)
+        self.diag_rotation_btn = QPushButton('스캐너 회전 시험')
+        self.diag_rotation_btn.setToolTip('폐루프 2지점 스윕으로 스캐너 회전 κ를 재고 진단에 넣는다 (별도 창)')
+        self.diag_rotation_btn.clicked.connect(self._open_rotation_test_dialog)
+        top.addWidget(self.diag_rotation_btn, 0, Qt.AlignTop)
+        self.diag_cases_btn = QPushButton('사례 라이브러리')
+        self.diag_cases_btn.setToolTip('끝난 조사 사례(HTML)를 기본 브라우저로 연다')
+        self.diag_cases_btn.clicked.connect(self._open_case_library)
+        top.addWidget(self.diag_cases_btn, 0, Qt.AlignTop)
         layout.addLayout(top)
 
         chips = QWidget()
@@ -329,6 +344,7 @@ class DiagnosisMixin:
         self._xy_diagnosis = None
         self._diag_chart_pending = False
         self.diag_save_btn.setEnabled(False)
+        self.diag_report_btn.setEnabled(False)
         self.diag_label.setText(text)
         self.diag_label.setToolTip('')
         for chip in self._diag_chips.values():
@@ -360,6 +376,7 @@ class DiagnosisMixin:
                                 + (f' 외 {len(warnings) - 4}개' if len(warnings) > 4 else ''))
         self.diag_label.setToolTip('\n'.join(warnings))
         self.diag_save_btn.setEnabled(True)
+        self.diag_report_btn.setEnabled(True)
 
         for axis in ('X', 'Y'):
             v = (d.get('verdict') or {}).get(axis) or {}
@@ -498,6 +515,21 @@ class DiagnosisMixin:
             self.chart_widgets['Diagnosis Drift'].set_figure(plot_drift(self._xy_diagnosis))
         except Exception as e:
             self.logger.error(f"Diagnosis drift 차트 오류: {type(e).__name__}: {e}")
+
+    def _open_diagnosis_report(self):
+        """지금 진단으로 3D 트러블슈팅 HTML을 만들어 기본 브라우저로 연다."""
+        from ui.dialogs.troubleshoot_launcher import open_troubleshoot_report
+        open_troubleshoot_report(self)
+
+    def _open_rotation_test_dialog(self):
+        """스캐너 회전 시험 분석 창 (결과는 set_rotation_test로 진단에 들어온다)."""
+        from ui.dialogs.scanner_rotation_dialog import open_scanner_rotation_dialog
+        open_scanner_rotation_dialog(self)
+
+    def _open_case_library(self):
+        """끝난 조사 사례 모음을 기본 브라우저로 연다."""
+        from ui.dialogs.troubleshoot_launcher import open_case_library
+        open_case_library(self)
 
     def _save_diagnosis_json(self):
         diag = self._diag_obj
