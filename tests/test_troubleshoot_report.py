@@ -26,7 +26,20 @@ PROJECT = Path(__file__).resolve().parents[1]
 FIXTURES = PROJECT / 'tests' / 'fixtures' / 'troubleshoot'
 RESOURCES = PROJECT / 'src' / 'resources'
 CASE_DIR = RESOURCES / 'cases' / '2026-11_xy-scanner-rotation'
-EDGE = Path(r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe')
+
+
+def _find_edge():
+    for path in (r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                 r'C:\Program Files\Microsoft\Edge\Application\msedge.exe'):
+        if Path(path).is_file():
+            return Path(path)
+    found = shutil.which('msedge')
+    return Path(found) if found else None
+
+
+EDGE = _find_edge()
+needs_edge = pytest.mark.skipif(EDGE is None, reason='Microsoft Edge 없음')
+A_REAL = 'diag_a_new_574cbc3.json'   # 작업 A(574cbc3)의 build_diagnosis(...).to_dict(), 경로만 D:/data로 바꿈
 
 NULL_DIAG = {key: None for key in (
     'generated', 'app_version', 'source', 'spec', 'verdict', 'shape', 'scanner_offsets', 'rotation',
@@ -118,12 +131,22 @@ def test_nan_and_numpy_like_values_become_json():
         def item(self):
             return 0.25
 
+    class NanScalar:   # numpy float32 NaN처럼 item()이 NaN을 돌려주는 값
+        def item(self):
+            return float('nan')
+
+    class Array:       # ndarray처럼 tolist()에 NaN이 섞인 값
+        def tolist(self):
+            return [1.0, float('nan')]
+
     diag = copy.deepcopy(NULL_DIAG)
     diag['verdict'] = {'X': {'range': float('nan'), 'stddev': Scalar(), 'pass': None},
-                       'Y': {'range': float('inf'), 'stddev': None, 'pass': True}}
+                       'Y': {'range': float('inf'), 'stddev': NanScalar(), 'pass': True}}
+    diag['die_field'] = Array()
     data = json.loads(_injected(tr.build_report_html(diag)))
     assert data['verdict']['X'] == {'range': None, 'stddev': 0.25, 'pass': None}
-    assert data['verdict']['Y']['range'] is None
+    assert data['verdict']['Y']['range'] is None and data['verdict']['Y']['stddev'] is None
+    assert data['die_field'] == [1.0, None]
 
 
 @pytest.mark.parametrize('diag', [NULL_DIAG, {'schema': 'pass.xy.diagnosis/1'}, {}],
@@ -167,6 +190,45 @@ def test_write_report_never_overwrites_and_sanitizes_sample(tmp_path):
         assert re.search(r'_a_b_c_lot_1(_\d+)?\.html$', p.name), p.name
     assert len(list(tmp_path.glob('*.json'))) == 2
 
+    diag['source'] = {'sample': "시료#1 %20&a;b'c"}           # file:// URL을 끊는 문자
+    assert Path(tr.write_report(diag, str(tmp_path))).name.endswith("_시료_1_20_a_b_c.html")
+
+
+class _FixedNow:
+    @staticmethod
+    def now():
+        import datetime
+        return datetime.datetime(2026, 11, 12, 16, 0, 0)
+
+
+def test_write_report_reserves_names_and_leaves_no_partial_files(tmp_path, monkeypatch):
+    import types
+    monkeypatch.setattr(tr, 'datetime', types.SimpleNamespace(datetime=_FixedNow))
+    diag = _fixture('diag_ref_new_m5.json')
+    stem = tmp_path / 'XY_troubleshoot_20261112_160000_Sample19'
+    stem.with_suffix('.json').write_text('{}', encoding='utf-8')     # 이름의 절반만 이미 있다
+
+    path = Path(tr.write_report(diag, str(tmp_path)))
+    assert path.name == 'XY_troubleshoot_20261112_160000_Sample19_2.html'
+    assert not stem.with_suffix('.html').exists()                 # 빈 .html을 남기지 않음
+    assert stem.with_suffix('.json').read_text(encoding='utf-8') == '{}'   # 남의 파일은 그대로
+
+    # 내용을 만들다 실패하면 파일을 열지 않는다
+    monkeypatch.setattr(tr, 'template_path', lambda: str(tmp_path / 'missing.html'))
+    before = sorted(p.name for p in tmp_path.iterdir())
+    with pytest.raises(OSError):
+        tr.write_report(diag, str(tmp_path))
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+def test_write_report_survives_unencodable_text(tmp_path):
+    diag = _fixture('diag_ref_new_m5.json')
+    diag['source']['root'] = 'bad\udcff'                       # 짝 없는 서러게이트 (잘못된 파일 이름)
+    path = Path(tr.write_report(diag, str(tmp_path)))
+    saved = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
+    assert saved['source']['root'] == 'bad?'
+    assert json.loads(_injected(path.read_text(encoding='utf-8')))['source']['root'] == 'bad?'
+
 
 def test_write_report_default_folder_is_localappdata(tmp_path, monkeypatch):
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
@@ -197,7 +259,12 @@ def test_frozen_paths_follow_meipass_and_bundle_targets(tmp_path, monkeypatch):
     # onefile의 _MEIPASS는 앱을 끝내면 지워지므로 사용자 폴더로 복사해서 연다
     opened = Path(tr.browsable_case_library())
     assert opened == tmp_path / 'local' / 'PASS' / 'XYStage' / 'cases' / 'index.html'
-    assert (opened.parent / '2026-11_xy-scanner-rotation' / 'xy-explainer-3d.html').is_file()
+    page = opened.parent / '2026-11_xy-scanner-rotation' / 'xy-where-is-the-problem.html'
+    assert page.is_file()
+    # 새 번들에서 빠진 페이지는 사본에서도 없어진다 (옛 사본이 남지 않음)
+    (meipass / 'resources' / 'cases' / '2026-11_xy-scanner-rotation' / page.name).unlink()
+    assert Path(tr.browsable_case_library()) == opened and opened.is_file()
+    assert not page.exists()
 
     # 런타임 조회 경로 = build_config의 DATAS 대상
     sys.path.insert(0, str(PROJECT / 'tools'))
@@ -259,8 +326,8 @@ def test_bundled_case_keeps_model_and_corrected_wording():
 
 # ── 브라우저에서 실제로 그려지는가 (Edge가 있을 때) ─────────────────────────
 
-@pytest.mark.skipif(not EDGE.exists(), reason='Microsoft Edge 없음')
-@pytest.mark.parametrize('name', ['diag_ref_old_m25.json', 'diag_ref_new_m5.json', 'null', 'hostile'])
+@needs_edge
+@pytest.mark.parametrize('name', ['diag_ref_old_m25.json', 'diag_ref_new_m5.json', A_REAL, 'null', 'hostile'])
 def test_report_renders_without_script_error(tmp_path, name):
     if name == 'null':
         diag = NULL_DIAG
@@ -270,15 +337,7 @@ def test_report_renders_without_script_error(tmp_path, name):
         diag['parts'][1]['reason'] = HOSTILE
     else:
         diag = _fixture(name)
-    page = tmp_path / 'report.html'
-    page.write_text(tr.build_report_html(diag), encoding='utf-8')
-    with tempfile.TemporaryDirectory() as profile:
-        out = subprocess.run([str(EDGE), '--headless=new', '--disable-gpu', '--dump-dom',
-                              '--virtual-time-budget=3000', f'--user-data-dir={profile}', page.as_uri()],
-                             capture_output=True, timeout=90)
-    dom = out.stdout.decode('utf-8', 'replace')
-    assert 'id="tree"' in dom, out.stderr[-500:]
-    assert re.search(r'<div id="errBanner" role="alert" hidden="">', dom), '스크립트 오류 배너가 떴습니다'
+    dom = _dump_dom(diag, tmp_path)
     assert len(_scripts(dom)) == 3                             # 데이터가 새 스크립트 요소를 만들지 않음
     assert 'class="lv' in dom                                  # 판단 트리까지 그려짐
     if name == 'hostile':
@@ -295,14 +354,16 @@ def _between(text, start, end):
 
 
 def _dump_dom(diag, tmp_path):
+    """헤드리스 Edge로 그린 뒤의 DOM. 스크립트 오류 배너가 뜨면 실패."""
     page = tmp_path / 'report.html'
     page.write_text(tr.build_report_html(diag), encoding='utf-8')
-    with tempfile.TemporaryDirectory() as profile:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile:
         out = subprocess.run([str(EDGE), '--headless=new', '--disable-gpu', '--dump-dom',
                               '--virtual-time-budget=3000', f'--user-data-dir={profile}', page.as_uri()],
                              capture_output=True, timeout=90)
     dom = out.stdout.decode('utf-8', 'replace')
-    assert '<div id="errBanner" role="alert" hidden="">' in dom
+    assert 'id="tree"' in dom, out.stderr[-500:]
+    assert '<div id="errBanner" role="alert" hidden="">' in dom, '스크립트 오류 배너가 떴습니다'
     return dom
 
 
@@ -328,7 +389,7 @@ def _new_with_flag():
     return d
 
 
-@pytest.mark.skipif(not EDGE.exists(), reason='Microsoft Edge 없음')
+@needs_edge
 @pytest.mark.parametrize('case', [
     # (진단, What-if 칩 → 행, X 라인 칩, Y 라인 참고 칩)
     pytest.param((lambda: _fixture('diag_ref_old_m25.json'),
@@ -360,6 +421,52 @@ def test_whatif_recommendation_and_offset_rule(tmp_path, case):
         assert f'<span class="chip ref">{y_ref}</span>' in y_part
         assert not re.search(r'chip (warn|fail)', y_part)
         assert not re.search(r'chip (warn|fail)">\|X\|', x_part)    # X 라인의 X 성분도 참고만
+
+
+def test_real_a_fixture_has_no_private_paths():
+    text = (FIXTURES / A_REAL).read_text(encoding='utf-8')
+    assert not _FORBIDDEN_RE[2].search(text) and 'Users' not in text
+    diag = json.loads(text)
+    assert diag['source']['root'].startswith('D:/data/')
+    assert diag['whatif']['basis'] == 'scanner_y' and diag['positioning_log'] is None
+    assert diag['scanner_offsets']['X_line']['recipe'] is None
+    assert diag['scanner_offsets']['X_line']['recipe_plus_ref'] is not None
+
+
+@needs_edge
+def test_real_a_new_run_without_reference_scan(tmp_path):
+    """작업 A의 실제 출력: 기준 스캔이 없어 What-if는 스캐너 Y 적용값 기준, 레시피는 레시피 + 기준 보정."""
+    diag = _fixture(A_REAL)
+    dom = _dump_dom(diag, tmp_path)
+
+    whatif = _between(dom, 'id="wiBody"', 'id="sec-drift"')
+    rows = re.findall(r'<tr data-i="\d+"', whatif)
+    assert len(rows) == len(diag['whatif']['rows']) == 7            # 카드가 비어 있지 않다
+    assert '스캐너 Y 적용값 목표' in whatif
+    assert '기준 스캔(Reference) 결과가 Log에 없어' in whatif         # whatif.note
+    assert _whatif_marks(dom) == {'현재': ['−8.12']}                 # A가 권장을 정하지 않음 → 대체 계산 없음
+    assert '권장 없음 (진단)' in whatif
+
+    tables = _between(dom, 'id="offTables"', 'id="offFig"')
+    assert tables.count('레시피 + 기준 보정') >= 2
+    assert '−7.62' in tables and '+26.13' in tables                 # recipe_plus_ref 값
+    assert 'class="chip ok">|Y| 8.1 ≤ 10.0' in tables
+    assert '레시피 + 기준 보정 값입니다' in dom                         # 그림 설명 = 그린 값
+
+    assert 'Log 읽기: Lot 3개 Log 읽음' in dom                         # source.log_message
+    assert '내부용 — 공유 시 경로 확인' in dom
+    assert 'Y 라인 θy' in dom                                        # rotation.y_line
+    assert 'Die2 잔차 +0.174 µm' in dom                               # transient.reasons
+    assert 'Positioning Log를 읽지 못했거나' in dom                     # positioning_log null
+
+
+@needs_edge
+def test_positioning_message_shown_when_not_ok(tmp_path):
+    diag = _fixture('diag_ref_old_m25.json')
+    diag['positioning_log']['status'] = 'partial'
+    diag['positioning_log']['message'] = 'Lot 3개 중 1개 Log 읽음'
+    where = _between(_dump_dom(diag, tmp_path), 'id="sec-where"', 'id="sec-offset"')
+    assert '<div class="box warn">Lot 3개 중 1개 Log 읽음</div>' in where
 
 
 # ── 화면: 진단 없이 누르면 메시지만, 진단이 있으면 보고서를 쓰고 브라우저로 ──────────

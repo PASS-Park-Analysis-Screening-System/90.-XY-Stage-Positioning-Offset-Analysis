@@ -23,7 +23,9 @@ import sys
 
 DIAG_MARKER = '/*__PASS_DIAG__*/null'
 REPORT_PREFIX = 'XY_troubleshoot'
-_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f\s]+')
+# 파일 이름·URL에서 문제 되는 문자 (#·%·&·; 는 file:// URL에서 잘린다)
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|#%&;\'\x00-\x1f\s]+')
+MAX_NAME_TRIES = 1000
 
 
 def _is_frozen() -> bool:
@@ -58,11 +60,14 @@ def browsable_case_library(dest_root: str = None) -> str:
     소스 실행은 번들 경로를 그대로 쓴다. 빌드본(onefile)의 _MEIPASS는 앱을 끝내면
     지워지므로, 앱이 꺼진 뒤에도 페이지 사이 링크가 살아 있게 사용자 폴더
     (%LOCALAPPDATA%\\PASS\\XYStage\\cases)로 복사해서 연다.
+    번들이 바뀌면(새 버전에서 페이지가 빠지거나 이름이 바뀌면) 옛 사본이 남지 않게 먼저 지운다
+    (브라우저가 잡고 있어 못 지운 파일은 덮어쓴다).
     """
     src = case_library_path()
     if not _is_frozen():
         return src
     dest = dest_root or os.path.join(os.path.dirname(default_report_dir()), 'cases')
+    shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(os.path.dirname(src), dest, dirs_exist_ok=True)
     return os.path.join(dest, 'index.html')
 
@@ -73,16 +78,18 @@ def _json_default(value):
         method = getattr(value, name, None)
         if callable(method):
             try:
-                return method()
+                return _clean(method())
             except (TypeError, ValueError):
                 pass
     return str(value)
 
 
 def _clean(value):
-    """NaN·무한대는 null로 (스키마: 모르는 값은 null)."""
+    """NaN·무한대는 null로 (스키마: 모르는 값은 null). UTF-8로 쓸 수 없는 문자(짝 없는 서러게이트)는 ?로."""
     if isinstance(value, float):
         return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value.encode('utf-8', 'replace').decode('utf-8')
     if isinstance(value, dict):
         return {k: _clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -123,16 +130,35 @@ def write_report(diag, out_dir: str = None) -> str:
 
     이름: XY_troubleshoot_<YYYYmmdd_HHMMSS>_<시료>.html / .json (같은 초에 또 만들면 _2, _3 …)
     """
-    html = build_report_html(diag)
+    # 내용을 모두 만든 뒤에 파일을 연다 (만들다 실패하면 파일이 남지 않는다)
+    html = build_report_html(diag).encode('utf-8')
+    data = json.dumps(_clean(diag), ensure_ascii=False, indent=2, default=_json_default,
+                      allow_nan=False).encode('utf-8')
     folder = out_dir or default_report_dir()
     os.makedirs(folder, exist_ok=True)
-    stem = f'{REPORT_PREFIX}_{datetime.datetime.now():%Y%m%d_%H%M%S}_{_sample_label(diag)}'
-    base, n = os.path.join(folder, stem), 1
-    while os.path.exists(base + '.html') or os.path.exists(base + '.json'):
-        n += 1
-        base = os.path.join(folder, f'{stem}_{n}')
-    with open(base + '.json', 'w', encoding='utf-8') as f:
-        json.dump(_clean(diag), f, ensure_ascii=False, indent=2, default=_json_default, allow_nan=False)
-    with open(base + '.html', 'w', encoding='utf-8') as f:
-        f.write(html)
-    return base + '.html'
+    stem = os.path.join(folder, f'{REPORT_PREFIX}_{datetime.datetime.now():%Y%m%d_%H%M%S}_{_sample_label(diag)}')
+    for n in range(1, MAX_NAME_TRIES + 1):
+        base = stem if n == 1 else f'{stem}_{n}'
+        written = []
+        try:
+            # 'x': 이미 있으면 FileExistsError — 확인과 만들기 사이에 다른 창이 끼어들 수 없다
+            for ext, payload in (('.html', html), ('.json', data)):
+                with open(base + ext, 'xb') as f:
+                    written.append(base + ext)
+                    f.write(payload)
+        except FileExistsError:
+            _remove(written)
+            continue
+        except BaseException:
+            _remove(written)     # 반쯤 쓴 파일을 남기지 않는다
+            raise
+        return base + '.html'
+    raise FileExistsError(f'보고서 이름을 정하지 못했습니다: {stem}')
+
+
+def _remove(paths):
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
