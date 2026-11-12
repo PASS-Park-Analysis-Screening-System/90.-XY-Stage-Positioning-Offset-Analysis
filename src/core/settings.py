@@ -57,9 +57,27 @@ DEFAULT_ROTATION_SPEC = {'theta_max': 1.0, 'theta_warn': 0.7,
 
 
 def rotation_spec(settings: dict = None) -> dict:
-    """설정의 회전 잠정 규격. 없는 항목은 코드 기본값으로 채운다 (번들 settings.json이 우선)."""
+    """설정의 회전 잠정 규격. 번들 settings.json 값이 우선이고, 없거나 숫자가 아니거나 음수인 항목은
+    항목마다 코드 기본값을 쓴다. 주의값이 한도보다 크면 한도로 맞춘다 (warn ≤ max)."""
     spec = (settings or {}).get('rotation_spec')
-    return {**DEFAULT_ROTATION_SPEC, **(spec if isinstance(spec, dict) else {})}
+    spec = spec if isinstance(spec, dict) else {}
+    out = {}
+    for key, default in DEFAULT_ROTATION_SPEC.items():
+        value = spec.get(key, default)
+        if key == 'provisional':
+            out[key] = value if isinstance(value, bool) else default
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = float(default)
+        if isinstance(spec.get(key), bool) or value != value or value in (float('inf'), float('-inf')) \
+                or value < 0:
+            value = float(default)
+        out[key] = value
+    for warn, limit in (('theta_warn', 'theta_max'), ('kappa_warn', 'kappa_max')):
+        out[warn] = min(out[warn], out[limit])
+    return out
 
 
 def _read_settings_file(file_path: str) -> dict:

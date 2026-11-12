@@ -162,6 +162,8 @@ class ExportMixin:
         # 스캐너 회전 시험 결과는 장비의 것 (회차와 무관). 내보내는 동안 바뀌어도 섞이지 않게 사본
         import copy
         rot_test = copy.deepcopy(getattr(self, '_rotation_test_result', None))
+        rot_test_tool = getattr(self, '_rotation_test_tool', None)
+        tool_root = getattr(self, '_scanned_folder', '') or None    # 화면 진단과 같은 장비 기준
 
         # 모든 회차의 셀 값은 .md 옆 CSV에 둔다 (.md 부록은 선택 회차만)
         csv_path = os.path.splitext(path)[0] + '_raw.csv'
@@ -196,7 +198,8 @@ class ExportMixin:
                                         app_version=APP_VERSION,
                                         exported_at=f"{now:%Y-%m-%d %H:%M:%S}",
                                         source_root=root, raw_csv=raw_csv,
-                                        rotation_spec=rot_spec, rotation_test=rot_test)
+                                        rotation_spec=rot_spec, rotation_test=rot_test,
+                                        rotation_test_tool=rot_test_tool, tool_root=tool_root)
                 write_atomic(path, text, 'utf-8', '\n')
             except Exception as e:
                 state['error'] = e

@@ -16,12 +16,13 @@ xy_diagnosis.py — XY 위치 오프셋 트러블슈팅 진단 (스키마 pass.x
                      둘 다 null이고 recipe_plus_ref(적용값 − 미세 보정)만 적는다.
     shape            축별 Die 평균 편차의 평면 피팅 (positioning_log.plane_fit, 안정화 Die 제외)
     rotation         κ_eff = |θ| / |구동 축 스캐너 오프셋|, 기여 = |θ| × Die 좌표 폭
-    whatif           X 라인 레시피 Y Offset을 바꿨을 때 Lot별 X Range·StdDev 예측 (선형 가정)
+    whatif           X 라인 레시피 Y Offset을 바꿨을 때 Lot별 X Range·StdDev 예측 (선형·원점 통과 가정)
     drift            Lot 평균 대 Lot 시작 시각, Lot 안 측정 순서 기울기
     transient        Lot 시작 직후 Die1·2·3의 평면 잔차 (Die4 이후 대비)
     die_field        Die 평균 편차 (3D 보고서용)
-    positioning_log  Positioning Log 탭이 읽은 분석이 있으면 그 판정을 옮긴다 (없으면 null)
+    positioning_log  Positioning Log 분석(비전 보정 로그 대조)이 있으면 그 판정을 옮긴다 (없으면 null)
     parts, actions   부품별 판정과 다음 조치 — 규칙 기반 (PART_RULES), 규칙을 그대로 적는다
+    rotation_test    스캐너 회전 시험 결과 (같은 장비 tool_id일 때만)
 
 네트워크는 보이는 회차만, Lot마다 Log 폴더 목록 1번·Log 파일 1개·측정 CSV 앞 20줄을 읽는다
 (read_run_logs). 읽은 것은 회차 결과의 'xy_logs'에 담아 다시 읽지 않는다 (읽기 오류가 섞였으면
@@ -38,7 +39,7 @@ import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, fields
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from core.checklist import compute_axis_metrics
@@ -46,8 +47,8 @@ from core.csv_loader import (LOT_LOAD_WORKERS, _decode_bytes, _open_csv_text, _r
                              _with_retry, list_dir)
 from core.die_analysis import (compute_deviation_matrix, extract_die_number,
                                extract_die_positions, filter_stabilization_die)
-from core.positioning_log import (MIN_T, STAGE_LABEL, lot_folder, plane_fit, run_key)
-from core.settings import DEFAULT_ROTATION_SPEC
+from core.positioning_log import (MIN_DIES, MIN_T, STAGE_LABEL, lot_folder, plane_fit, run_key)
+from core.settings import DEFAULT_ROTATION_SPEC, rotation_spec as _rotation_spec
 from core.statistics import is_usable
 
 SCHEMA = 'pass.xy.diagnosis/1'
@@ -72,20 +73,30 @@ PART_NAMES = {
 }
 LINE_KEYS = {'X': 'X_line', 'Y': 'Y_line'}
 
-# what-if: X 라인 레시피 Y Offset 후보 (µm)
+# what-if: X 라인 레시피 Y Offset 후보 |값| (µm). 지금 레시피와 같은 쪽(부호)으로 만든다
 WHATIF_RECIPES_Y = (-25.0, -15.0, -10.0, -5.0, -3.0, 0.0)
-# 권장 후보는 패턴 꼭짓점에서 이만큼 떨어져야 한다 (X 라인이 세로 엣지를 가로질러야 함, 0이면 꼭짓점 위)
+# 권장 후보는 패턴 꼭짓점에서 이만큼 떨어져야 한다 (체커보드 꼭짓점 여유 — X 라인이 세로 엣지를
+# 가로질러야 함, 0이면 꼭짓점 위). 3D 보고서(B)의 템플릿과 같은 규칙
 CORNER_CLEARANCE_UM = 5.0
+# 지금 레시피가 이보다 작으면 0으로 본다 (부호를 정할 수 없음 → 기본 쪽 −)
+ZERO_RECIPE_UM = 0.5
 # κ_eff는 구동 오프셋이 이보다 클 때만 낸다 (작으면 나눗셈이 불안정)
 MIN_KAPPA_OFFSET_UM = 2.0
-# drift (Lot 평균 폭, 첫 Lot 안 기울기)
+# 스캐너 부품을 원인으로 '이상'까지 판정하려면 구동이 이만큼은 있어야 한다
+MIN_DRIVE_FOR_ATTRIBUTION_UM = 5.0
+# 이보다 작게 구동했으면 '오프셋을 줄이세요'를 내지 않는다
+MIN_DRIVE_FOR_ACTION_UM = 2.0
+# drift (Lot 평균 폭, 첫 Lot 안 기울기). 주의는 Lot 3개 이상, 기울기는 |r| ≥ 0.5일 때만
 DRIFT_SPAN_UM = 0.2
 DRIFT_SLOPE_UM_PER_DIE = 0.01
 DRIFT_MIN_DIES = 5
-# transient: Die2(판정 대상) 평면 잔차 한도, 평면은 Die4 이후로 맞춘다
+DRIFT_MIN_LOTS = 3
+DRIFT_MIN_R = 0.5
+# transient: Die2(판정 대상) 평면 잔차 한도, 평면은 Die4 이후로 맞춘다. 주의는 Lot 3개 이상·|평균|/SE ≥ 3
 TRANSIENT_DIE2_UM = 0.15
 TRANSIENT_FIT_FROM_DIE = 4
 TRANSIENT_MIN_DIES = 8
+TRANSIENT_MIN_LOTS = 3
 # Log의 'X/Y Offset - Reference·Total'은 nm다 (적용값·미세 보정은 µm)
 REFERENCE_NM_PER_UM = 1000.0
 LOG_DIR = 'Log'
@@ -95,6 +106,12 @@ NO_LOG_TEXT = 'Log 없음 — Lot 폴더 Log/<Sample>_Log.csv 확인'
 READ_FAIL_TEXT = 'Log를 읽지 못함'
 NO_REF_TEXT = ('기준 스캔(Reference) 결과가 Log에 없어 레시피 값과 기준 보정을 나눌 수 없음 '
                '(적용값 − 미세 보정 = 레시피 + 기준 보정)')
+NO_POSLOG_TEXT = '비전 로그 대조 전 — Positioning Log 확인 시 확정'
+SMALL_DRIVE_TEXT = '스캐너 구동이 작아 원인으로 단정 불가'
+OTHER_TOOL_TEXT = '다른 장비의 시험 결과 — 적용 안 함'
+LINEAR_NOTE = ('선형·원점 통과 가정 (θ = κ_eff × 스캐너 오프셋). 실데이터는 원점을 지나지 않는다 — 예: θx 5.22 µrad '
+               '@ −27.7 µm, 0.95 µrad @ −8.1 µm → 기울기 ≈ −0.22 µrad/µm, 절편 ≈ −0.8 µrad. 예측은 근사이며 '
+               '오프셋을 줄이는 쪽으로는 보수적이다 (실측이 예측보다 좋았다)')
 
 # 단계 → 부품 (positioning_log 판정에서 그 성분을 가진 가장 앞 단계)
 STAGE_PART = {'coarse_match': 'xy_stage', 'coarse_move': 'xy_stage',
@@ -102,22 +119,25 @@ STAGE_PART = {'coarse_match': 'xy_stage', 'coarse_move': 'xy_stage',
               'optical_shift': 'vision', 'tip_pos': 'vision'}
 
 ROTATION_RULE = (
-    '회전 판정 (잠정 규격): θ가 유의하지 않으면(|t| < 3) ok. 유의하면 |θ| ≥ theta_max → fail, '
-    '≥ theta_warn → warn. κ_eff(= |θ| / |구동 오프셋|, 오프셋 2 µm 이상일 때만)가 kappa_warn 이상이면 '
-    '적어도 warn. X 라인 |스캐너 Y 적용값| > offset_max면 레시피 확인 warn. Y 라인 |스캐너 X 적용값| > '
-    'offset_max는 참고 (기준 장비에서 X 구동은 돌지 않았다).')
+    f'회전 판정 (잠정 규격): θ가 유의하지 않으면(|t| < 3 또는 Die {MIN_DIES}개 미만) ok. 유의하면 '
+    '|θ| ≥ theta_max → fail, ≥ theta_warn → warn. κ_eff(= |θ| / |구동 오프셋|, 오프셋 2 µm 이상일 때만)는 '
+    '구동 ≥ offset_max/2이고 |θ| ≥ theta_warn/2일 때 kappa_warn 이상이면 적어도 warn, 그 밖은 참고. '
+    'X 라인 |스캐너 Y 적용값| > offset_max면 레시피 확인 warn. Y 라인 |스캐너 X 적용값| > offset_max는 참고 '
+    '(기준 장비에서 X 구동은 돌지 않았다).')
 PART_RULES = (
-    'xy_scanner_y: 최종 θx가 유의(|t| ≥ 3)하고 |θx| ≥ theta_max이며, (Positioning Log가 비전 정렬 '
-    '이후로 보거나 로그가 없거나, X 라인 |스캐너 Y| > offset_max)면 fail. theta_warn 이상이면 같은 조건으로 warn.',
+    f'xy_scanner_y: fail은 최종 θx가 유의(|t| ≥ 3, Die {MIN_DIES}개 이상)하고 |θx| ≥ theta_max이며, X 라인 '
+    f'|스캐너 Y| ≥ {MIN_DRIVE_FOR_ATTRIBUTION_UM:g} µm이고, Positioning Log 분석이 그 성분을 비전 정렬 이후로 '
+    '볼 때만. Positioning Log 분석이 없으면 많아야 warn (비전 로그 대조 전), 스캐너 Y를 모르면 warn, '
+    f'{MIN_DRIVE_FOR_ATTRIBUTION_UM:g} µm 미만으로 구동했으면 na (단정 불가). 비전 단계가 그 성분을 가졌으면 ok '
+    '(구동이 offset_max를 넘으면 warn). theta_warn 이상 theta_max 미만이면 같은 조건에서 warn.',
+    'xy_scanner_x: Y 라인(θy, 스캐너 X)에 같은 규칙. Y 라인에 같은 모양이 없으면 ok.',
     'chuck: xy_scanner_y가 warn·fail이면 warn (데이터로는 스캐너와 척을 나눌 수 없다).',
     'vision / xy_stage: Positioning Log 판정이 그 성분을 비전 로그 단계에 돌리면 그 단계의 부품 '
     '(도착·거친 보정 → xy_stage, 정밀 정렬·보정·Optical Shift·Tip 위치 → vision). θ 성분이 '
     '|θ| ≥ theta_max이고 같은 부호면 fail, 그 밖은 warn. 로그 분석이 없으면 na.',
     'z_scanner_tip / f_stage: drift 또는 transient가 warn이면 warn (헤드 쪽 열·안착).',
-    'xy_scanner_x: Y 라인에 같은 모양(θy 유의, theta 규격 초과, Y 라인 |스캐너 X| > offset_max 또는 '
-    '비전 정렬 이후)이 있으면 warn·fail, 아니면 ok.',
-    '스캐너 회전 시험(rotation_test)이 폐루프(loop closed)·Y 축이고 status가 warn·fail이면 xy_scanner_y의 직접 '
-    '증거 — xy_scanner_y를 적어도 그 판정으로 올린다 (status na는 무시).',
+    '스캐너 회전 시험(rotation_test, 같은 장비)이 폐루프(loop closed)·Y 축이고 status가 warn·fail이면 '
+    'xy_scanner_y의 직접 증거 — xy_scanner_y를 적어도 그 판정으로 올린다 (status na는 무시).',
     '그 밖(z_stage, sample, body, anti_vibration, efem): 이 데이터로 판단할 신호가 없어 ok, '
     '데이터가 없으면 na.',
 )
@@ -171,8 +191,9 @@ def _line(xs, ys):
     return sxy / sxx, (sxy / math.sqrt(sxx * syy) if syy > 0 else None)
 
 
-def _significant(theta, t) -> bool:
-    return _finite(theta) and _finite(t) and abs(t) >= MIN_T
+def _significant(theta, t, k) -> bool:
+    """유의한 평면 성분: 반올림하지 않은 |t| ≥ 3이고 Die MIN_DIES개 이상 (positioning_log 판정과 같다)."""
+    return _finite(theta) and _finite(t) and abs(t) >= MIN_T and _finite(k) and k >= MIN_DIES
 
 
 def _worst(*verdicts):
@@ -182,14 +203,23 @@ def _worst(*verdicts):
 
 
 def _clean(value):
-    """JSON으로 쓸 수 있게: NaN·inf → None, tuple → list."""
+    """JSON으로 쓸 수 있게: NaN·inf → None, tuple·set → list, numpy 스칼라 → 파이썬 값,
+    날짜 → ISO 문자열, 그 밖의 객체 → 문자열 (to_json이 실패하지 않게)."""
     if isinstance(value, dict):
         return {str(k): _clean(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return [_clean(v) for v in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    return value
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if type(value).__module__ == 'numpy' and hasattr(value, 'item'):
+        return _clean(value.item())
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return str(value)
 
 
 def _iso(value) -> Optional[str]:
@@ -205,6 +235,10 @@ def _parse_time(text) -> Optional[datetime]:
         except ValueError:
             continue
     return None
+
+
+def _fmt(value, fmt='.3f'):
+    return '—' if not _finite(value) else format(value, fmt)
 
 
 # ──────────────────────────────────────────────
@@ -240,18 +274,28 @@ def parse_scanner_offsets(text: str) -> dict:
         {'lines': [{'line': 'X'|'Y', 'direction', 'time', 'applied': (x, y) µm,
                     'fine': (x, y) µm 또는 None, 'ref': (x, y) µm 또는 None}, ...],
          'refs': [{'time', 'ref': (x, y) µm, 'total': (x, y) µm 또는 None}, ...],
-         'first_time': 첫 행 시각 문자열}
-        fine은 그 측정 전 마지막 'Sample pattern align - fine', ref는 마지막 'Apply reference scan
-        result' (Lot 안에 없으면 None). Reference·Total은 nm라 µm로 바꾼다.
+         'first_time': 첫 행 시각 문자열, 'tool_id', 'tool_type_id'}
+        fine은 그 측정 전 마지막 'Sample pattern align - fine'이고 X·Y 라인 한 쌍에만 쓴다 (다음 Site에
+        정밀 정렬이 없으면 None). 같은 측정(ImageJob)에서 같은 방향 'Set scan params'가 다시 나오면
+        마지막 것만 센다. ref는 마지막 'Apply reference scan result' (Lot 안에 없으면 None).
+        Reference·Total은 nm라 µm로 바꾼다. Tool ID는 처음 나온 빈칸 아닌 값.
     """
     events = parse_log_events(text)
-    out = {'lines': [], 'refs': [], 'first_time': events[0][0] if events else ''}
+    out = {'lines': [], 'refs': [], 'first_time': events[0][0] if events else '',
+           'tool_id': '', 'tool_type_id': ''}
     fine = ref = None
+    fine_used = set()
+    block = None        # 지금 측정(ImageJob)의 lines 위치
     for time, _parent, job, step, params in events:
-        step_l = step.lower()
+        job_l, step_l = job.lower(), step.lower()
+        if not out['tool_id'] and params.get('tool id'):
+            out['tool_id'] = params['tool id']
+        if not out['tool_type_id'] and params.get('tool type id'):
+            out['tool_type_id'] = params['tool type id']
         if step_l == 'sample pattern align - fine':
             fx, fy = _num(params.get('x offset - fine')), _num(params.get('y offset - fine'))
             fine = (fx, fy) if fx is not None and fy is not None else None
+            fine_used, block = set(), None
         elif step_l == 'apply reference scan result':
             rx, ry = _num(params.get('x offset - reference')), _num(params.get('y offset - reference'))
             tx, ty = _num(params.get('x offset - total')), _num(params.get('y offset - total'))
@@ -260,14 +304,26 @@ def parse_scanner_offsets(text: str) -> dict:
                 total = ((tx / REFERENCE_NM_PER_UM, ty / REFERENCE_NM_PER_UM)
                          if tx is not None and ty is not None else None)
                 out['refs'].append({'time': time, 'ref': ref, 'total': total})
-        elif job.lower() == 'imagejob' and step_l == 'set scan params':
+        elif job_l == 'imagejob' and step_l == 'started':
+            block = None
+        elif job_l == 'imagejob' and step_l == 'set scan params':
             direction = params.get('scan direction', '')
             head = direction.strip()[:1].upper()
             x, y = _num(params.get('x offset')), _num(params.get('y offset'))
             if head not in AXES or x is None or y is None:
                 continue
-            out['lines'].append({'line': head, 'direction': direction, 'time': time,
-                                 'applied': (x, y), 'fine': fine, 'ref': ref})
+            entry = {'line': head, 'direction': direction, 'time': time, 'applied': (x, y),
+                     'fine': fine, 'ref': ref}
+            if block is not None and out['lines'][block]['line'] == head:
+                # 같은 측정의 다시 한 설정: 마지막 것만 센다 (그 측정의 미세 보정 그대로)
+                entry['fine'] = out['lines'][block]['fine']
+                out['lines'][block] = entry
+                continue
+            out['lines'].append(entry)
+            block = len(out['lines']) - 1
+            fine_used.add(head)
+            if fine_used >= set(AXES):
+                fine, fine_used = None, set()       # X·Y 한 쌍에 썼다. 다음 Site는 자기 정밀 정렬로
     return out
 
 
@@ -314,15 +370,27 @@ def _csv_prefix(csv_name: str) -> str:
     return ''
 
 
+def _decode_log(raw: bytes, path: str) -> str:
+    """Log 바이트 → 텍스트. UTF-16 BOM을 먼저 보고, 아니면 CSV와 같은 순서. 실패하면 ValueError."""
+    if raw[:2] in (b'\xff\xfe', b'\xfe\xff'):
+        return raw.decode('utf-16')
+    text, _ = _decode_bytes(raw, path)
+    if text is None:
+        raise ValueError(f'인코딩 해석 실패: {os.path.basename(path)}')
+    return text
+
+
 def read_lot_log(lot_name: str, lot_path: str, csv_name: str = '', session=None) -> dict:
     """[작업 스레드] Lot 하나의 Log와 측정 CSV 메타를 읽는다.
 
-    status: 'ok' | 'no_log'(폴더·파일 없음) | 'mismatch'(Log가 여럿인데 고를 수 없음) |
-            'error'(네트워크·잠김 등 읽기 오류 — '로그 없음'으로 보이지 않게 따로 둔다)
+    status: 'ok' | 'no_log'(Lot 폴더는 보이는데 Log 폴더·파일 없음) | 'mismatch'(Log가 여럿인데 고를 수
+            없음) | 'error'(네트워크·잠김·빈 파일·해석 실패 — '로그 없음'으로 보이지 않게 따로 둔다)
+    Windows는 네트워크 경로 오류(WinError 53·67)도 FileNotFoundError로 올리므로, Log 폴더가 없으면
+    Lot 폴더가 읽히는지 확인한다 (읽히지 않으면 error).
     """
     out = {'lot': lot_name, 'path': lot_path, 'log': None, 'status': 'ok', 'error': '',
            'problems': [], 'lines': [], 'refs': [], 'first_time': '', 'start': None, 'end': None,
-           'recipe_id': '', 'sample': ''}
+           'recipe_id': '', 'sample': '', 'tool_id': '', 'tool_type_id': ''}
     if session is not None and session.cancelled:
         out['status'] = 'error'
         out['error'] = '중지됨'
@@ -332,6 +400,9 @@ def read_lot_log(lot_name: str, lot_path: str, csv_name: str = '', session=None)
         folder = os.path.join(lot_path, LOG_DIR)
         entries = _with_retry(lambda: list_dir(folder, session), session)
         if isinstance(entries, (FileNotFoundError, NotADirectoryError)):
+            parent = _with_retry(lambda: list_dir(lot_path, session), session)
+            if isinstance(parent, OSError):
+                raise OSError(f'Lot 폴더를 읽지 못함 ({type(parent).__name__}: {parent})')
             out['status'] = 'no_log'
             out['problems'].append(NO_LOG_TEXT)
             return out
@@ -357,13 +428,10 @@ def read_lot_log(lot_name: str, lot_path: str, csv_name: str = '', session=None)
                 size = os.path.getsize(path)
             except OSError:
                 size = 0
-            if size:
-                raise OSError(f'파일을 열 수 없음 (잠김 또는 권한): {name}')
-        text, _ = _decode_bytes(raw, path) if raw else ('', None)
-        if text is None:
-            raise OSError(f'인코딩 해석 실패: {name}')
-        parsed = parse_scanner_offsets(text)
-        out.update(lines=parsed['lines'], refs=parsed['refs'], first_time=parsed['first_time'])
+            raise OSError(f'파일을 열 수 없음 (잠김 또는 권한): {name}' if size else f'빈 Log 파일: {name}')
+        parsed = parse_scanner_offsets(_decode_log(raw, path))
+        out.update(lines=parsed['lines'], refs=parsed['refs'], first_time=parsed['first_time'],
+                   tool_id=parsed['tool_id'], tool_type_id=parsed['tool_type_id'])
         if out['start'] is None:
             out['start'] = _parse_time(parsed['first_time'])
         if not parsed['lines']:
@@ -371,6 +439,9 @@ def read_lot_log(lot_name: str, lot_path: str, csv_name: str = '', session=None)
     except OSError as e:
         out['status'] = 'error'
         out['error'] = f'{type(e).__name__}: {e}'
+    except (csv.Error, ValueError, UnicodeError) as e:     # 한 Lot의 깨진 파일이 다른 Lot을 막지 않게
+        out['status'] = 'error'
+        out['error'] = f'Log 해석 실패 ({type(e).__name__}: {e})'
     return out
 
 
@@ -388,6 +459,7 @@ def _lot_order(raw: list):
 def read_run_logs(result: dict, session=None, workers: int = LOT_LOAD_WORKERS) -> dict:
     """[작업 스레드] 회차 결과 하나의 Lot Log를 읽는다 (Lot마다 Log 폴더 목록·Log·CSV 앞부분).
 
+    session(csv_loader.ScanSession)을 주면 중지(cancel)되면 남은 Lot은 읽지 않는다 (오류로 남아 담기지 않음).
     Returns: {'status': 'ok'|'partial'|'no_logs'|'error'|'no_data', 'message', 'lots': [...],
               'round': 회차 이름}
     """
@@ -443,6 +515,20 @@ def store_logs(result: dict, logs: dict) -> bool:
     return True
 
 
+def tool_identity(result: dict, logs: dict = None, tool_root: str = None) -> tuple:
+    """(tool_id, 근거). Log의 'Tool ID'가 있으면 그것('log'), 없으면 데이터 폴더 경로('root':
+    tool_root → Workflow 폴더(source_path) → 회차 폴더 순서, 대소문자·구분자 정규화). 모르면 (None, None).
+    스캐너 회전 시험 결과를 같은 장비의 진단에만 붙이는 데 쓴다."""
+    for lot in (logs or {}).get('lots') or []:
+        if lot.get('tool_id'):
+            return str(lot['tool_id']).strip(), 'log'
+    result = result or {}
+    root = tool_root or result.get('source_path') or result.get('round_path')
+    if not root:
+        return None, None
+    return os.path.normcase(os.path.normpath(str(root))), 'root'
+
+
 # ──────────────────────────────────────────────
 # 계산
 # ──────────────────────────────────────────────
@@ -466,8 +552,8 @@ def axis_shape(data: list, axis: str, positions: dict = None, dev: dict = None) 
     """축 하나의 평면 모양: Die 평균 편차를 Die 좌표(mm)에 v = c + a·x + b·y로 맞춘다.
 
     data는 분석 대상 행(안정화 Die 제외). θ는 X축이면 ∂dx/∂y(θx), Y축이면 ∂dy/∂x(θy), µrad.
-    scale은 X축 ∂dx/∂x(Sx), Y축 ∂dy/∂y(Sy), ppm. t = 값/SE (Die 평균 잔차로). mean은 측정값 평균 µm.
-    회차 비교 표의 θx·θy도 이 함수다 (CSV 값만 쓴다).
+    scale은 X축 ∂dx/∂x(Sx), Y축 ∂dy/∂y(Sy), ppm. t = 값/SE (Die 평균 잔차로, 반올림하지 않음).
+    mean은 측정값 평균 µm, k는 피팅한 Die 수. 회차 비교 표의 θx·θy도 이 함수다 (CSV 값만 쓴다).
     """
     dev = dev if dev is not None else compute_deviation_matrix(data, axis)
     positions = positions if positions is not None else _positions(data)
@@ -522,10 +608,17 @@ def _line_offsets(logs: dict) -> dict:
     return out
 
 
-def _status_from_theta(theta, t, spec) -> str:
+def _drive(offsets: dict, axis: str):
+    """측정 라인의 구동 축 스캐너 오프셋: X 라인은 스캐너 Y, Y 라인은 스캐너 X (모르면 None)."""
+    applied = (offsets.get(LINE_KEYS[axis]) or {}).get('applied')
+    value = applied[1 if axis == 'X' else 0] if applied else None
+    return value if _finite(value) else None
+
+
+def _status_from_theta(theta, t, k, spec) -> str:
     if not _finite(theta):
         return 'na'
-    if not _significant(theta, t):
+    if not _significant(theta, t, k):
         return 'ok'
     if abs(theta) >= spec['theta_max']:
         return 'fail'
@@ -535,59 +628,65 @@ def _status_from_theta(theta, t, spec) -> str:
 
 
 def _rotation_line(axis: str, shape: dict, offsets: dict, span_mm, spec: dict) -> dict:
-    """한 측정 라인의 회전: X 라인은 θx와 스캐너 Y, Y 라인은 θy와 스캐너 X."""
-    theta, t = shape.get('theta'), shape.get('theta_t')
-    applied = (offsets.get(LINE_KEYS[axis]) or {}).get('applied')
-    drive = applied[1 if axis == 'X' else 0] if applied else None
+    """한 측정 라인의 회전: X 라인은 θx와 스캐너 Y, Y 라인은 θy와 스캐너 X.
+
+    κ_eff는 구동 ≥ offset_max/2이고 |θ| ≥ theta_warn/2일 때만 판정을 올린다 (그 밖은 참고).
+    """
+    theta, t, k = shape.get('theta'), shape.get('theta_t'), shape.get('k')
+    drive = _drive(offsets, axis)
+    significant = _significant(theta, t, k)
     kappa = kappa_signed = None
-    if _finite(theta) and _finite(drive) and abs(drive) >= MIN_KAPPA_OFFSET_UM:
+    if _finite(theta) and drive is not None and abs(drive) >= MIN_KAPPA_OFFSET_UM:
         kappa = abs(theta) / abs(drive)
         kappa_signed = theta / drive
     contribution = abs(theta) * span_mm / 1000.0 if _finite(theta) and _finite(span_mm) else None
-    status = _status_from_theta(theta, t, spec)
+    status = _status_from_theta(theta, t, k, spec)
     reasons = []
     name, drive_name = ('θx', '스캐너 Y') if axis == 'X' else ('θy', '스캐너 X')
     if _finite(theta):
-        sig = '유의' if _significant(theta, t) else '유의하지 않음'
-        reasons.append(f"{axis} 라인 {name} {theta:+.2f} µrad (t {t:+.1f}, {sig}) — 규격 {spec['theta_warn']:g}"
-                       f" / {spec['theta_max']:g} µrad (잠정)" if _finite(t) else
-                       f"{axis} 라인 {name} {theta:+.2f} µrad (t 없음)")
+        sig = '유의' if significant else '유의하지 않음'
+        reasons.append(f"{axis} 라인 {name} {theta:+.2f} µrad (t {_fmt(t, '+.1f')}, Die {k}, {sig}) — 규격 "
+                       f"{spec['theta_warn']:g} / {spec['theta_max']:g} µrad (잠정)")
     if contribution is not None:
         reasons.append(f"Range 기여 |{name}| × Die 좌표 폭 {span_mm:.0f} mm = {contribution:.3f} µm")
     if kappa is not None:
         reasons.append(f"κ_eff = |{name}| / |{drive_name} {drive:+.1f} µm| = {kappa:.3f} µrad/µm — 규격 "
                        f"{spec['kappa_warn']:g} / {spec['kappa_max']:g} (잠정)")
-        if _significant(theta, t) and kappa >= spec['kappa_warn']:
-            status = _worst(status, 'warn')
-            reasons.append(f"κ_eff가 {'규격 초과' if kappa >= spec['kappa_max'] else '주의 구간'} — "
-                           f"{drive_name} 구동 1 µm당 회전이 큼")
-    elif _finite(drive):
+        if significant and kappa >= spec['kappa_warn']:
+            usable = (abs(drive) >= spec['offset_max'] / 2 and abs(theta) >= spec['theta_warn'] / 2)
+            level = '규격 초과' if kappa >= spec['kappa_max'] else '주의 구간'
+            if usable:
+                status = _worst(status, 'warn')
+                reasons.append(f"κ_eff {level} — {drive_name} 구동 1 µm당 회전이 큼")
+            else:
+                reasons.append(f"참고: κ_eff {level}이지만 구동(|{drive:.1f}| < {spec['offset_max'] / 2:g} µm) "
+                               f"또는 |{name}|(< {spec['theta_warn'] / 2:g} µrad)이 작아 판정에 쓰지 않음")
+    elif drive is not None:
         reasons.append(f"{drive_name} 적용값 {drive:+.1f} µm — {MIN_KAPPA_OFFSET_UM:g} µm 미만이라 κ_eff 계산 안 함")
     return {'theta': _round(theta, 3), 'theta_t': _round(t, 2), 'kappa_eff': _round(kappa, 4),
             'kappa_signed': _round(kappa_signed, 4), 'contribution_um': _round(contribution, 3),
-            'span_mm': _round(span_mm, 1), 'status': status, 'reasons': reasons,
-            ('scanner_y' if axis == 'X' else 'scanner_x'): _round(drive, 3)}
+            'span_mm': _round(span_mm, 1), 'significant': significant, 'status': status,
+            'reasons': reasons, ('scanner_y' if axis == 'X' else 'scanner_x'): _round(drive, 3)}
 
 
 def _offset_check(offsets: dict, spec: dict) -> dict:
     """레시피 오프셋 확인: X 라인 |스캐너 Y|, Y 라인 |스캐너 X| (참고)."""
     limit = spec['offset_max']
     reasons, status = [], 'ok'
-    x_applied = (offsets.get('X_line') or {}).get('applied')
-    y_applied = (offsets.get('Y_line') or {}).get('applied')
-    if x_applied and _finite(x_applied[1]):
-        if abs(x_applied[1]) > limit:
+    x_drive, y_drive = _drive(offsets, 'X'), _drive(offsets, 'Y')
+    if x_drive is not None:
+        if abs(x_drive) > limit:
             status = 'warn'
-            reasons.append(f"X 라인 스캐너 Y 적용값 {x_applied[1]:+.1f} µm — |값| > {limit:g} µm (잠정 한도): "
+            reasons.append(f"X 라인 스캐너 Y 적용값 {x_drive:+.1f} µm — |값| > {limit:g} µm (잠정 한도): "
                            "Y 구동이 웨이퍼를 돌려 θx가 생길 수 있음, 레시피 Y Offset 확인")
         else:
-            reasons.append(f"X 라인 스캐너 Y 적용값 {x_applied[1]:+.1f} µm — 한도 {limit:g} µm 이내")
-    if y_applied and _finite(y_applied[0]) and abs(y_applied[0]) > limit:
-        reasons.append(f"참고: Y 라인 스캐너 X 적용값 {y_applied[0]:+.1f} µm — |값| > {limit:g} µm. 기준 장비에서는 "
-                       "X 구동 회전이 없었음 (θy로 확인)")
-    if not x_applied:
+            reasons.append(f"X 라인 스캐너 Y 적용값 {x_drive:+.1f} µm — 한도 {limit:g} µm 이내")
+    else:
         status = 'na'
         reasons.append('Log가 없어 오프셋을 확인하지 못함')
+    if y_drive is not None and abs(y_drive) > limit:
+        reasons.append(f"참고: Y 라인 스캐너 X 적용값 {y_drive:+.1f} µm — |값| > {limit:g} µm. 기준 장비에서는 "
+                       "X 구동 회전이 없었음 (θy로 확인)")
     return {'status': status, 'reasons': reasons}
 
 
@@ -623,61 +722,112 @@ def predict_whatif(matrix: dict, positions: dict, kappa_signed: float, delta_um:
             'range_all': (max(pooled) - min(pooled)) if pooled else None, 'std_all': _std(pooled)}
 
 
-def _whatif(rotation: dict, offsets: dict, matrix: dict, positions: dict, spec_range,
+def _passes_all(row: dict) -> bool:
+    return row.get('pass_lots') is not None and row.get('lots') and row['pass_lots'] == row['lots']
+
+
+def _whatif(shape: dict, drive, recipe_y, matrix: dict, positions: dict, spec_range,
             spec_stddev) -> dict:
+    """X 라인 레시피 Y Offset 후보별 예측 (선형·원점 통과). 후보는 지금 레시피와 같은 쪽(부호).
+
+    권장 (3D 보고서 템플릿과 같은 규칙, 많아야 한 행):
+      지금 행이 모든 Lot PASS면 지금 행('현재 유지'). 아니면 |레시피| ≥ 5 µm(꼭짓점 여유)이고 모든 Lot
+      PASS인 후보 중 |레시피|가 가장 작은 것. 그런 후보가 없으면 권장 없음. 레시피 값을 모르면
+      (스캐너 Y 목표 행) 지금 행만 권장할 수 있다.
+    """
     out = {'assumption': 'linear kappa_eff', 'kappa_eff': None, 'kappa_signed': None,
            'basis': 'recipe_y', 'rows': [], 'note': ''}
-    theta, t = rotation.get('theta'), rotation.get('theta_t')
-    kappa = rotation.get('kappa_signed')
-    current_applied = rotation.get('scanner_y')
-    if not _significant(theta, t) or kappa is None or current_applied is None:
-        out['note'] = ('θx가 유의하지 않거나(|t| < 3) 스캐너 Y 적용값이 작아 κ_eff를 정할 수 없음 — '
+    theta, t, k = shape.get('theta'), shape.get('theta_t'), shape.get('k')
+    if not _significant(theta, t, k) or drive is None or abs(drive) < MIN_KAPPA_OFFSET_UM:
+        out['note'] = ('θx가 유의하지 않거나(|t| < 3 또는 Die 부족) 스캐너 Y 적용값이 작아 κ_eff를 정할 수 없음 — '
                        '예측하지 않음')
         return out
-    out['kappa_eff'] = rotation.get('kappa_eff')
-    out['kappa_signed'] = kappa
-    recipe = (offsets.get('X_line') or {}).get('recipe')
-    current_recipe = recipe[1] if recipe and _finite(recipe[1]) else None
+    kappa = theta / drive
+    out['kappa_eff'] = _round(abs(kappa), 4)
+    out['kappa_signed'] = _round(kappa, 4)
+    out['note'] = LINEAR_NOTE
+    current_recipe = recipe_y if _finite(recipe_y) else None
     if current_recipe is not None:
-        candidates = [(r, current_recipe - r) for r in WHATIF_RECIPES_Y]
-        if all(abs(r - current_recipe) > 0.05 for r in WHATIF_RECIPES_Y):
-            candidates.append((current_recipe, 0.0))
+        if abs(current_recipe) < ZERO_RECIPE_UM:
+            current_recipe = 0.0
+        current = current_recipe
+        side = 1.0 if current_recipe > 0 else -1.0
     else:
         # 레시피 값을 모르면 스캐너 Y 적용값 목표로 예측한다
         out['basis'] = 'scanner_y'
-        out['note'] = NO_REF_TEXT + ' — 행은 스캐너 Y 적용값 목표'
-        candidates = [(None, current_applied - s) for s in WHATIF_RECIPES_Y]
-        if all(abs(s - current_applied) > 0.05 for s in WHATIF_RECIPES_Y):
-            candidates.append((None, 0.0))
+        out['note'] = NO_REF_TEXT + ' — 행은 스캐너 Y 적용값 목표. ' + LINEAR_NOTE
+        current = drive
+        side = 1.0 if drive > 0 else -1.0
+    targets = [math.copysign(abs(r), side) for r in WHATIF_RECIPES_Y]
+    if all(abs(v - current) > 0.05 for v in targets):
+        targets.append(current)
     rows = []
-    for recipe_y, delta in candidates:
-        scanner_y = current_applied - delta
+    for target in targets:
+        delta = current - target
+        scanner_y = drive - delta
         pred = predict_whatif(matrix, positions, kappa, delta, spec_range, spec_stddev)
-        rows.append({'recipe_y': _round(recipe_y, 3), 'scanner_y': _round(scanner_y, 2),
-                     'theta': _round(kappa * scanner_y, 2),
+        rows.append({'recipe_y': _round(target, 3) if out['basis'] == 'recipe_y' else None,
+                     'scanner_y': _round(scanner_y, 2), 'theta': _round(kappa * scanner_y, 2),
                      'range_mean': _round(pred['range_mean'], 3), 'range_max': _round(pred['range_max'], 3),
                      'std_mean': _round(pred['std_mean'], 3), 'std_max': _round(pred['std_max'], 3),
                      'pass_lots': pred['pass_lots'], 'lots': pred['lots'],
                      'range_all': _round(pred['range_all'], 3), 'std_all': _round(pred['std_all'], 3),
-                     'current': abs(delta) < 0.05, 'recommended': False})
-    rows.sort(key=lambda r: r['recipe_y'] if r['recipe_y'] is not None else r['scanner_y'])
-    # 권장: 꼭짓점에서 떨어진(|레시피| ≥ 5 µm) 같은 쪽 후보 중 모든 Lot PASS, 그중 |θ| 최소.
-    # PASS인 후보가 없으면 |θ| 최소. 레시피 값을 모르면 권장하지 않는다
-    if current_recipe is not None:
-        side = [r for r in rows if abs(r['recipe_y']) >= CORNER_CLEARANCE_UM - 1e-9
-                and (current_recipe == 0 or r['recipe_y'] * current_recipe > 0)]
-        passing = [r for r in side if r['pass_lots'] is not None and r['pass_lots'] == r['lots']]
-        pool = passing or side
+                     'current': abs(delta) < 0.05, 'recommended': False, '_target': target})
+    rows.sort(key=lambda r: -abs(r['_target']))           # 먼 값 → 0 (예: −25 … 0, +25 … 0)
+    now = next((r for r in rows if r['current']), None)
+    if now is not None and _passes_all(now):
+        now['recommended'] = True
+    elif out['basis'] == 'recipe_y':
+        pool = [r for r in rows if not r['current'] and abs(r['_target']) >= CORNER_CLEARANCE_UM - 1e-9
+                and _passes_all(r)]
         if pool:
-            min(pool, key=lambda r: (abs(r['theta']), -abs(r['recipe_y'])))['recommended'] = True
+            min(pool, key=lambda r: abs(r['_target']))['recommended'] = True
+    for r in rows:
+        del r['_target']
     out['rows'] = rows
     return out
 
 
-def _lot_axis_rows(raw: list, lot: str, axis: str, dies: set) -> list:
-    """한 Lot·축의 분석 대상 행 (측정 순서 = CSV 행 순서)."""
-    return [r for r in raw if r.get('lot_name') == lot and (r.get('method') or '').upper() == axis
-            and extract_die_number(r.get('site_id', '')) in dies and is_usable(r)]
+def _kappa_two_point(result: dict, logs: dict, shape_x: dict) -> Optional[dict]:
+    """참고: 이 Recipe의 회차들 중 X 라인 스캐너 Y를 이미 아는 회차(담긴 Log)로 θx 대 스캐너 Y의 기울기·
+    절편을 맞춘다 (구동 차이 5 µm 이상, 2회차 이상). Log를 더 읽지 않는다. 판정에 쓰지 않는다."""
+    points, seen = [], set()
+    candidates = [(result, logs)] + [(run, run.get('xy_logs')) for run in result.get('run_results') or []]
+    for run, run_logs in candidates:
+        key = run_key(run)
+        if key in seen or not isinstance(run_logs, dict):
+            continue
+        seen.add(key)
+        drive = _drive(_line_offsets(run_logs), 'X')
+        if run is result:
+            theta = shape_x.get('theta')
+        else:
+            theta = axis_shape(filter_stabilization_die(run.get('raw_data') or []), 'X').get('theta')
+        if drive is not None and _finite(theta):
+            points.append({'run': run.get('round', ''), 'scanner_y': drive, 'theta': theta})
+    if len(points) < 2:
+        return None
+    xs = [p['scanner_y'] for p in points]
+    if max(xs) - min(xs) < MIN_DRIVE_FOR_ATTRIBUTION_UM:
+        return None
+    slope, r = _line(xs, [p['theta'] for p in points])
+    if slope is None:
+        return None
+    intercept = _mean([p['theta'] for p in points]) - slope * _mean(xs)
+    return {'kappa': _round(slope, 4), 'intercept': _round(intercept, 3), 'r': _round(r, 3),
+            'points': [{'run': p['run'], 'scanner_y': _round(p['scanner_y'], 2), 'theta': _round(p['theta'], 3)}
+                       for p in points],
+            'note': '참고: 회차별 X 라인 스캐너 Y와 θx로 맞춘 직선 (기울기 µrad/µm, 절편 µrad) — 판정에 쓰지 않음'}
+
+
+def _rows_by_lot_axis(raw: list) -> dict:
+    """{(Lot, 축): [쓸 수 있는 행, ...]} (측정 순서 = CSV 행 순서) — 한 번만 나눈다."""
+    out = {}
+    for r in raw:
+        axis = (r.get('method') or '').upper()
+        if axis in AXES and is_usable(r):
+            out.setdefault((r.get('lot_name', ''), axis), []).append(r)
+    return out
 
 
 def _static_plane(dev: dict, positions: dict) -> tuple:
@@ -697,9 +847,12 @@ def _static_plane(dev: dict, positions: dict) -> tuple:
     return tuple(out)
 
 
-def _drift(raw: list, data: list, lots_order: list, logs: dict, devs: dict,
+def _drift(groups: dict, data: list, lots_order: list, logs: dict, devs: dict,
            positions: dict) -> dict:
-    """Lot 평균 대 Lot 시작 시각, Lot 안 측정 순서 기울기 (유의한 평면 모양만 뺀 값)."""
+    """Lot 평균 대 Lot 시작 시각, Lot 안 측정 순서 기울기 (유의한 평면 모양만 뺀 값).
+
+    주의: Lot 3개 이상에서 축별 Lot 평균 폭 > 0.2 µm, 또는 첫 Lot |기울기| > 0.01 µm/Die이면서 |r| ≥ 0.5.
+    """
     starts = {lot['lot']: lot.get('start') for lot in (logs or {}).get('lots') or []}
     dies = {extract_die_number(r.get('site_id', '')) for r in data}
     dies.discard(None)
@@ -708,15 +861,15 @@ def _drift(raw: list, data: list, lots_order: list, logs: dict, devs: dict,
     for lot in lots_order:
         entry = {'lot': lot, 'start': _iso(starts.get(lot))}
         for axis in AXES:
-            rows = _lot_axis_rows(raw, lot, axis, dies)
+            rows = [r for r in groups.get((lot, axis), [])
+                    if extract_die_number(r.get('site_id', '')) in dies]
             entry[axis.lower()] = _round(_mean([r['value'] / 1000.0 for r in rows]), 4)
             a, b = planes[axis]
             values = []
             for r in rows:
                 p = positions.get(f"Die{extract_die_number(r['site_id']) + 1}")
-                if p is None:
-                    continue
-                values.append(r['value'] / 1000.0 - a * p[0] - b * p[1])
+                if p is not None:
+                    values.append(r['value'] / 1000.0 - a * p[0] - b * p[1])
             slope, r = (_line(list(range(len(values))), values) if len(values) >= DRIFT_MIN_DIES
                         else (None, None))
             within.append({'lot': lot, 'axis': axis, 'slope_um_per_die': _round(slope, 5),
@@ -724,29 +877,37 @@ def _drift(raw: list, data: list, lots_order: list, logs: dict, devs: dict,
         lot_means.append(entry)
     if all(e['start'] for e in lot_means):
         lot_means.sort(key=lambda e: e['start'])
+    enough = len(lot_means) >= DRIFT_MIN_LOTS
     status, reasons, span = 'ok', [], {}
     for axis in AXES:
         means = [e[axis.lower()] for e in lot_means if e[axis.lower()] is not None]
         span[axis] = _round(max(means) - min(means), 4) if len(means) >= 2 else None
         if span[axis] is not None and span[axis] > DRIFT_SPAN_UM:
-            status = 'warn'
             first, last = means[0], means[-1]
-            reasons.append(f"{axis} Lot 평균 폭 {span[axis]:.3f} µm > {DRIFT_SPAN_UM:g} µm "
-                           f"(처음 {first:+.3f} → 마지막 {last:+.3f} µm) — 예열(열) 드리프트 의심 — "
-                           "측정 전 워밍업/더미 Lot 권장")
+            text = (f"{axis} Lot 평균 폭 {span[axis]:.3f} µm > {DRIFT_SPAN_UM:g} µm "
+                    f"(처음 {first:+.3f} → 마지막 {last:+.3f} µm)")
+            if enough:
+                status = 'warn'
+                reasons.append(text + ' — 예열(열) 드리프트 의심 — 측정 전 워밍업/더미 Lot 권장')
+            else:
+                reasons.append(f'참고: {text} — Lot {len(lot_means)}개라 판정하지 않음 ({DRIFT_MIN_LOTS}개 이상 필요)')
     first_lot = lot_means[0]['lot'] if lot_means else None
     for item in within:
         if item['lot'] != first_lot or item['slope_um_per_die'] is None:
             continue
         if abs(item['slope_um_per_die']) > DRIFT_SLOPE_UM_PER_DIE:
-            status = 'warn'
-            r_text = f", r {item['r']:+.2f}" if item['r'] is not None else ''
-            reasons.append(f"첫 Lot({first_lot}) {item['axis']} Lot 안 기울기 "
-                           f"{item['slope_um_per_die']:+.4f} µm/Die{r_text} > {DRIFT_SLOPE_UM_PER_DIE:g} — "
-                           "예열(열) 드리프트 의심 — 측정 전 워밍업/더미 Lot 권장")
-    if not reasons:
+            r_value = item['r']
+            text = (f"첫 Lot({first_lot}) {item['axis']} Lot 안 기울기 {item['slope_um_per_die']:+.4f} µm/Die, "
+                    f"r {_fmt(r_value, '+.2f')}")
+            if enough and r_value is not None and abs(r_value) >= DRIFT_MIN_R:
+                status = 'warn'
+                reasons.append(f"{text} > {DRIFT_SLOPE_UM_PER_DIE:g} — 예열(열) 드리프트 의심 — "
+                               "측정 전 워밍업/더미 Lot 권장")
+            else:
+                reasons.append(f"참고: {text} — |r| < {DRIFT_MIN_R:g} 또는 Lot {DRIFT_MIN_LOTS}개 미만이라 판정하지 않음")
+    if status == 'ok':
         reasons.append(f"Lot 평균 폭 X {_fmt(span.get('X'))} / Y {_fmt(span.get('Y'))} µm, 첫 Lot 안 "
-                       f"기울기 기준 {DRIFT_SLOPE_UM_PER_DIE:g} µm/Die 이하")
+                       f"기울기 기준 {DRIFT_SLOPE_UM_PER_DIE:g} µm/Die (|r| ≥ {DRIFT_MIN_R:g}) — 주의 없음")
     if len(lot_means) < 2:
         reasons.append('Lot이 1개라 Lot 평균 흐름은 볼 수 없음')
     return {'status': status, 'reasons': reasons, 'span': span, 'first_lot': first_lot,
@@ -754,34 +915,31 @@ def _drift(raw: list, data: list, lots_order: list, logs: dict, devs: dict,
             'time_basis': 'start' if all(e['start'] for e in lot_means) else 'lot_order'}
 
 
-def _fmt(value, fmt='.3f'):
-    return '—' if value is None else format(value, fmt)
-
-
 def _plane_value(coef: dict, position) -> float:
     """plane_fit의 raw 계수로 Die 위치의 평면 값 (µm). 정하지 않은 기울기는 0."""
     return coef['c'] + (coef['a'] or 0.0) * position[0] + (coef['b'] or 0.0) * position[1]
 
 
-def _transient(raw: list, positions_all: dict) -> dict:
-    """Lot마다 Die4 이후로 평면을 맞춘 잔차의 Lot 평균: Die1·2·3 대 Die4 이후 (µm)."""
+def _transient(groups: dict, lots: list, positions_all: dict) -> dict:
+    """Lot마다 Die4 이후로 평면을 맞춘 잔차의 Lot 평균: Die1·2·3 대 Die4 이후 (µm).
+
+    평면 계수를 둘 다 정할 수 없는 Lot(공선·좌표 퍼짐 부족)은 뺀다. 주의는 Lot 3개 이상에서
+    Die2 |평균| > 0.15 µm이고 |평균|/SE ≥ 3일 때.
+    """
     out = {'status': 'na', 'reasons': []}
-    lots = sorted({r.get('lot_name', '') for r in raw})
     any_value = False
     for axis in AXES:
         resid = {1: [], 2: [], 3: []}
         base = []
         for lot in lots:
             values = {}
-            for r in raw:
-                if (r.get('lot_name') == lot and (r.get('method') or '').upper() == axis
-                        and is_usable(r)):
-                    die = extract_die_number(r.get('site_id', ''))
-                    if die is not None:
-                        values[f'Die{die + 1}'] = r['value'] / 1000.0
+            for r in groups.get((lot, axis), []):
+                die = extract_die_number(r.get('site_id', ''))
+                if die is not None:
+                    values[f'Die{die + 1}'] = r['value'] / 1000.0
             fit_vals = {d: v for d, v in values.items() if int(d[3:]) >= TRANSIENT_FIT_FROM_DIE}
             fit = plane_fit(fit_vals, positions_all) if len(fit_vals) >= TRANSIENT_MIN_DIES else None
-            if not fit:
+            if not fit or (fit.get('dx') is None and fit.get('dy') is None):
                 continue
             base += [v - _plane_value(fit['raw'], positions_all[d])
                      for d, v in fit_vals.items() if d in positions_all]
@@ -790,10 +948,18 @@ def _transient(raw: list, positions_all: dict) -> dict:
                 if d in values and d in positions_all:
                     resid[k].append(values[d] - _plane_value(fit['raw'], positions_all[d]))
         offset = _mean(base) or 0.0
-        out[axis] = {f'die{k}': _round(_mean(resid[k]) - offset, 3) if resid[k] else None
-                     for k in (1, 2, 3)}
-        out[axis]['lots'] = max((len(v) for v in resid.values()), default=0)
-        any_value = any_value or any(out[axis][f'die{k}'] is not None for k in (1, 2, 3))
+        entry, ts = {}, {}
+        for k in (1, 2, 3):
+            mean = _mean(resid[k])
+            value = mean - offset if mean is not None else None
+            std = _std(resid[k])
+            se = std / math.sqrt(len(resid[k])) if std else None
+            entry[f'die{k}'] = _round(value, 3)
+            ts[f'die{k}'] = _round(value / se, 2) if value is not None and se else None
+        entry['t'] = ts
+        entry['lots'] = max((len(v) for v in resid.values()), default=0)
+        out[axis] = entry
+        any_value = any_value or any(entry[f'die{k}'] is not None for k in (1, 2, 3))
     if not any_value:
         out['reasons'].append(f'Die {TRANSIENT_MIN_DIES}개 이상(Die{TRANSIENT_FIT_FROM_DIE} 이후)으로 평면을 '
                               '맞출 수 없어 계산하지 않음')
@@ -801,15 +967,20 @@ def _transient(raw: list, positions_all: dict) -> dict:
     out['status'] = 'ok'
     for axis in AXES:
         d = out[axis]
-        if d.get('die2') is not None and abs(d['die2']) > TRANSIENT_DIE2_UM:
+        die2, t2 = d.get('die2'), d['t'].get('die2')
+        if die2 is None or abs(die2) <= TRANSIENT_DIE2_UM:
+            continue
+        text = (f"{axis} Die2 잔차 {die2:+.3f} µm > {TRANSIENT_DIE2_UM:g} µm (t {_fmt(t2, '+.1f')}, "
+                f"Lot {d['lots']}개; Die1 {_fmt(d['die1'], '+.3f')}, Die3 {_fmt(d['die3'], '+.3f')})")
+        if d['lots'] >= TRANSIENT_MIN_LOTS and t2 is not None and abs(t2) >= MIN_T:
             out['status'] = 'warn'
-            out['reasons'].append(
-                f"{axis} Die2 잔차 {d['die2']:+.3f} µm > {TRANSIENT_DIE2_UM:g} µm (Die1 {_fmt(d['die1'], '+.3f')}, "
-                f"Die3 {_fmt(d['die3'], '+.3f')}) — Lot 시작 직후 과도 응답이 판정 대상 Die2에 남음")
+            out['reasons'].append(text + ' — Lot 시작 직후 과도 응답이 판정 대상 Die2에 남음')
+        else:
+            out['reasons'].append(f'참고: {text} — Lot {TRANSIENT_MIN_LOTS}개 이상·|t| ≥ {MIN_T:g}가 아니라 판정하지 않음')
     if out['status'] == 'ok':
         out['reasons'].append(
             f"Die2 잔차 X {_fmt(out['X'].get('die2'), '+.3f')} / Y {_fmt(out['Y'].get('die2'), '+.3f')} µm — "
-            f"{TRANSIENT_DIE2_UM:g} µm 이하")
+            f"주의 없음 (기준 {TRANSIENT_DIE2_UM:g} µm, |t| ≥ {MIN_T:g})")
     return out
 
 
@@ -832,10 +1003,14 @@ def _die_field(raw: list, devs: dict, positions: dict) -> list:
 
 
 def _positioning_summary(poslog: dict) -> Optional[dict]:
-    """Positioning Log 분석에서 판정 문장, 단계 θ, 최종 값을 옮긴다. 분석이 없으면 None."""
+    """Positioning Log 분석에서 판정 문장, 단계 θ, 최종 값을 옮긴다. 분석이 없으면 None.
+
+    judged: 최종 착지가 Die MIN_DIES개 이상이라 judge가 판정한 분석인가 (아니면 '비전 정렬 이후'의
+    근거가 아니다).
+    """
     if not isinstance(poslog, dict):
         return None
-    out = {'status': poslog.get('status'), 'message': poslog.get('message', ''),
+    out = {'status': poslog.get('status'), 'message': poslog.get('message', ''), 'judged': False,
            'verdict_lines': [], 'stages': [], 'final': None, 'terms': []}
     mean = poslog.get('mean')
     if not mean:
@@ -846,6 +1021,7 @@ def _positioning_summary(poslog: dict) -> Optional[dict]:
                      't': _round(t['t'], 2), 'carriers': list(t.get('carriers') or []),
                      'same_sign': [d.get('same_sign') for d in t.get('details') or []],
                      'span': t.get('span')} for t in verdict.get('terms') or []]
+    final_k = 0
     for row in mean.get('stages') or []:
         name = 'θx' if row['axis'] == 'X' else 'θy'
         coef = (row.get('coef') or {}).get(name)
@@ -854,10 +1030,12 @@ def _positioning_summary(poslog: dict) -> Optional[dict]:
                 'theta': _round(coef['value'], 3) if coef else None,
                 't': _round(coef['t'], 2) if coef else None}
         if row['stage'] == 'final':
+            final_k = max(final_k, row.get('k') or 0)
             if row['axis'] == 'X':
                 out['final'] = {'axis': 'X', 'theta': item['theta'], 't': item['t']}
         else:
             out['stages'].append(item)
+    out['judged'] = final_k >= MIN_DIES
     return out
 
 
@@ -866,8 +1044,7 @@ def rotation_test_text(rotation_test) -> str:
     rt = rotation_test if isinstance(rotation_test, dict) else None
     if not rt:
         return ''
-    kappa = rt.get('kappa')
-    return (f"스캐너 회전 시험 κ {_fmt(kappa if _finite(kappa) else None, '.3f')} µrad/µm — "
+    return (f"스캐너 회전 시험 κ {_fmt(rt.get('kappa'), '.3f')} µrad/µm — "
             f"{rt.get('status') or 'na'} ({rt.get('stage') or '단계 —'}, {rt.get('date') or '날짜 —'}, "
             f"{rt.get('loop') or '루프 —'}·{rt.get('axis') or '축 —'}, 잠정 규격)")
 
@@ -896,56 +1073,62 @@ def _part(pid, verdict, reason):
     return {'id': pid, 'name': PART_NAMES[pid], 'verdict': verdict, 'reason': reason}
 
 
+def _scanner_part(axis: str, shape: dict, drive, poslog_summary, spec: dict) -> tuple:
+    """스캐너 구동 부품 판정 (X 라인 → xy_scanner_y, Y 라인 → xy_scanner_x). PART_RULES 첫 항목."""
+    term, drive_name = ('θx', 'X 라인 스캐너 Y') if axis == 'X' else ('θy', 'Y 라인 스캐너 X')
+    theta, t, k = shape.get('theta'), shape.get('theta_t'), shape.get('k')
+    level = _status_from_theta(theta, t, k, spec)
+    if level == 'na':
+        return 'na', f'{term}를 정할 수 없음 (Die 좌표·데이터 부족)'
+    head = f"{term} {theta:+.2f} µrad (t {_fmt(t, '+.1f')}, Die {k})"
+    drive_text = f"{drive_name} {drive:+.1f} µm" if drive is not None else f"{drive_name} 모름"
+    if level == 'ok':
+        return 'ok', f"{head} — 유의하지 않거나 {spec['theta_warn']:g} µrad 미만, {drive_text}"
+    head += f" ≥ {spec['theta_warn' if level == 'warn' else 'theta_max']:g} µrad"
+    if drive is None:
+        return 'warn', f"{head}, {drive_text} (Log 없음) — 스캐너 구동을 몰라 원인으로 단정 불가"
+    if abs(drive) < MIN_DRIVE_FOR_ATTRIBUTION_UM:
+        return 'na', (f"{head}이지만 {drive_text} (< {MIN_DRIVE_FOR_ATTRIBUTION_UM:g} µm) — "
+                      f"{SMALL_DRIVE_TEXT}")
+    summary = poslog_summary or {}
+    if not summary.get('judged'):
+        return 'warn', f"{head}, {drive_text} — {NO_POSLOG_TEXT}"
+    terms = {(x['axis'], x['term']): x for x in summary.get('terms') or []}
+    found = terms.get((axis, term))
+    if found is None:
+        return 'warn', (f"{head}, {drive_text} — Positioning Log 판정에 이 성분이 없음 (로그 쪽에서 유의하지 않음) — "
+                        '확정 불가')
+    if not found['carriers']:
+        return level, (f"{head}, {drive_text}, Positioning Log: 비전 로그 단계에 같은 성분 없음 → "
+                       '비전 정렬 이후')
+    where = STAGE_LABEL.get(found['carriers'][0], found['carriers'][0])
+    if abs(drive) > spec['offset_max']:
+        return 'warn', f"{head}, Positioning Log: {where} 단계에도 같은 성분, 그러나 {drive_text} > {spec['offset_max']:g} µm"
+    return 'ok', f"{head}이지만 Positioning Log: {where} 단계에 같은 성분 (스캐너 구동이 아닌 쪽)"
+
+
 def _parts(has_data: bool, shapes: dict, rotation: dict, poslog_summary, drift: dict,
-           transient: dict, spec: dict, rotation_test: dict = None):
-    """부품별 판정 (PART_RULES). (parts, 판정 근거 dict)."""
+           transient: dict, spec: dict, rotation_test: dict = None, offsets: dict = None):
+    """부품별 판정 (PART_RULES). (parts, 판정 근거 dict).
+
+    shapes는 반올림하지 않은 axis_shape 결과 (θ, t, k). 구동 오프셋은 offsets(_line_offsets)에서,
+    없으면 rotation의 scanner_y·y_line.scanner_x에서 읽는다.
+    """
     if not has_data:
         parts = {pid: ('na', '데이터 없음') for pid in PART_IDS}
         _apply_rotation_test(parts, rotation_test)
         return [_part(pid, *parts[pid]) for pid in PART_IDS], parts
-    limit = spec['offset_max']
+    if offsets is not None:
+        drives = {axis: _drive(offsets, axis) for axis in AXES}
+    else:
+        drives = {'X': rotation.get('scanner_y'), 'Y': (rotation.get('y_line') or {}).get('scanner_x')}
+        drives = {axis: (v if _finite(v) else None) for axis, v in drives.items()}
     has_poslog = bool(poslog_summary and poslog_summary.get('stages'))
     terms = {(t['axis'], t['term']): t for t in (poslog_summary or {}).get('terms') or []}
-
-    def after_alignment(axis, term):
-        if not has_poslog:
-            return True, '비전 보정 로그 대조 없음'
-        t = terms.get((axis, term))
-        if t is None or not t['carriers']:
-            return True, 'Positioning Log: 비전 로그 단계에 같은 성분 없음 → 비전 정렬 이후'
-        return False, f"Positioning Log: {STAGE_LABEL.get(t['carriers'][0], t['carriers'][0])} 단계에 같은 성분"
-
-    def scanner_part(axis, term, line, drive_key, drive_name):
-        theta, t = shapes[axis].get('theta'), shapes[axis].get('theta_t')
-        level = _status_from_theta(theta, t, spec)
-        if level == 'na':
-            return 'na', f'{term}를 정할 수 없음 (Die 좌표·데이터 부족)'
-        drive = line.get(drive_key)
-        located, where = after_alignment(axis, term)
-        big = _finite(drive) and abs(drive) > limit
-        head = f"{term} {theta:+.2f} µrad (t {_fmt(t, '+.1f')})"
-        if level == 'ok':
-            return 'ok', (f"{head} — 유의하지 않거나 {spec['theta_warn']:g} µrad 미만"
-                          + (f", {drive_name} {drive:+.1f} µm" if _finite(drive) else ''))
-        cause = []
-        if located:
-            cause.append(where)
-        if big:
-            cause.append(f"{drive_name} 적용값 {drive:+.1f} µm > {limit:g} µm")
-        if not cause:
-            return 'ok', f"{head}이지만 {where} (스캐너 구동이 아닌 쪽)"
-        return level, f"{head} ≥ {spec['theta_warn' if level == 'warn' else 'theta_max']:g} µrad, " + \
-            ', '.join(cause)
-
-    parts = {}
-    v, why = scanner_part('X', 'θx', rotation, 'scanner_y', 'X 라인 스캐너 Y')
-    parts['xy_scanner_y'] = (v, why)
+    parts = {'xy_scanner_y': _scanner_part('X', shapes['X'], drives['X'], poslog_summary, spec)}
     _apply_rotation_test(parts, rotation_test)      # 폐루프 회전 시험은 직접 증거 (척 판정보다 먼저)
-    v, why = scanner_part('Y', 'θy', rotation.get('y_line') or {}, 'scanner_x', 'Y 라인 스캐너 X')
-    if v in ('warn', 'fail'):
-        parts['xy_scanner_x'] = (v, why)
-    else:
-        parts['xy_scanner_x'] = ('ok' if v != 'na' else 'na', f'Y 라인에 같은 모양 없음 — {why}')
+    v, why = _scanner_part('Y', shapes['Y'], drives['Y'], poslog_summary, spec)
+    parts['xy_scanner_x'] = (v, why) if v in ('warn', 'fail') else (v, f'Y 라인에 같은 모양 없음 — {why}')
     if parts['xy_scanner_y'][0] in ('warn', 'fail'):
         parts['chuck'] = ('warn', '스캐너 Y 구동 때 웨이퍼가 돈다 — 데이터로는 스캐너와 척(웨이퍼 고정)을 '
                                   '나눌 수 없음')
@@ -967,7 +1150,7 @@ def _parts(has_data: bool, shapes: dict, rotation: dict, poslog_summary, drift: 
                              + ('' if same else ' (반대 부호 — 부호 정의·보정 과다 확인)')))
     for part in ('vision', 'xy_stage'):
         if not has_poslog:
-            parts[part] = ('na', '비전 보정 로그 대조 없음 (Positioning Log 탭에서 읽으면 판단)')
+            parts[part] = ('na', '비전 보정 로그 대조 없음 (Diagnosis·Positioning Log 탭에서 읽으면 판단)')
         elif vision[part]:
             parts[part] = (_worst(*(x[0] for x in vision[part])), '; '.join(x[1] for x in vision[part]))
         else:
@@ -992,24 +1175,33 @@ def _actions(parts: dict, rotation: dict, offsets: dict, whatif: dict, drift: di
     rows = whatif.get('rows') or []
     current = next((r for r in rows if r['current']), None)
     best = next((r for r in rows if r.get('recommended')), None)
+    drive = _drive(offsets, 'X')
     if scanner in ('warn', 'fail'):
-        if best and current and not best['current']:
+        if drive is None:
+            actions.append('Log/<Sample>_Log.csv로 X 라인 스캐너 Y 오프셋 확인 — 회전 원인 판단에 필요')
+        elif abs(drive) < MIN_DRIVE_FOR_ACTION_UM:
+            pass        # 거의 구동하지 않았다: 오프셋을 줄여도 달라지지 않는다
+        elif best is not None and best['current']:
+            label = (f"레시피 Y Offset {best['recipe_y']:g} µm" if best['recipe_y'] is not None
+                     else f"스캐너 Y 적용값 {best['scanner_y']:+.1f} µm")
+            actions.append(f"X 라인 {label} 유지 (예측 모든 Lot PASS) — 남은 θx {_fmt(rotation.get('theta'), '+.2f')} "
+                           "µrad는 스캐너 회전 시험으로 확인")
+        elif best is not None and current is not None:
             pass_text = (f", PASS {best['pass_lots']}/{best['lots']} Lot" if best['pass_lots'] is not None
                          else '')
-            actions.append(f"X 라인 레시피 Y Offset을 줄이세요 (예: {current['recipe_y']:g} → {best['recipe_y']:g} µm, "
-                           f"예측 Range {best['range_mean']:.2f} µm·StdDev {best['std_mean']:.3f} µm (Lot 평균)"
-                           f"{pass_text}, θx {best['theta']:+.2f} µrad, 선형 가정)")
-        elif best and best['current']:
-            actions.append(f"X 라인 레시피 Y Offset {best['recipe_y']:g} µm 유지 — 남은 θx {rotation.get('theta'):+.2f} "
-                           "µrad는 스캐너 회전 계수 측정으로 확인")
-        elif whatif.get('basis') == 'scanner_y' and _finite(rotation.get('scanner_y')):
-            actions.append(f"X 라인 스캐너 Y 적용값({rotation['scanner_y']:+.1f} µm)을 줄이세요 — "
-                           f"{NO_REF_TEXT}. 레시피 Y Offset을 같은 양만큼 바꾸면 됨")
-        else:
-            actions.append('X 라인 레시피 Y Offset을 줄이세요 (스캐너 Y 구동이 웨이퍼를 돌림)')
+            actions.append(f"X 라인 레시피 Y Offset을 줄이세요 (예: {_fmt(current['recipe_y'], 'g')} → "
+                           f"{_fmt(best['recipe_y'], 'g')} µm, 예측 Range {_fmt(best['range_mean'], '.2f')} µm·"
+                           f"StdDev {_fmt(best['std_mean'], '.3f')} µm (Lot 평균){pass_text}, "
+                           f"θx {_fmt(best['theta'], '+.2f')} µrad, 선형 가정)")
+        elif whatif.get('basis') == 'scanner_y':
+            actions.append(f"X 라인 스캐너 Y 적용값({drive:+.1f} µm)을 줄이세요 — {NO_REF_TEXT}. "
+                           '레시피 Y Offset을 같은 양만큼 바꾸면 됨')
+        elif rows:
+            actions.append('X 라인 레시피 Y Offset을 줄이세요 — what-if에서 꼭짓점 여유(5 µm)를 지키며 모든 Lot '
+                           'PASS인 후보가 없음, 다른 원인도 확인')
     kappa = rotation.get('kappa_eff')
     if scanner in ('warn', 'fail') or (kappa is not None and kappa >= spec['kappa_warn']
-                                       and _significant(rotation.get('theta'), rotation.get('theta_t'))):
+                                       and rotation.get('significant')):
         if _rotation_test_evidence(rotation_test):
             actions.append(f'{rotation_test_text(rotation_test)} — 스캐너(Y 구동) 교체·선형화 검토 뒤 '
                            '폐루프 2지점 스윕으로 재시험')
@@ -1023,17 +1215,18 @@ def _actions(parts: dict, rotation: dict, offsets: dict, whatif: dict, drift: di
         verdict, reason = parts.get(part, ('ok', ''))
         if verdict in ('warn', 'fail'):
             actions.append(f"{PART_NAMES[part]} 점검 — {reason}")
-    if parts.get('xy_scanner_x', ('ok',))[0] in ('warn', 'fail'):
+    y_drive = _drive(offsets, 'Y')
+    if parts.get('xy_scanner_x', ('ok',))[0] in ('warn', 'fail') and y_drive is not None \
+            and abs(y_drive) >= MIN_DRIVE_FOR_ACTION_UM:
         actions.append('Y 라인 레시피 X Offset을 줄이세요 (Y 라인에도 스캐너 구동 회전)')
     if drift.get('status') == 'warn':
         actions.append('측정 전 워밍업 (또는 더미 Lot 1개 측정 뒤 본 측정) — 예열(열) 드리프트')
     if transient.get('status') == 'warn':
         actions.append('Lot 시작 직후 대기 (Tip Positioning·Z 이동 뒤 약 1분) 또는 안정화 Die 추가 검토 — '
                        'Die2 과도 응답')
-    y_applied = (offsets.get('Y_line') or {}).get('applied')
-    if y_applied and _finite(y_applied[0]) and abs(y_applied[0]) > spec['offset_max'] \
-            and parts.get('xy_scanner_x', ('ok',))[0] == 'ok':
-        actions.append(f"(참고) Y 라인 스캐너 X 적용값 {y_applied[0]:+.1f} µm — 줄일 수 있으면 줄이세요 "
+    if y_drive is not None and abs(y_drive) > spec['offset_max'] \
+            and parts.get('xy_scanner_x', ('ok',))[0] not in ('warn', 'fail'):
+        actions.append(f"(참고) Y 라인 스캐너 X 적용값 {y_drive:+.1f} µm — 줄일 수 있으면 줄이세요 "
                        '(기준 장비에서 X 구동 회전은 없었음)')
     if not actions:
         actions.append('특이 사항 없음 — 현재 조건 유지')
@@ -1084,18 +1277,21 @@ class XYDiagnosis:
 
 def build_diagnosis(result: dict, logs: dict = None, spec_deviation: dict = None,
                     rotation_spec: dict = None, poslog: dict = None, app_version: str = '',
-                    generated: str = None, rotation_test: dict = None) -> XYDiagnosis:
+                    generated: str = None, rotation_test: dict = None,
+                    rotation_test_tool: str = None, tool_root: str = None) -> XYDiagnosis:
     """회차 결과 하나의 진단 (계산만, 파일을 읽지 않는다).
 
     logs: read_run_logs 결과 (없으면 result['xy_logs'], 그것도 없으면 오프셋은 모름)
     poslog: Positioning Log 분석 (없으면 result['positioning_log'], 그것도 없으면 null)
     rotation_test: 스캐너 회전 시험 결과 (설계의 rotation_test 형식, 회차가 아니라 장비의 것). 사본을
-        담고, 폐루프·Y 축의 warn·fail은 xy_scanner_y 판정에 쓴다
+        담고, 폐루프·Y 축의 warn·fail은 xy_scanner_y 판정에 쓴다. rotation_test_tool(시험을 받은 장비의
+        tool_id)이 이 진단의 tool_id와 다르면 붙이지 않는다 ('다른 장비의 시험 결과 — 적용 안 함').
+    tool_root: tool_id를 Log에서 못 찾을 때 쓸 데이터 폴더 (화면이 연 폴더)
     """
     result = result or {}
     logs = logs if logs is not None else result.get('xy_logs')
     poslog = poslog if poslog is not None else result.get('positioning_log')
-    spec_rot = {**DEFAULT_ROTATION_SPEC, **(rotation_spec or {})}
+    spec_rot = _rotation_spec({'rotation_spec': rotation_spec}) if rotation_spec else dict(DEFAULT_ROTATION_SPEC)
     name = result.get('short_name') or result.get('recipe', '')
     ds = (spec_deviation or {}).get(name, {})
     spec_range, spec_stddev = ds.get('spec_range'), ds.get('spec_stddev')
@@ -1104,31 +1300,38 @@ def build_diagnosis(result: dict, logs: dict = None, spec_deviation: dict = None
     diag = XYDiagnosis(generated=generated or datetime.now().isoformat(timespec='seconds'),
                        app_version=app_version)
     diag.spec = {'range': spec_range, 'stddev': spec_stddev, **spec_rot}
-    rotation_test = copy.deepcopy(rotation_test) if isinstance(rotation_test, dict) else None
-    diag.rotation_test = rotation_test
     lots_order = [n for n, _csv in _lot_order(raw)]
     log_lots = (logs or {}).get('lots') or []
     starts = [lot['start'] for lot in log_lots if isinstance(lot.get('start'), datetime)]
     ends = [lot['end'] for lot in log_lots if isinstance(lot.get('end'), datetime)]
     first = next((lot for lot in log_lots if lot.get('recipe_id') or lot.get('sample')), {})
+    tool_id, tool_basis = tool_identity(result, logs, tool_root)
     diag.source = {'root': result.get('round_path') or result.get('source_path') or '',
                    'workflow': name, 'run': result.get('round', ''), 'lots': len(lots_order),
                    'dies': len({extract_die_number(r.get('site_id', '')) for r in data} - {None}),
                    'recipe_id': first.get('recipe_id') or None, 'sample': first.get('sample') or None,
                    'start': _iso(min(starts)) if starts else None,
                    'end': _iso(max(ends)) if ends else None,
+                   'tool_id': tool_id, 'tool_id_basis': tool_basis,
                    'log_status': (logs or {}).get('status'), 'log_message': (logs or {}).get('message', '')}
     warnings = []
+    rotation_test = copy.deepcopy(rotation_test) if isinstance(rotation_test, dict) else None
+    if rotation_test is not None and rotation_test_tool is not None and rotation_test_tool != tool_id:
+        rotation_test = None
+        diag.source['rotation_test_note'] = OTHER_TOOL_TEXT
+        warnings.append(f'스캐너 회전 시험: {OTHER_TOOL_TEXT}')
+    diag.rotation_test = rotation_test
     if not data:
         diag.verdict = {axis: {'range': None, 'stddev': None, 'pass': None} for axis in AXES}
         diag.parts, _ = _parts(False, {}, {}, None, {}, {}, spec_rot, rotation_test)
         diag.actions = ['데이터가 없어 진단하지 않음']
-        diag.warnings = ['분석할 데이터가 없음']
+        diag.warnings = warnings + ['분석할 데이터가 없음']
         return diag
 
     devs = {axis: compute_deviation_matrix(data, axis) for axis in AXES}
     positions = _positions(data)
     positions_all = _positions(raw)
+    groups = _rows_by_lot_axis(raw)
     diag.verdict = {}
     for axis in AXES:
         m = compute_axis_metrics(data, axis, name, None, spec_deviation)
@@ -1174,16 +1377,19 @@ def build_diagnosis(result: dict, logs: dict = None, spec_deviation: dict = None
     rotation['reasons'] = rotation['reasons'] + check['reasons']
     if rotation_test:
         rotation['reasons'].append(rotation_test_text(rotation_test))
+    rotation['kappa_two_point'] = _kappa_two_point(result, logs, shapes['X'])
     rotation['rule'] = ROTATION_RULE
     diag.rotation = rotation
 
     diag.positioning_log = _positioning_summary(poslog)
-    diag.drift = _drift(raw, data, lots_order, logs, devs, positions)
-    diag.transient = _transient(raw, positions_all)
+    diag.drift = _drift(groups, data, lots_order, logs, devs, positions)
+    diag.transient = _transient(groups, lots_order, positions_all)
     diag.die_field = _die_field(raw, devs, positions)
-    diag.whatif = _whatif(rotation, offsets, _lot_matrix(devs['X']), positions, spec_range, spec_stddev)
+    recipe = (offsets.get('X_line') or {}).get('recipe')
+    diag.whatif = _whatif(shapes['X'], _drive(offsets, 'X'), recipe[1] if recipe else None,
+                          _lot_matrix(devs['X']), positions, spec_range, spec_stddev)
     parts, part_map = _parts(True, shapes, rotation, diag.positioning_log, diag.drift,
-                             diag.transient, spec_rot, rotation_test)
+                             diag.transient, spec_rot, rotation_test, offsets)
     diag.parts = parts
     diag.actions = _actions(part_map, rotation, offsets, diag.whatif, diag.drift, diag.transient,
                             spec_rot, rotation_test)
@@ -1193,17 +1399,20 @@ def build_diagnosis(result: dict, logs: dict = None, spec_deviation: dict = None
 
 def diagnose(result: dict, spec_deviation: dict = None, rotation_spec: dict = None,
              session=None, workers: int = LOT_LOAD_WORKERS, app_version: str = '',
-             generated: str = None, rotation_test: dict = None) -> XYDiagnosis:
+             generated: str = None, rotation_test: dict = None,
+             rotation_test_tool: str = None) -> XYDiagnosis:
     """[작업 스레드] 담긴 Log가 없으면 읽고 진단한다 (결과를 바꾸지 않는다). 내보내기·명령줄용."""
     logs = result.get('xy_logs')
     if not isinstance(logs, dict):
         logs = read_run_logs(result, session, workers)
     return build_diagnosis(result, logs, spec_deviation, rotation_spec, app_version=app_version,
-                           generated=generated, rotation_test=rotation_test)
+                           generated=generated, rotation_test=rotation_test,
+                           rotation_test_tool=rotation_test_tool)
 
 
 __all__ = ['SCHEMA', 'PART_IDS', 'PART_NAMES', 'PART_RULES', 'ROTATION_RULE', 'XYDiagnosis',
            'axis_shape', 'build_diagnosis', 'diagnose', 'has_read_error', 'parse_log_events',
            'parse_scanner_offsets', 'predict_whatif', 'read_lot_log', 'read_run_logs',
-           'rotation_test_text', 'store_logs',
-           'NO_LOG_TEXT', 'NO_REF_TEXT', 'READ_FAIL_TEXT', 'WHATIF_RECIPES_Y']
+           'rotation_test_text', 'store_logs', 'tool_identity',
+           'NO_LOG_TEXT', 'NO_POSLOG_TEXT', 'NO_REF_TEXT', 'OTHER_TOOL_TEXT', 'READ_FAIL_TEXT',
+           'SMALL_DRIVE_TEXT', 'WHATIF_RECIPES_Y']

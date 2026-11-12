@@ -20,8 +20,15 @@ pass.xy.diagnosis/1). 아직 계산하지 않았거나 데이터가 없으면 No
 (회전 시험 결과는 'rotation_test' 칸).
 
 스캐너 회전 시험: 시험 대화상자가 set_rotation_test(결과 dict, 설계의 rotation_test 형식)를 부른다.
-사본을 self._rotation_test_result에 둔다. 회차가 아니라 장비의 것이라 회차를 바꿔도 지우지 않고, 진단을 계산할
-때마다 'rotation_test' 칸에 넣는다 (폐루프·Y 축 warn·fail은 xy_scanner_y의 직접 증거, PART_RULES).
+사본을 self._rotation_test_result에, 그때 보이던 진단의 장비(source.tool_id — Log의 Tool ID, 없으면 연 폴더)를
+self._rotation_test_tool에 둔다. 회차가 아니라 장비의 것이라 회차를 바꿔도 지우지 않고, 같은 장비의 진단을
+계산할 때마다 'rotation_test' 칸에 넣는다 (폐루프·Y 축 warn·fail은 xy_scanner_y의 직접 증거, PART_RULES).
+다른 장비의 진단에는 넣지 않고 '다른 장비의 시험 결과 — 적용 안 함'을 보인다. 진단이 없을 때 받은 결과는
+다음에 계산하는 진단의 장비에 묶는다.
+
+이 탭이 보이면 그 회차의 Positioning Log 분석(positioning_controller의 읽기)도 시작한다. 끝나면
+_refresh_diagnosis로 다시 계산해 vision·xy_stage와 스캐너 판정이 그 분석을 쓴다. AI 분석용 리포트도 같은
+분석(담긴 것, 없으면 내보내기 스레드에서 계산)을 쓴다.
 """
 import copy
 import itertools
@@ -37,10 +44,12 @@ from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel, QM
                                QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
+from core.csv_loader import ScanSession
 from core.positioning_log import run_key
 from core.settings import rotation_spec
-from core.xy_diagnosis import (NO_LOG_TEXT, PART_RULES, ROTATION_RULE, build_diagnosis,
-                               read_run_logs, rotation_test_text, store_logs)
+from core.xy_diagnosis import (NO_LOG_TEXT, OTHER_TOOL_TEXT, PART_RULES, ROTATION_RULE,
+                               build_diagnosis, read_run_logs, rotation_test_text, store_logs,
+                               tool_identity)
 from ui.theme import BG, BG3, FG, FG2, GREEN, ORANGE, RED
 from ui.widgets.chart_widget import ChartWidget
 from ui.widgets.flow_layout import FlowLayout
@@ -65,10 +74,11 @@ class _DiagnosisBridge(QObject):
     done = Signal(object, object, object)      # (회차 결과 dict, Log dict, (결과 세대, 읽기 번호))
 
 
-def read_diagnosis_logs(result, bridge, meta):
-    """[작업 스레드] 회차 결과 하나의 Lot Log를 읽고 bridge로 알린다 (Qt 위젯을 만지지 않는다)."""
+def read_diagnosis_logs(result, bridge, meta, session=None):
+    """[작업 스레드] 회차 결과 하나의 Lot Log를 읽고 bridge로 알린다 (Qt 위젯을 만지지 않는다).
+    session을 중지하면(창 닫기) 남은 Lot은 읽지 않는다."""
     try:
-        logs = read_run_logs(result)
+        logs = read_run_logs(result, session)
     except Exception as e:
         logs = {'status': 'error', 'message': f'Log 읽기 실패 ({type(e).__name__}: {e})', 'lots': []}
     try:
@@ -78,7 +88,7 @@ def read_diagnosis_logs(result, bridge, meta):
 
 
 def _fmt(value, fmt='.3f'):
-    return '—' if value is None else format(value, fmt)
+    return '—' if not isinstance(value, (int, float)) or isinstance(value, bool) else format(value, fmt)
 
 
 def _item(text, tooltip=''):
@@ -107,6 +117,8 @@ class DiagnosisMixin:
     _diag_obj = None            # 그려 둔 XYDiagnosis
     _diag_logs = None           # 그 진단에 쓴 Log (회전 시험 결과가 오면 다시 계산)
     _rotation_test_result = None    # 스캐너 회전 시험 결과 사본 (장비의 것, 회차와 무관)
+    _rotation_test_tool = None      # 그 결과를 받은 장비 (tool_id). None이면 다음 진단의 장비에 묶는다
+    _diag_sessions = None           # 읽는 중인 Log 읽기의 ScanSession (창을 닫으면 중지)
     _xy_diagnosis = None        # 지금 탭에 보이는 진단 dict (pass.xy.diagnosis/1) — 모듈 설명 참고
     _diag_chart_pending = False
     _diag_reading = None        # 읽는 중인 (회차 키, 결과 세대, 읽기 번호) — 한 세대에 하나
@@ -215,12 +227,21 @@ class DiagnosisMixin:
                 json.dumps(spec, sort_keys=True), json.dumps(rotation_spec(self.settings), sort_keys=True),
                 getattr(self, '_data_generation', 0))
 
+    def _tool_root(self):
+        """Log에 Tool ID가 없을 때 장비를 가리는 폴더: 사용자가 연(스캔한) 폴더."""
+        return getattr(self, '_scanned_folder', '') or None
+
     def _compute_diagnosis(self, result, logs, key):
         from core.version import APP_VERSION
         try:
+            if self._rotation_test_result is not None and self._rotation_test_tool is None:
+                # 진단이 없을 때 받은 시험 결과: 처음 진단하는 장비에 묶는다
+                self._rotation_test_tool = tool_identity(result, logs, self._tool_root())[0]
             diag = build_diagnosis(result, logs, self.settings.get('spec_deviation', {}),
                                    rotation_spec(self.settings), app_version=APP_VERSION,
-                                   rotation_test=copy.deepcopy(self._rotation_test_result))
+                                   rotation_test=copy.deepcopy(self._rotation_test_result),
+                                   rotation_test_tool=self._rotation_test_tool,
+                                   tool_root=self._tool_root())
         except Exception as e:
             self.logger.error(f"트러블슈팅 진단 오류: {type(e).__name__}: {e}")
             self._show_diag_message(f'진단 실패 ({type(e).__name__}: {e})')
@@ -234,19 +255,13 @@ class DiagnosisMixin:
     def set_rotation_test(self, data):
         """스캐너 회전 시험 대화상자가 부른다 (data: rotation_test 형식 dict, None이면 지움).
 
-        사본을 담고, 보이는 진단이 있으면 그 결과로 다시 계산해(부품 판정 포함) JSON·화면에 넣는다.
-        회차를 바꿔도 지우지 않는다 — 시험 결과는 장비의 것이다.
+        사본과 그때 보이던 진단의 장비(tool_id)를 담고, 보이는 진단이 있으면 그 결과로 다시 계산해
+        (부품 판정 포함) JSON·화면에 넣는다. 회차를 바꿔도 지우지 않는다 — 시험 결과는 장비의 것이다.
         """
         self._rotation_test_result = copy.deepcopy(data) if isinstance(data, dict) else None
-        if self._diag_obj is None:
-            return      # 아직 진단이 없다. 다음 계산 때 들어간다
-        if self._diag_result is not None and self._diag_key is not None:
+        self._rotation_test_tool = ((self._xy_diagnosis or {}).get('source') or {}).get('tool_id')
+        if self._diag_obj is not None and self._diag_result is not None:
             self._compute_diagnosis(self._diag_result, self._diag_logs, self._diag_key)
-        else:
-            self._diag_obj.rotation_test = copy.deepcopy(self._rotation_test_result)
-            self._xy_diagnosis = self._diag_obj.to_dict()
-            if self._diagnosis_tab_visible():
-                self._render_diagnosis(self._xy_diagnosis)
 
     def _start_diagnosis_read(self):
         """보이는 회차의 Log를 작업 스레드로 읽는다. 탭이 보일 때만, 한 세대에 하나만."""
@@ -264,11 +279,21 @@ class DiagnosisMixin:
         token = next(self._diag_tokens)
         self._diag_reading = (run_key(result), generation, token)
         self.diag_label.setText(READING_TEXT)
+        session = ScanSession()
+        if self._diag_sessions is None:
+            self._diag_sessions = {}
+        self._diag_sessions[token] = session
         threading.Thread(target=read_diagnosis_logs, name='xydiag-read', daemon=True,
-                         args=(result, self._diag_bridge, (generation, token))).start()
+                         args=(result, self._diag_bridge, (generation, token), session)).start()
+
+    def _cancel_diagnosis_reads(self):
+        """창을 닫을 때: 읽는 중인 Log 읽기를 중지한다 (남은 Lot은 읽지 않는다)."""
+        for session in list((self._diag_sessions or {}).values()):
+            session.cancel()
 
     def _on_diagnosis_logs(self, result, logs, meta):
         generation, token = meta
+        (self._diag_sessions or {}).pop(token, None)
         if self._diag_reading is not None and self._diag_reading[2] == token:
             self._diag_reading = None
         if generation != getattr(self, '_data_generation', 0):
@@ -359,7 +384,12 @@ class DiagnosisMixin:
             self._set_chip(self._diag_chips[key], f"{title} — {VERDICT_TEXT.get(part.get('status'), '—')}",
                            part.get('status', 'na'), '\n'.join(part.get('reasons') or []))
         rt = d.get('rotation_test')
-        if isinstance(rt, dict):
+        if not isinstance(rt, dict) and source.get('rotation_test_note'):
+            self._set_chip(self._diag_chips['rotation_test'],
+                           f"스캐너 회전 시험 — {OTHER_TOOL_TEXT} (잠정 규격)", 'na',
+                           f"{rotation_test_text(self._rotation_test_result)}\n시험 장비: "
+                           f"{self._rotation_test_tool or '—'}\n이 진단의 장비: {source.get('tool_id') or '—'}")
+        elif isinstance(rt, dict):
             kappa = rt.get('kappa')
             text = (f"스캐너 회전 시험 κ {_fmt(kappa, '.3f') if isinstance(kappa, (int, float)) else '—'} "
                     f"µrad/µm — {VERDICT_TEXT.get(rt.get('status'), rt.get('status') or '—')} · "
@@ -448,9 +478,14 @@ class DiagnosisMixin:
                 and tabs.tabText(tabs.currentIndex()) == DIAGNOSIS_TAB)
 
     def _flush_diagnosis(self, *_args):
-        """탭이 보일 때: 읽지 않은 회차의 Log를 읽기 시작하고, 진단을 계산하고, 미뤄 둔 차트를 그린다."""
+        """탭이 보일 때: 읽지 않은 회차의 Log와 Positioning Log 분석을 읽기 시작하고, 진단을 계산하고,
+        미뤄 둔 차트를 그린다. Positioning Log 읽기는 positioning_controller의 것을 그대로 쓴다
+        (같은 세대 확인·화면 스레드 넘김, 끝나면 _refresh_diagnosis)."""
         if not self._diagnosis_tab_visible():
             return
+        start_positioning = getattr(self, '_start_positioning_read', None)
+        if start_positioning is not None:
+            start_positioning()
         self._refresh_diagnosis()
         self._flush_diagnosis_chart()
 

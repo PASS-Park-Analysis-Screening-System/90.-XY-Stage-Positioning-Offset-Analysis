@@ -5,7 +5,8 @@ positioning_controller.py — 'Positioning Log' 탭: 비전 보정 로그 대조
 - 단계별 평면 계수·Range·HZ1_O 상관 표, 판정 (파생)
 - 단계별 X 오차 대 Die Y 차트 (탭이 보일 때 그린다)
 - Tip Positioning 표
-로그는 이 탭이 보일 때만 작업 스레드(파이썬 스레드 하나)로 읽는다. 데이터 로드는 로그를 읽지 않는다
+로그는 이 탭이나 Diagnosis (트러블슈팅) 탭이 보일 때만 작업 스레드(파이썬 스레드 하나)로 읽는다
+(트러블슈팅 진단의 vision·xy_stage 판정과 스캐너 원인 확정에 쓴다). 데이터 로드는 로그를 읽지 않는다
 (네트워크 폴더에서 Lot마다 왕복이 늘지 않게). 읽은 분석은 그 회차 결과에 담아 다시 읽지 않는다
 (읽기 오류가 섞였으면 담지 않고 다음에 탭을 열 때 다시 읽는다).
 """
@@ -134,11 +135,11 @@ class PositioningMixin:
         self._start_positioning_read()
 
     def _start_positioning_read(self):
-        """보이는 회차의 로그를 작업 스레드로 읽는다. 탭이 보일 때만, 한 세대에 하나만."""
+        """보이는 회차의 로그를 작업 스레드로 읽는다. 이 탭이나 진단 탭이 보일 때만, 한 세대에 하나만."""
         result = self._poslog_result
         if (not result or not result.get('raw_data') or not result.get('round_path')
                 or result.get('positioning_log') is not None
-                or not self._positioning_tab_visible()):
+                or not self._positioning_wanted()):
             return
         generation = getattr(self, '_data_generation', 0)
         reading = self._poslog_reading
@@ -174,6 +175,9 @@ class PositioningMixin:
             if stored:
                 current['positioning_log'] = analysis
             self._show_positioning(analysis)
+            refresh = getattr(self, '_refresh_diagnosis', None)
+            if refresh is not None:         # 진단의 vision·xy_stage·스캐너 판정이 이 분석을 쓴다
+                refresh()
         else:
             self._start_positioning_read()      # 그사이 다른 회차로 바꿨다
 
@@ -261,6 +265,11 @@ class PositioningMixin:
                 table.setItem(i, col, _item(text))
         summary = analysis.get('tip_summary') or {}
         self.poslog_tip_label.setText('\n'.join(summary.get('lines') or []))
+
+    def _positioning_wanted(self):
+        """로그를 읽을 때인가: Positioning Log 탭이나 Diagnosis (트러블슈팅) 탭이 보인다."""
+        diagnosis_visible = getattr(self, '_diagnosis_tab_visible', None)
+        return self._positioning_tab_visible() or bool(diagnosis_visible and diagnosis_visible())
 
     def _positioning_tab_visible(self):
         tabs = getattr(self, '_inner_tabs', {}).get('Advanced')

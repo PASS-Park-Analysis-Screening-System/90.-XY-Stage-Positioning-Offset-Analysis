@@ -145,6 +145,9 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
         for thread in threads:
             if hasattr(thread, 'cancel'):
                 thread.cancel()
+        cancel_diagnosis = getattr(self, '_cancel_diagnosis_reads', None)
+        if cancel_diagnosis is not None:    # 진단 Log 읽기(파이썬 스레드)도 남은 Lot은 읽지 않게
+            cancel_diagnosis()
         deadline = time.monotonic() + 1.5
         for thread in threads:
             thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))

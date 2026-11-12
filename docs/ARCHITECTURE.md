@@ -269,13 +269,17 @@ Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결�
 - **계산** (`build_diagnosis`, 파일을 읽지 않음, 10 Lot에 ~30 ms): 축별 Die 평균 평면(`positioning_log.plane_fit`,
   θx = ∂dx/∂y, θy = ∂dy/∂x), κ_eff = |θ| / |구동 축 스캐너 오프셋|, what-if(H − κ·Δ·y, 선형), drift(Lot 평균 대 시작
   시각, Lot 안 측정 순서 기울기 — 유의한 평면 모양만 뺌), transient(Die4 이후 평면 대비 Die1·2·3), Die 평균 편차 장,
-  Positioning Log 분석이 있으면 그 판정, 부품 판정(`PART_RULES`)과 다음 조치. 회전 잠정 규격은 `settings.rotation_spec`
-  (코드 기본값 `DEFAULT_ROTATION_SPEC`을 번들 값이 덮는다).
+  Positioning Log 분석이 있으면 그 판정, 부품 판정(`PART_RULES`)과 다음 조치. 스캐너 부품의 '이상'은 θ 유의(Die 8개 이상) +
+  구동 ≥ 5 µm + Positioning Log가 비전 정렬 이후로 볼 때만이다(분석 전이면 많아야 '주의'). what-if 후보는 지금 레시피와
+  같은 쪽, 권장은 '지금 행이 모든 Lot PASS면 현재 유지, 아니면 꼭짓점 여유 5 µm 이상 PASS 후보 중 |값| 최소'. 회전 잠정 규격은
+  `settings.rotation_spec` (코드 기본값 `DEFAULT_ROTATION_SPEC`을 번들 값이 항목마다 덮고, 숫자로 바꾸며 warn ≤ max).
 - **화면** (`ui/controllers/diagnosis_controller.py`): Diagnosis 탭이 보일 때만 그 회차의 Log를 읽고(세대 번호로 늦은 결과를
-  버림, 시그널로 화면 스레드에 넘김), 진단은 탭이 보일 때 화면 스레드에서 계산한다. 지금 보이는 진단 dict는 창의
+  버림, 시그널로 화면 스레드에 넘김, 창을 닫으면 ScanSession 중지), 같은 때 positioning_controller의 Positioning Log 읽기도
+  시작한다(끝나면 `_refresh_diagnosis`). 진단은 탭이 보일 때 화면 스레드에서 계산한다. 지금 보이는 진단 dict는 창의
   `_xy_diagnosis`에 둔다 (3D 보고서·스캐너 회전 시험 분석이 붙는 자리, 없으면 None). 회전 시험 대화상자는
   `set_rotation_test(결과)`를 부른다: 사본을 `_rotation_test_result`(장비의 것, 회차를 바꿔도 유지)에 두고 진단을 다시
-  계산해 `rotation_test` 칸·요약 칩에 넣는다. 폐루프·Y 축 시험의 warn·fail은 `xy_scanner_y`의 직접 증거다.
+  계산해 `rotation_test` 칸·요약 칩에 넣는다. 폐루프·Y 축 시험의 warn·fail은 `xy_scanner_y`의 직접 증거다. 결과는 받을 때의
+  장비(`source.tool_id`: Log의 Tool ID, 없으면 연 폴더)에 묶여 다른 장비의 진단·JSON·LLM에는 붙지 않는다.
 - **내보내기**: AI 분석용 리포트 '트러블슈팅 진단 (Diagnosis)' 절은 담긴 Log를 쓰거나 내보내기 스레드에서 읽는다
   (Workflow별 예외 격리). 회차 비교 표·Excel Run Comparison의 θx·θy는 `axis_shape`로 CSV 값만 쓴다.
 

@@ -20,9 +20,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from core import xy_diagnosis
 from core.recipe_scanner import load_all_recipes, recipes_from_mapping
 from core.settings import DEFAULT_ROTATION_SPEC, rotation_spec
-from core.xy_diagnosis import (NO_LOG_TEXT, NO_REF_TEXT, PART_IDS, SCHEMA, XYDiagnosis,
-                               build_diagnosis, parse_scanner_offsets, predict_whatif,
-                               read_run_logs, store_logs)
+from core.xy_diagnosis import (NO_LOG_TEXT, NO_POSLOG_TEXT, NO_REF_TEXT, OTHER_TOOL_TEXT, PART_IDS,
+                               SCHEMA, XYDiagnosis, build_diagnosis, parse_scanner_offsets,
+                               predict_whatif, read_run_logs, store_logs)
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'xy_diagnosis'
 SPEC_DEV = {'Vision Pattern': {'spec_range': 1.0, 'spec_stddev': 0.2}}
@@ -99,10 +99,15 @@ def test_log_without_reference_scan_keeps_recipe_unknown(new_diag):
     assert new_diag['scanner_offsets']['Y_line']['recipe_plus_ref'] == pytest.approx([26.133, -0.617],
                                                                                     abs=1e-3)
     assert any(NO_REF_TEXT in w for w in new_diag['warnings'])
-    # 레시피를 모르면 what-if 행은 스캐너 Y 적용값 목표이고 권장하지 않는다
+    # 레시피를 모르면 what-if 행은 스캐너 Y 적용값 목표(지금과 같은 쪽)이고, 지금 행이 모든 Lot PASS라
+    # 지금 행만 권장한다 ('현재 유지' — 잘못된 '줄이세요'를 내지 않는다)
+    rows = new_diag['whatif']['rows']
     assert new_diag['whatif']['basis'] == 'scanner_y'
-    assert all(r['recipe_y'] is None and not r['recommended'] for r in new_diag['whatif']['rows'])
-    assert any('적용값(-8.1 µm)을 줄이세요' in a for a in new_diag['actions'])
+    assert [r['scanner_y'] for r in rows if not r['current']] == [-25.0, -15.0, -10.0, -5.0, -3.0, 0.0]
+    assert all(r['recipe_y'] is None for r in rows)
+    assert [r['current'] for r in rows if r['recommended']] == [True]
+    assert any('스캐너 Y 적용값 -8.1 µm 유지' in a for a in new_diag['actions'])
+    assert not any('줄이세요' in a and 'X 라인' in a and '(참고)' not in a for a in new_diag['actions'])
 
 
 def test_reference_carries_to_later_lots_in_time_order():
@@ -134,19 +139,24 @@ def test_shape_theta_kappa_and_rotation_status(old_diag, new_diag):
     assert old['y_line']['status'] == 'ok' and old['y_line']['kappa_eff'] < 0.01
 
 
-@pytest.mark.parametrize('theta,t,drive,expected', [
-    (5.27, 18.8, -28.0, 'fail'),
-    (0.95, 5.6, -8.2, 'warn'),      # θ 주의 구간
-    (0.50, 5.0, -8.2, 'ok'),        # κ 0.061 < 0.07
-    (0.60, 5.0, -8.2, 'warn'),      # θ는 주의 미만이지만 κ 0.073 ≥ 0.07
-    (0.95, 1.0, -8.2, 'ok'),        # 유의하지 않음
-    (2.00, 6.0, -1.0, 'fail'),      # 오프셋이 작아 κ는 없음, θ만
+@pytest.mark.parametrize('theta,t,k,drive,expected', [
+    (5.27, 18.8, 21, -28.0, 'fail'),
+    (0.95, 5.6, 21, -8.2, 'warn'),      # θ 주의 구간
+    (0.50, 5.0, 21, -8.2, 'ok'),        # κ 0.061 < 0.07
+    (0.60, 5.0, 21, -8.2, 'warn'),      # θ는 주의 미만이지만 κ 0.073 ≥ 0.07 (구동 8.2 ≥ 5, θ ≥ 0.35)
+    (0.30, 5.0, 21, -3.0, 'ok'),        # κ 0.10이지만 구동 < 5 µm → 참고만 (M1)
+    (0.30, 5.0, 21, -8.2, 'ok'),        # κ 0.037
+    (0.95, 1.0, 21, -8.2, 'ok'),        # 유의하지 않음
+    (0.95, 5.6, 6, -8.2, 'ok'),         # Die 8개 미만이면 유의하지 않음 (M2)
+    (2.00, 6.0, 21, -1.0, 'fail'),      # 오프셋이 작아 κ는 없음, θ만
 ])
-def test_rotation_rules(theta, t, drive, expected):
-    rot = xy_diagnosis._rotation_line('X', {'theta': theta, 'theta_t': t},
+def test_rotation_rules(theta, t, k, drive, expected):
+    rot = xy_diagnosis._rotation_line('X', {'theta': theta, 'theta_t': t, 'k': k},
                                       {'X_line': {'applied': [0.0, drive]}}, 240.0, DEFAULT_ROTATION_SPEC)
     assert rot['status'] == expected
     assert (rot['kappa_eff'] is None) == (abs(drive) < xy_diagnosis.MIN_KAPPA_OFFSET_UM)
+    if (theta, drive) == (0.30, -3.0):
+        assert any(r.startswith('참고: κ_eff') for r in rot['reasons'])
 
 
 def test_whatif_reproduces_validation_targets():
@@ -183,7 +193,40 @@ def test_whatif_rows_current_and_recommended(old_diag):
     assert len(best) == 1 and best[0]['recipe_y'] == -5.0
     assert best[0]['scanner_y'] == pytest.approx(-7.68, abs=0.01)
     assert old_diag['whatif']['assumption'] == 'linear kappa_eff'
+    assert '원점을 지나지 않는다' in old_diag['whatif']['note']          # 선형 원점 통과는 근사 (M1/L12)
     assert old_diag['actions'][0].startswith('X 라인 레시피 Y Offset을 줄이세요 (예: -25 → -5 µm')
+
+
+def _synthetic_matrix(theta_signed, drive, lots=6, noise=0.02):
+    """Die Y에 비례하는 X 편차(θ·y)와 Lot마다 다른 작은 잡음."""
+    from core.die_analysis import DIE_PITCH_MM, DIE_POSITIONS
+    positions = {f'Die{i + 2}': (x * DIE_PITCH_MM, y * DIE_PITCH_MM) for i, (x, y) in enumerate(DIE_POSITIONS)}
+    matrix = {}
+    for lot in range(lots):
+        matrix[f'L{lot}'] = {d: theta_signed * 1e-3 * p[1] + noise * (((i * 7 + lot * 3) % 5) - 2) / 2
+                             for i, (d, p) in enumerate(positions.items())}
+    return matrix, positions
+
+
+def test_whatif_follows_the_current_side():
+    """레시피 +25 µm: 후보는 +쪽(+25 … 0), 지금 행(FAIL)이 아니라 +5가 권장 (H2)."""
+    matrix, positions = _synthetic_matrix(-5.3, 28.0)
+    shape = {'theta': -5.3, 'theta_t': 20.0, 'k': 21}
+    w = xy_diagnosis._whatif(shape, 28.0, 25.0, matrix, positions, 1.0, 0.2)
+    assert [r['recipe_y'] for r in w['rows']] == [25.0, 15.0, 10.0, 5.0, 3.0, 0.0]
+    now = next(r for r in w['rows'] if r['current'])
+    assert now['recipe_y'] == 25.0 and now['pass_lots'] == 0 and not now['recommended']
+    best = [r for r in w['rows'] if r['recommended']]
+    assert len(best) == 1 and best[0]['recipe_y'] == 5.0 and best[0]['pass_lots'] == 6
+    # |지금 레시피| < 0.5는 0: 기본 쪽(−)으로 만들고, 지금 행이 PASS면 '현재 유지'
+    w = xy_diagnosis._whatif({'theta': 0.4, 'theta_t': 5.0, 'k': 21}, -3.0, 0.3, *_synthetic_matrix(0.4, -3.0),
+                             1.0, 0.2)
+    assert [r['recipe_y'] for r in w['rows']] == [-25.0, -15.0, -10.0, -5.0, -3.0, 0.0]
+    assert [r['recipe_y'] for r in w['rows'] if r['recommended']] == [0.0]
+    # 지금 행이 모든 Lot PASS가 아니고 꼭짓점 여유를 지키는 PASS 후보도 없으면 권장 없음
+    w = xy_diagnosis._whatif({'theta': -5.3, 'theta_t': 20.0, 'k': 21}, 28.0, 25.0,
+                             *_synthetic_matrix(-5.3, 28.0, noise=0.6), 1.0, 0.2)
+    assert not any(r['recommended'] for r in w['rows'])
 
 
 def test_whatif_needs_significant_theta(new_result):
@@ -226,21 +269,24 @@ def test_transient_lot_start(old_diag):
 
 # ── 부품 판정 ─────────────────────────────────────────────────────
 
-def _parts(shapes, rotation, poslog=None, drift=None, transient=None):
+def _parts(shapes, rotation, poslog=None, drift=None, transient=None, full=False):
     parts, _ = xy_diagnosis._parts(True, shapes, rotation, poslog, drift or {'status': 'ok'},
                                    transient or {'status': 'ok'}, DEFAULT_ROTATION_SPEC)
-    return {p['id']: p['verdict'] for p in parts}
+    return {p['id']: (p if full else p['verdict']) for p in parts}
 
 
-SHAPES_OLD = {'X': {'theta': 5.2, 'theta_t': 19.0}, 'Y': {'theta': 0.05, 'theta_t': 0.3}}
+SHAPES_OLD = {'X': {'theta': 5.2, 'theta_t': 19.0, 'k': 21}, 'Y': {'theta': 0.05, 'theta_t': 0.3, 'k': 21}}
 
 
 def test_part_rules_real_runs(old_diag, new_diag):
-    old = {p['id']: p['verdict'] for p in old_diag['parts']}
+    old = {p['id']: p for p in old_diag['parts']}
     new = {p['id']: p['verdict'] for p in new_diag['parts']}
     assert [p['id'] for p in old_diag['parts']] == list(PART_IDS)
-    assert old['xy_scanner_y'] == 'fail' and old['chuck'] == 'warn' and old['xy_scanner_x'] == 'ok'
-    assert old['vision'] == old['xy_stage'] == 'na'          # Positioning Log 분석 없음
+    # Positioning Log 분석이 없으면 스캐너 Y는 많아야 주의 (H1)
+    assert old['xy_scanner_y']['verdict'] == 'warn'
+    assert xy_diagnosis.NO_POSLOG_TEXT in old['xy_scanner_y']['reason']
+    assert old['chuck']['verdict'] == 'warn' and old['xy_scanner_x']['verdict'] == 'ok'
+    assert old['vision']['verdict'] == old['xy_stage']['verdict'] == 'na'
     assert new['xy_scanner_y'] == 'warn' and new['chuck'] == 'warn'
     assert new['z_scanner_tip'] == new['f_stage'] == 'warn'   # drift·transient
     for d in (old_diag, new_diag):
@@ -250,27 +296,43 @@ def test_part_rules_real_runs(old_diag, new_diag):
 
 
 def test_part_rules_follow_positioning_log():
-    vision_stage = {'stages': [{'name': 'x'}], 'terms': [
+    vision_stage = {'judged': True, 'stages': [{'name': 'x'}], 'terms': [
         {'axis': 'X', 'term': 'θx', 'value': 5.2, 't': 19.0, 'carriers': ['coarse_match'],
          'same_sign': [True], 'span': '스테이지 이동(도착)'}]}
-    after = {'stages': [{'name': 'x'}], 'terms': [
-        {'axis': 'X', 'term': 'θx', 'value': 5.2, 't': 19.0, 'carriers': [], 'same_sign': [], 'span': ''}]}
+    after = {'judged': True, 'stages': [{'name': 'x'}], 'terms': [
+        {'axis': 'X', 'term': 'θx', 'value': 5.2, 't': 19.0, 'carriers': [], 'same_sign': [], 'span': ''},
+        {'axis': 'Y', 'term': 'θy', 'value': 1.5, 't': 8.0, 'carriers': [], 'same_sign': [], 'span': ''}]}
+    skipped = dict(after, judged=False)        # judge가 Die 8개 미만이라 판단하지 않은 분석 (L14)
     small_offset = {'scanner_y': -5.0, 'y_line': {'scanner_x': 5.0}}
     big_offset = {'scanner_y': -28.0, 'y_line': {'scanner_x': 30.0}}
-    # 비전 단계가 가졌고 스캐너 Y가 작으면 스캐너가 아니라 스테이지 쪽
+    # 비전 단계가 가졌고 스캐너 Y가 한도 안이면 스캐너가 아니라 스테이지 쪽
     got = _parts(SHAPES_OLD, small_offset, vision_stage)
     assert got['xy_scanner_y'] == 'ok' and got['xy_stage'] == 'fail' and got['vision'] == 'ok'
-    # 스캐너 Y가 크면 비전 단계가 가져도 스캐너 Y fail
-    assert _parts(SHAPES_OLD, big_offset, vision_stage)['xy_scanner_y'] == 'fail'
-    # 비전 정렬 이후로 판정되면 스캐너 Y
+    # 비전 단계가 가져도 스캐너 Y가 한도를 넘으면 주의 (fail은 비전 정렬 이후일 때만)
+    assert _parts(SHAPES_OLD, big_offset, vision_stage)['xy_scanner_y'] == 'warn'
+    # 비전 정렬 이후 + 구동 ≥ 5 µm면 fail (증거가 다 있음)
     assert _parts(SHAPES_OLD, small_offset, after)['xy_scanner_y'] == 'fail'
-    # 로그 분석이 없으면 스캐너 Y (나머지 가정), vision·xy_stage는 na
-    got = _parts(SHAPES_OLD, small_offset, None)
-    assert got['xy_scanner_y'] == 'fail' and got['vision'] == got['xy_stage'] == 'na'
-    # Y 라인에 같은 모양이면 스캐너 X
-    shapes = {'X': {'theta': 0.1, 'theta_t': 1.0}, 'Y': {'theta': 1.5, 'theta_t': 8.0}}
-    got = _parts(shapes, big_offset, None)
+    assert _parts(SHAPES_OLD, big_offset, after)['xy_scanner_y'] == 'fail'
+    # 로그 분석이 없거나 판정하지 않은 분석이면 많아야 주의, vision·xy_stage는 na
+    for poslog in (None, skipped):
+        got = _parts(SHAPES_OLD, big_offset, poslog, full=True)
+        assert got['xy_scanner_y']['verdict'] == 'warn'
+        assert xy_diagnosis.NO_POSLOG_TEXT in got['xy_scanner_y']['reason']
+    assert _parts(SHAPES_OLD, big_offset, None)['vision'] == 'na'
+    # 구동이 작으면(< 5 µm) 원인으로 단정하지 않는다 (H1 재현: −0.4 µm, θx 1.5, t 8)
+    got = _parts({'X': {'theta': 1.5, 'theta_t': 8.0, 'k': 21}, 'Y': SHAPES_OLD['Y']},
+                 {'scanner_y': -0.4, 'y_line': {'scanner_x': 0.4}}, after, full=True)
+    assert got['xy_scanner_y']['verdict'] == 'na'
+    assert xy_diagnosis.SMALL_DRIVE_TEXT in got['xy_scanner_y']['reason']
+    # 구동을 모르면(Log 없음) 많아야 주의
+    assert _parts(SHAPES_OLD, {}, after)['xy_scanner_y'] == 'warn'
+    # Y 라인에 같은 모양이면 스캐너 X (같은 규칙)
+    shapes = {'X': {'theta': 0.1, 'theta_t': 1.0, 'k': 21}, 'Y': {'theta': 1.5, 'theta_t': 8.0, 'k': 21}}
+    got = _parts(shapes, big_offset, after)
     assert got['xy_scanner_x'] == 'fail' and got['xy_scanner_y'] == 'ok' and got['chuck'] == 'ok'
+    assert _parts(shapes, big_offset, None)['xy_scanner_x'] == 'warn'
+    assert _parts(shapes, small_offset, after)['xy_scanner_x'] == 'fail'      # |X| 5 µm
+    assert _parts(shapes, {'scanner_y': -5.0, 'y_line': {'scanner_x': 1.0}}, after)['xy_scanner_x'] == 'na'
     got = _parts(shapes, big_offset, None, drift={'status': 'warn'})
     assert got['z_scanner_tip'] == got['f_stage'] == 'warn'
     assert all(v == 'na' for v in {p['id']: p['verdict'] for p in xy_diagnosis._parts(
@@ -422,7 +484,8 @@ def test_llm_report_section(old_result, monkeypatch):
         md.index('## 회차 변경 이력')
     section = md[md.index('## 트러블슈팅 진단'):md.index('## 회차 변경 이력')]
     assert '잠정' in section and '| X 라인 | +0.000 / -25.000 |' in section
-    assert '| XY 스캐너 Y 구동 | xy_scanner_y | fail |' in section
+    # 픽스처에는 Debug/SamplePositioning이 없다 → 비전 로그 대조 전이라 스캐너 Y는 주의까지 (H1)
+    assert '| XY 스캐너 Y 구동 | xy_scanner_y | warn |' in section and NO_POSLOG_TEXT in section
     assert '1. X 라인 레시피 Y Offset을 줄이세요 (예: -25 → -5 µm' in section
     assert '| -5.0 | -7.68 | +1.45 |' in section and '권장' in section
     assert 'Transient (파생): warn' in section
@@ -665,12 +728,32 @@ def test_set_rotation_test_hook_updates_diagnosis_and_json(window, tmp_path, mon
                         staticmethod(lambda *a, **k: (str(target), '')))
     window._save_diagnosis_json()
     assert json.loads(target.read_text(encoding='utf-8'))['rotation_test'] == ROTATION_TEST
-    # 회차를 바꿔도 시험 결과는 남는다 (장비의 것)
+    # 다른 장비(여기서는 다른 데이터 폴더 — Log에 Tool ID가 없음)의 진단에는 붙이지 않는다 (M4)
     old = load(FIXTURES / 'old')
     store_logs(old, read_run_logs(old))
     window._update_diagnosis(old)
-    assert window._rotation_test_result == ROTATION_TEST
+    assert window._rotation_test_result == ROTATION_TEST            # 회차를 바꿔도 지우지 않는다
     assert window._xy_diagnosis['source']['sample'] == 'Sample22'
+    assert window._xy_diagnosis['rotation_test'] is None
+    assert window._xy_diagnosis['source']['rotation_test_note'] == OTHER_TOOL_TEXT
+    assert OTHER_TOOL_TEXT in window._diag_chips['rotation_test'].text()
+    assert not any('직접 증거' in p['reason'] for p in window._xy_diagnosis['parts'])
+    # 같은 장비의 다른 회차에는 붙는다
+    window._update_diagnosis(dict(new, round='2'))
+    assert window._xy_diagnosis['rotation_test'] == ROTATION_TEST
+
+
+def test_rotation_test_binds_to_the_scanned_folder(window):
+    """Log에 Tool ID가 없으면 연 폴더가 장비다: 같은 폴더 아래 회차들에는 같은 시험 결과가 붙는다."""
+    window._scanned_folder = str(FIXTURES)
+    new, old = load(FIXTURES / 'new'), load(FIXTURES / 'old')
+    for result in (new, old):
+        store_logs(result, read_run_logs(result))
+    window._update_diagnosis(new)
+    _show_tab(window)
+    window.set_rotation_test(ROTATION_TEST)
+    assert window._rotation_test_tool == window._xy_diagnosis['source']['tool_id']
+    window._update_diagnosis(old)
     assert window._xy_diagnosis['rotation_test'] == ROTATION_TEST
 
 
@@ -685,3 +768,221 @@ def test_set_rotation_test_before_any_diagnosis(window):
     assert any('규격 이내' in a for a in window._xy_diagnosis['actions'])
     window.set_rotation_test(None)
     assert window._rotation_test_result is None and window._xy_diagnosis['rotation_test'] is None
+
+
+# ── 리뷰 반영 (574cbc3: HIGH 2·MEDIUM 5·LOW) ────────────────────────────
+
+POS_FIXTURES = Path(__file__).parent / 'fixtures' / 'positioning_log'
+
+
+def _lot_with_positioning_and_log(folder: Path) -> Path:
+    """비전 보정 로그 픽스처 Lot(θx +5.28, 비전 정렬 이후) + 스캐너 Y −27.8 µm Log (구 Lot의 것)."""
+    import shutil
+    lot = folder / '46LKD105SJE61'
+    (lot / 'Debug' / 'SamplePositioning').mkdir(parents=True)
+    (lot / 'Debug' / 'TipPositioning').mkdir(parents=True)
+    (lot / 'Log').mkdir()
+    for axis in ('X', 'Y'):
+        shutil.copy(POS_FIXTURES / f'lot61_{axis}_UL.csv', lot / f'SAMPLE19_{axis}_UL.csv')
+    shutil.copy(POS_FIXTURES / 'Sample19_SamplePositioning.txt',
+                lot / 'Debug' / 'SamplePositioning' / 'Sample19_SamplePositioning.txt')
+    shutil.copy(POS_FIXTURES / 'Sample19_TipPositioning.txt',
+                lot / 'Debug' / 'TipPositioning' / 'Sample19_TipPositioning.txt')
+    shutil.copy(FIXTURES / 'old' / 'Sample2202' / 'Log' / 'Sample22_Log.csv', lot / 'Log' / 'Sample19_Log.csv')
+    return folder
+
+
+def test_scanner_fail_needs_positioning_evidence(tmp_path):
+    """θx 유의 + 구동 ≥ 5 µm + Positioning Log '비전 정렬 이후'일 때만 fail (H1)."""
+    from core.positioning_log import analyze_result
+    result = load(_lot_with_positioning_and_log(tmp_path / 'vp'))
+    logs = read_run_logs(result)
+    without = build_diagnosis(result, logs, SPEC_DEV).to_dict()
+    scanner = next(p for p in without['parts'] if p['id'] == 'xy_scanner_y')
+    assert scanner['verdict'] == 'warn' and NO_POSLOG_TEXT in scanner['reason']
+    poslog = analyze_result(result)
+    assert poslog['status'] == 'ok'
+    with_log = build_diagnosis(result, logs, SPEC_DEV, poslog=poslog).to_dict()
+    parts = {p['id']: p for p in with_log['parts']}
+    assert parts['xy_scanner_y']['verdict'] == 'fail'
+    assert '비전 정렬 이후' in parts['xy_scanner_y']['reason']
+    # Sy는 비전 정밀 정렬 단계(Fine Match)에도 있다 → 비전 주의, 스테이지는 성분 없음
+    assert parts['vision']['verdict'] == 'warn' and 'Sy' in parts['vision']['reason']
+    assert parts['xy_stage']['verdict'] == 'ok'
+    assert with_log['positioning_log']['judged'] is True
+
+
+def test_small_drive_gives_no_reduce_action(old_result):
+    """H1 재현: 스캐너 Y −0.4 µm, θx 유의 → 스캐너 원인 단정 안 함, '줄이세요' 안 냄."""
+    logs = read_run_logs(old_result)
+    small = json.loads(json.dumps(logs, default=str))
+    for lot in small['lots']:
+        lot['start'] = None
+        lot['lines'] = [dict(l, applied=(l['applied'][0], -0.4 if l['line'] == 'X' else l['applied'][1]))
+                        for l in lot['lines']]
+    d = build_diagnosis(old_result, small, SPEC_DEV).to_dict()
+    scanner = next(p for p in d['parts'] if p['id'] == 'xy_scanner_y')
+    assert scanner['verdict'] == 'na' and xy_diagnosis.SMALL_DRIVE_TEXT in scanner['reason']
+    assert not any('Y Offset을 줄이세요' in a or '적용값' in a and '줄이세요' in a and 'Y 라인' not in a
+                   for a in d['actions'])
+    assert d['whatif']['rows'] == []                     # |구동| < 2 µm: κ_eff 없음
+
+
+def test_network_path_error_reported_as_filenotfound_is_error(old_result, monkeypatch):
+    """WinError 53·67은 FileNotFoundError로 온다: Lot 폴더도 안 보이면 'Log 없음'이 아니라 오류 (M3)."""
+    from core import csv_loader
+    monkeypatch.setattr(csv_loader, 'FOLDER_RETRY_DELAY', 0)
+
+    def gone(path, *args):
+        raise FileNotFoundError(2, '네트워크 경로를 찾을 수 없습니다 (WinError 53)', path)
+    monkeypatch.setattr(xy_diagnosis, 'list_dir', gone)
+    result = dict(old_result)
+    logs = read_run_logs(result, workers=1)
+    assert logs['status'] == 'error' and {l['status'] for l in logs['lots']} == {'error'}
+    assert 'Lot 폴더를 읽지 못함' in logs['lots'][0]['error']
+    assert store_logs(result, logs) is False and 'xy_logs' not in result
+
+
+def test_broken_log_marks_only_that_lot(old_result, monkeypatch):
+    """해석 오류(csv.Error·ValueError·UnicodeError)는 그 Lot만 오류, 다른 Lot은 그대로 (M5)."""
+    real = xy_diagnosis.parse_scanner_offsets
+    calls = []
+
+    def flaky(text):
+        calls.append(1)
+        if len(calls) == 2:
+            raise UnicodeError('깨진 바이트')
+        return real(text)
+    monkeypatch.setattr(xy_diagnosis, 'parse_scanner_offsets', flaky)
+    logs = read_run_logs(old_result, workers=1)
+    assert [l['status'] for l in logs['lots']] == ['ok', 'error', 'ok']
+    assert logs['lots'][1]['error'].startswith('Log 해석 실패 (UnicodeError')
+    assert logs['status'] == 'error'
+
+
+def test_empty_and_utf16_logs(tmp_path):
+    """0바이트 Log는 오류(담지 않음), UTF-16 BOM Log는 읽는다 (L10)."""
+    import shutil
+    for name, data in (('empty', b''),
+                       ('utf16', read_text(FIXTURES / 'old' / 'Sample2202' / 'Log' / 'Sample22_Log.csv')
+                        .encode('utf-16'))):
+        lot = tmp_path / name / 'Sample2202'
+        shutil.copytree(FIXTURES / 'old' / 'Sample2202', lot)
+        (lot / 'Log' / 'Sample22_Log.csv').write_bytes(data)
+        logs = read_run_logs(load(tmp_path / name))
+        if name == 'empty':
+            assert logs['status'] == 'error' and '빈 Log 파일' in logs['lots'][0]['error']
+        else:
+            assert logs['status'] == 'ok' and len(logs['lots'][0]['lines']) == 12
+
+
+def test_retried_scan_params_and_fine_reset():
+    """같은 측정의 다시 한 'Set scan params'는 한 번만, 미세 보정은 X·Y 한 쌍에만 (L9). Tool ID (M4)."""
+    text = '\n'.join([
+        'Time,Parent Job,Current Job,Step,Param ID,Param Value,Tack Time',
+        't0,SampleProcessJob,MappingJob,Set Mapping,Link Tool,false,0',
+        ',,,,Tool Type ID,NX-Wafer',
+        ',,,,Tool ID,NXW-0124',
+        't1,ImagePointProcessJob,ZPositioningJob,Sample pattern align - fine,Pattern ID - Sample,,1',
+        ',,,,X Offset - Fine,0.1', ',,,,Y Offset - Fine,-0.3',
+        't2,ImagePointProcessJob,ImageJob,STARTED,-,-',
+        't3,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,1',
+        ',,,,X Offset,0.5', ',,,,Y Offset,-27.0',
+        't4,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,1',
+        ',,,,X Offset,0.6', ',,,,Y Offset,-28.0',
+        't5,ImagePointProcessJob,ImageJob,STARTED,-,-',
+        't6,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,Y Forward,1',
+        ',,,,X Offset,30.6', ',,,,Y Offset,-1.0',
+        't7,ImagePointProcessJob,ImageJob,STARTED,-,-',
+        't8,ImagePointProcessJob,ImageJob,Set scan params,Scan Direction,X Backward,1',
+        ',,,,X Offset,0.7', ',,,,Y Offset,-28.1'])
+    parsed = parse_scanner_offsets(text)
+    lines = parsed['lines']
+    assert [(l['line'], l['applied']) for l in lines] == [('X', (0.6, -28.0)), ('Y', (30.6, -1.0)),
+                                                          ('X', (0.7, -28.1))]
+    assert lines[0]['fine'] == lines[1]['fine'] == (0.1, -0.3)
+    assert lines[2]['fine'] is None                    # 다음 Site에 정밀 정렬이 없었다
+    assert parsed['tool_id'] == 'NXW-0124' and parsed['tool_type_id'] == 'NX-Wafer'
+
+
+def test_rotation_test_only_for_the_same_tool(new_result):
+    """시험 결과는 같은 장비(tool_id)의 진단에만 붙는다 (M4)."""
+    logs = read_run_logs(new_result)
+    tool = xy_diagnosis.tool_identity(new_result, logs)[0]
+    same = build_diagnosis(new_result, logs, SPEC_DEV, rotation_test=ROTATION_TEST,
+                           rotation_test_tool=tool).to_dict()
+    assert same['rotation_test'] == ROTATION_TEST and same['source']['tool_id'] == tool
+    assert same['source']['tool_id_basis'] == 'root'
+    other = build_diagnosis(new_result, logs, SPEC_DEV, rotation_test=ROTATION_TEST,
+                            rotation_test_tool='NXW-9999').to_dict()
+    assert other['rotation_test'] is None and other['source']['rotation_test_note'] == OTHER_TOOL_TEXT
+    assert any(OTHER_TOOL_TEXT in w for w in other['warnings'])
+    assert not any('직접 증거' in p['reason'] for p in other['parts'])
+    from core.llm_report import build_llm_report
+    md = build_llm_report([new_result], SPEC_LIM, SPEC_DEV, rotation_test=ROTATION_TEST,
+                          rotation_test_tool='NXW-9999')
+    section = md[md.index('## 트러블슈팅 진단'):md.index('## 회차 변경 이력')]
+    assert f'- 스캐너 회전 시험: {OTHER_TOOL_TEXT}' in section and 'κ 0.107' not in section
+
+
+def test_drift_and_transient_need_three_lots_and_significance(new_result):
+    """Lot 1개면 drift·transient는 판정하지 않는다 (L1)."""
+    first = dict(new_result, raw_data=[r for r in new_result['raw_data'] if r['lot_name'] == 'Sample1902'])
+    d = build_diagnosis(first, read_run_logs(first), SPEC_DEV).to_dict()
+    assert d['drift']['status'] == 'ok'
+    assert any(r.startswith('참고: 첫 Lot') for r in d['drift']['reasons'])
+    assert d['transient']['status'] == 'ok'
+    assert d['transient']['X']['t']['die2'] is None                # Lot 1개: SE 없음
+
+
+def test_kappa_two_point_from_cached_runs(old_result, new_result, monkeypatch):
+    """두 회차의 스캐너 Y가 5 µm 이상 다르면 θx 대 스캐너 Y 기울기·절편 (참고, Log 더 안 읽음)."""
+    old, new = dict(old_result, round='old'), dict(new_result, round='new')
+    store_logs(old, read_run_logs(old))
+    store_logs(new, read_run_logs(new))
+    monkeypatch.setattr(xy_diagnosis, 'read_lot_log', lambda *a, **k: pytest.fail('Log를 더 읽었다'))
+    shown = dict(new, run_results=[old, new])
+    two = build_diagnosis(shown, None, SPEC_DEV).to_dict()['rotation']['kappa_two_point']
+    assert two['kappa'] == pytest.approx(-0.218, abs=0.002)
+    assert two['intercept'] == pytest.approx(-0.82, abs=0.03)
+    assert {p['run'] for p in two['points']} == {'old', 'new'}
+    assert build_diagnosis(new, None, SPEC_DEV).to_dict()['rotation']['kappa_two_point'] is None
+
+
+def test_clean_numpy_and_dates_and_rotation_spec_coercion():
+    import numpy as np
+    from datetime import date, datetime
+    diag = XYDiagnosis(source={'n': np.int64(3), 'v': np.float64(1.5), 'bad': np.float64('nan'),
+                               'when': datetime(2026, 11, 12, 11, 25), 'day': date(2026, 11, 12),
+                               'set': {1}, 'obj': Path('a')})
+    loaded = json.loads(diag.to_json())['source']
+    assert loaded == {'n': 3, 'v': 1.5, 'bad': None, 'when': '2026-11-12T11:25:00', 'day': '2026-11-12',
+                      'set': [1], 'obj': 'a'}
+    spec = rotation_spec({'rotation_spec': {'theta_max': '2', 'theta_warn': 5, 'kappa_max': 'x',
+                                            'kappa_warn': -1, 'offset_max': None, 'provisional': 'no'}})
+    assert spec == {'theta_max': 2.0, 'theta_warn': 2.0, 'kappa_max': 0.1, 'kappa_warn': 0.07,
+                    'offset_max': 10.0, 'provisional': True}
+
+
+def test_diagnosis_tab_starts_positioning_read_and_reaches_fail(window, tmp_path):
+    """진단 탭이 보이면 Positioning Log 분석도 읽고, 끝나면 다시 계산해 스캐너 Y가 근거와 함께 fail."""
+    result = load(_lot_with_positioning_and_log(tmp_path / 'vp'))
+    window._update_positioning_log(result)
+    window._update_diagnosis(result)
+    assert 'positioning_log' not in result and 'xy_logs' not in result      # 숨은 탭: 읽지 않음
+    _show_tab(window)
+    _wait_for(lambda: 'positioning_log' in result and 'xy_logs' in result
+              and (window._xy_diagnosis or {}).get('positioning_log') is not None)
+    parts = {p['id']: p['verdict'] for p in window._xy_diagnosis['parts']}
+    assert parts['xy_scanner_y'] == 'fail' and parts['vision'] == 'warn' and parts['xy_stage'] == 'ok'
+    assert window._xy_diagnosis['positioning_log']['judged'] is True
+
+
+def test_close_cancels_diagnosis_reads(window):
+    from core.csv_loader import ScanSession
+    session = ScanSession()
+    window._diag_sessions = {1: session}
+    window._cancel_diagnosis_reads()
+    assert session.cancelled
+    logs = read_run_logs(load(FIXTURES / 'old'), session, workers=1)
+    assert logs['status'] == 'error' and all(l['error'] == '중지됨' for l in logs['lots'])
