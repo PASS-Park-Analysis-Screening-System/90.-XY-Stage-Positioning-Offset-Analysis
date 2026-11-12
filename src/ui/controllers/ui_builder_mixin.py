@@ -14,6 +14,7 @@ from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 from ui.widgets.busy_overlay import BusyOverlay
 from ui.dialogs.image_shift_dialog import open_image_shift_dialog
+from ui.dialogs.troubleshoot_launcher import open_case_library, open_troubleshoot_report
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -881,6 +882,8 @@ class UIBuilderMixin:
             ('AI 분석용 Markdown', 'Spec 초과 원인 분석을 LLM에 맡기기 위한 Markdown 한 파일\n'
              '요약·원인 단서·회차 비교·Die×Repeat 편차 표 포함', self._export_llm_markdown, PURPLE),
             ('이미지 2장 이동량 분석', 'Capture 이미지 2장(이상)의 이동량을 sub-pixel로 재서 카메라 축 각도·배율 계산 (별도 창)', lambda: open_image_shift_dialog(self), ACCENT),
+            ('3D 트러블슈팅 보고서', '진단 결과로 장비 3D·Die 화살표·What-if가 든 HTML 한 파일을 만들어 기본 브라우저로 열기', lambda: open_troubleshoot_report(self), GREEN),
+            ('사례 라이브러리', '끝난 조사 사례(HTML 페이지 모음)를 기본 브라우저로 열기', lambda: open_case_library(self), PURPLE),
         ]
         for text, desc, slot, color in export_buttons_data:
             btn = QPushButton(f"{text}")

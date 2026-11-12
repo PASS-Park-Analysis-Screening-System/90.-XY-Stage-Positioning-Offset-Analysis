@@ -1,0 +1,628 @@
+{
+  "schema": "pass.xy.diagnosis/1",
+  "generated": "2026-11-12T16:00:00",
+  "app_version": "1.1.4",
+  "source": {
+    "root": "D:/data/2. Check Data/14. XY Stage/03. XY stage positioning test/1. Vision",
+    "workflow": "Vision Pattern",
+    "run": "1",
+    "lots": 10,
+    "dies": 21,
+    "recipe_id": "1. Vision Pattern Recognize_1112",
+    "sample": "Sample19",
+    "start": "2026-11-12T11:25:01",
+    "end": "2026-11-12T14:56:00"
+  },
+  "spec": {
+    "range": 1.0,
+    "stddev": 0.2,
+    "theta_max": 1.0,
+    "theta_warn": 0.7,
+    "kappa_max": 0.1,
+    "kappa_warn": 0.07,
+    "offset_max": 10.0,
+    "provisional": true
+  },
+  "verdict": {
+    "X": {
+      "range": 0.439,
+      "stddev": 0.08,
+      "pass": true
+    },
+    "Y": {
+      "range": 0.732,
+      "stddev": 0.143,
+      "pass": true
+    }
+  },
+  "shape": {
+    "X": {
+      "theta": 0.95,
+      "theta_t": 5.0,
+      "scale_ppm": 0.5,
+      "scale_t": 1.0,
+      "mean": 0.252
+    },
+    "Y": {
+      "theta": 0.03,
+      "theta_t": 0.2,
+      "scale_ppm": 1.6,
+      "scale_t": 7.0,
+      "mean": -3.611
+    }
+  },
+  "scanner_offsets": {
+    "X_line": {
+      "applied": [
+        1.4,
+        -8.2
+      ],
+      "recipe": [
+        0.0,
+        -5.0
+      ],
+      "ref": [
+        1.3,
+        -2.9
+      ],
+      "fine": [
+        0.1,
+        -0.3
+      ],
+      "n": 220
+    },
+    "Y_line": {
+      "applied": [
+        26.4,
+        -1.2
+      ],
+      "recipe": [
+        25.0,
+        2.0
+      ],
+      "ref": [
+        1.3,
+        -2.9
+      ],
+      "fine": [
+        0.1,
+        -0.3
+      ],
+      "n": 220
+    },
+    "source": "Log.csv ImageJob"
+  },
+  "rotation": {
+    "axis": "X_line",
+    "theta": 0.95,
+    "scanner_y": -8.2,
+    "kappa_eff": 0.116,
+    "contribution_um": 0.23,
+    "status": "warn",
+    "reasons": [
+      "|θx| 0.95 µrad — 경고 0.7 초과, 한계 1.0 이내 (잠정 규격)",
+      "κ_eff 0.116 µrad/µm > 한계 0.10 — 스캐너 회전은 남아 있음(레시피 변경은 우회책)"
+    ]
+  },
+  "positioning_log": {
+    "status": "ok",
+    "verdict_lines": [
+      "Y 위치에 비례하는 X 오차(θx) +0.95 µrad (t +5.0)가 비전 보정 로그에는 없고 최종 착지(HZ1_O)에만 있음 → 비전 정렬 이후(카메라→Tip 착지) 구간"
+    ],
+    "stages": [
+      {
+        "name": "도착 오차 (Coarse Match)",
+        "axis": "X",
+        "theta": 3.17,
+        "t": 1.3
+      },
+      {
+        "name": "정밀 잔차 (Fine Match)",
+        "axis": "X",
+        "theta": 0.41,
+        "t": 0.7
+      },
+      {
+        "name": "정밀 보정 (Fine Move)",
+        "axis": "X",
+        "theta": -0.88,
+        "t": -1.1
+      },
+      {
+        "name": "Optical Shift (Fine)",
+        "axis": "X",
+        "theta": 0.04,
+        "t": 0.2
+      }
+    ],
+    "final": {
+      "axis": "X",
+      "theta": 0.95,
+      "t": 5.0
+    }
+  },
+  "drift": {
+    "status": "warn",
+    "reasons": [
+      "Y Lot 평균이 3시간 동안 −3.80 → −3.49 µm로 흐름 (+0.31 µm) — 워밍업 흐름",
+      "첫 Lot 안 Y 흐름 −0.018 µm/Die (r −0.87), 뒤 Lot으로 갈수록 약 −0.003으로 줄어듦"
+    ],
+    "lot_means": [
+      {
+        "lot": "Sample1902",
+        "start": "2026-11-12T11:25:01",
+        "x": 0.209,
+        "y": -3.796
+      },
+      {
+        "lot": "Sample1903",
+        "start": "2026-11-12T11:48:20",
+        "x": 0.231,
+        "y": -3.762
+      },
+      {
+        "lot": "Sample1904",
+        "start": "2026-11-12T12:11:42",
+        "x": 0.262,
+        "y": -3.731
+      },
+      {
+        "lot": "Sample1905",
+        "start": "2026-11-12T12:35:05",
+        "x": 0.244,
+        "y": -3.684
+      },
+      {
+        "lot": "Sample1906",
+        "start": "2026-11-12T12:58:31",
+        "x": 0.271,
+        "y": -3.66
+      },
+      {
+        "lot": "Sample1907",
+        "start": "2026-11-12T13:21:50",
+        "x": 0.255,
+        "y": -3.611
+      },
+      {
+        "lot": "Sample1908",
+        "start": "2026-11-12T13:45:12",
+        "x": 0.248,
+        "y": -3.574
+      },
+      {
+        "lot": "Sample1909",
+        "start": "2026-11-12T14:08:40",
+        "x": 0.279,
+        "y": -3.552
+      },
+      {
+        "lot": "Sample1910",
+        "start": "2026-11-12T14:31:58",
+        "x": 0.262,
+        "y": -3.519
+      },
+      {
+        "lot": "Sample1911",
+        "start": "2026-11-12T14:52:10",
+        "x": 0.256,
+        "y": -3.49
+      }
+    ],
+    "within_lot": [
+      {
+        "lot": "Sample1902",
+        "axis": "Y",
+        "slope_um_per_die": -0.0184,
+        "r": -0.87
+      },
+      {
+        "lot": "Sample1903",
+        "axis": "Y",
+        "slope_um_per_die": -0.0121,
+        "r": -0.74
+      },
+      {
+        "lot": "Sample1904",
+        "axis": "Y",
+        "slope_um_per_die": -0.0089,
+        "r": -0.61
+      },
+      {
+        "lot": "Sample1905",
+        "axis": "Y",
+        "slope_um_per_die": -0.0072,
+        "r": -0.55
+      },
+      {
+        "lot": "Sample1906",
+        "axis": "Y",
+        "slope_um_per_die": -0.0061,
+        "r": -0.47
+      },
+      {
+        "lot": "Sample1907",
+        "axis": "Y",
+        "slope_um_per_die": -0.0049,
+        "r": -0.4
+      },
+      {
+        "lot": "Sample1908",
+        "axis": "Y",
+        "slope_um_per_die": -0.0042,
+        "r": -0.36
+      },
+      {
+        "lot": "Sample1909",
+        "axis": "Y",
+        "slope_um_per_die": -0.0037,
+        "r": -0.31
+      },
+      {
+        "lot": "Sample1910",
+        "axis": "Y",
+        "slope_um_per_die": -0.0033,
+        "r": -0.28
+      },
+      {
+        "lot": "Sample1911",
+        "axis": "Y",
+        "slope_um_per_die": -0.003,
+        "r": -0.26
+      }
+    ]
+  },
+  "transient": {
+    "status": "ok",
+    "X": {
+      "die1": 0.62,
+      "die2": 0.25,
+      "die3": 0.1
+    },
+    "Y": {
+      "die1": null,
+      "die2": null,
+      "die3": null
+    }
+  },
+  "die_field": [
+    {
+      "die": "Die2",
+      "site_x": 0,
+      "site_y": 0,
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "dx": null,
+      "dy": null
+    },
+    {
+      "die": "Die3",
+      "site_x": 2,
+      "site_y": 0,
+      "x_mm": 40.0,
+      "y_mm": 0.0,
+      "dx": 0.0108,
+      "dy": 0.0569
+    },
+    {
+      "die": "Die4",
+      "site_x": 4,
+      "site_y": 0,
+      "x_mm": 80.0,
+      "y_mm": 0.0,
+      "dx": 0.0205,
+      "dy": 0.0906
+    },
+    {
+      "die": "Die5",
+      "site_x": 6,
+      "site_y": 0,
+      "x_mm": 120.0,
+      "y_mm": 0.0,
+      "dx": 0.0257,
+      "dy": 0.1297
+    },
+    {
+      "die": "Die6",
+      "site_x": 2,
+      "site_y": 2,
+      "x_mm": 40.0,
+      "y_mm": 40.0,
+      "dx": -0.0301,
+      "dy": 0.0413
+    },
+    {
+      "die": "Die7",
+      "site_x": 4,
+      "site_y": 4,
+      "x_mm": 80.0,
+      "y_mm": 80.0,
+      "dx": -0.0653,
+      "dy": 0.086
+    },
+    {
+      "die": "Die8",
+      "site_x": 0,
+      "site_y": 2,
+      "x_mm": 0.0,
+      "y_mm": 40.0,
+      "dx": -0.0356,
+      "dy": 0.0
+    },
+    {
+      "die": "Die9",
+      "site_x": 0,
+      "site_y": 4,
+      "x_mm": 0.0,
+      "y_mm": 80.0,
+      "dx": -0.0723,
+      "dy": 0.0004
+    },
+    {
+      "die": "Die10",
+      "site_x": 0,
+      "site_y": 6,
+      "x_mm": 0.0,
+      "y_mm": 120.0,
+      "dx": -0.1247,
+      "dy": -0.0117
+    },
+    {
+      "die": "Die11",
+      "site_x": -2,
+      "site_y": 2,
+      "x_mm": -40.0,
+      "y_mm": 40.0,
+      "dx": -0.042,
+      "dy": -0.0383
+    },
+    {
+      "die": "Die12",
+      "site_x": -4,
+      "site_y": 4,
+      "x_mm": -80.0,
+      "y_mm": 80.0,
+      "dx": -0.0866,
+      "dy": -0.095
+    },
+    {
+      "die": "Die13",
+      "site_x": -2,
+      "site_y": 0,
+      "x_mm": -40.0,
+      "y_mm": 0.0,
+      "dx": -0.0079,
+      "dy": -0.0369
+    },
+    {
+      "die": "Die14",
+      "site_x": -4,
+      "site_y": 0,
+      "x_mm": -80.0,
+      "y_mm": 0.0,
+      "dx": -0.0051,
+      "dy": -0.0816
+    },
+    {
+      "die": "Die15",
+      "site_x": -6,
+      "site_y": 0,
+      "x_mm": -120.0,
+      "y_mm": 0.0,
+      "dx": -0.005,
+      "dy": -0.1342
+    },
+    {
+      "die": "Die16",
+      "site_x": -2,
+      "site_y": -2,
+      "x_mm": -40.0,
+      "y_mm": -40.0,
+      "dx": 0.0259,
+      "dy": -0.0501
+    },
+    {
+      "die": "Die17",
+      "site_x": -4,
+      "site_y": -4,
+      "x_mm": -80.0,
+      "y_mm": -80.0,
+      "dx": 0.0809,
+      "dy": -0.0946
+    },
+    {
+      "die": "Die18",
+      "site_x": 0,
+      "site_y": -2,
+      "x_mm": 0.0,
+      "y_mm": -40.0,
+      "dx": 0.0216,
+      "dy": 0.0007
+    },
+    {
+      "die": "Die19",
+      "site_x": 0,
+      "site_y": -4,
+      "x_mm": 0.0,
+      "y_mm": -80.0,
+      "dx": 0.0787,
+      "dy": 0.004
+    },
+    {
+      "die": "Die20",
+      "site_x": 0,
+      "site_y": -6,
+      "x_mm": 0.0,
+      "y_mm": -120.0,
+      "dx": 0.1234,
+      "dy": -0.0046
+    },
+    {
+      "die": "Die21",
+      "site_x": 2,
+      "site_y": -2,
+      "x_mm": 40.0,
+      "y_mm": -40.0,
+      "dx": 0.0185,
+      "dy": 0.0488
+    },
+    {
+      "die": "Die22",
+      "site_x": 4,
+      "site_y": -4,
+      "x_mm": 80.0,
+      "y_mm": -80.0,
+      "dx": 0.0682,
+      "dy": 0.0888
+    }
+  ],
+  "whatif": {
+    "assumption": "linear kappa_eff (140 Lot, 회전이 스캐너 Y 구동량에 비례)",
+    "rows": [
+      {
+        "recipe_y": -25,
+        "scanner_y": -28.0,
+        "theta": 5.37,
+        "range_mean": 1.32,
+        "range_max": 1.42,
+        "std_mean": 0.33,
+        "std_max": 0.346,
+        "pass_lots": 0,
+        "lots": 140,
+        "current": false
+      },
+      {
+        "recipe_y": -15,
+        "scanner_y": -18.0,
+        "theta": 3.45,
+        "range_mean": 0.86,
+        "range_max": 0.96,
+        "std_mean": 0.216,
+        "std_max": 0.232,
+        "pass_lots": 1,
+        "lots": 140,
+        "current": false
+      },
+      {
+        "recipe_y": -10,
+        "scanner_y": -13.0,
+        "theta": 2.49,
+        "range_mean": 0.64,
+        "range_max": 0.73,
+        "std_mean": 0.162,
+        "std_max": 0.179,
+        "pass_lots": 140,
+        "lots": 140,
+        "current": false
+      },
+      {
+        "recipe_y": -5,
+        "scanner_y": -8.0,
+        "theta": 1.53,
+        "range_mean": 0.46,
+        "range_max": 0.57,
+        "std_mean": 0.113,
+        "std_max": 0.13,
+        "pass_lots": 140,
+        "lots": 140,
+        "current": true
+      },
+      {
+        "recipe_y": -3,
+        "scanner_y": -6.0,
+        "theta": 1.15,
+        "range_mean": 0.41,
+        "range_max": 0.53,
+        "std_mean": 0.097,
+        "std_max": 0.114,
+        "pass_lots": 140,
+        "lots": 140,
+        "current": false
+      },
+      {
+        "recipe_y": 0,
+        "scanner_y": -3.0,
+        "theta": 0.57,
+        "range_mean": 0.36,
+        "range_max": 0.46,
+        "std_mean": 0.08,
+        "std_max": 0.098,
+        "pass_lots": 140,
+        "lots": 140,
+        "current": false
+      }
+    ]
+  },
+  "parts": [
+    {
+      "id": "vision",
+      "verdict": "ok",
+      "reason": "비전 정렬 영상에 회전 없음. 도착 보정량 2–4 µm라 카메라 회전 영향 0.05 µm 이하"
+    },
+    {
+      "id": "f_stage",
+      "verdict": "ok",
+      "reason": "비전 정렬과 같은 판정 — 정렬 직후 회전 없음"
+    },
+    {
+      "id": "z_stage",
+      "verdict": "ok",
+      "reason": "착지 순간 카메라·Tip은 거의 움직이지 않았음 (Tip 0.3 µrad, 전체의 5 %)"
+    },
+    {
+      "id": "z_scanner_tip",
+      "verdict": "ok",
+      "reason": "착지 순간 카메라·Tip은 거의 움직이지 않았음 (Tip 0.3 µrad, 전체의 5 %). 캔틸레버 그림자 기울기는 반대 부호(−0.97 µrad)"
+    },
+    {
+      "id": "xy_stage",
+      "verdict": "ok",
+      "reason": "Stage Cal OFF에서도 θx 그대로(5.36 µrad), 이동 중 yaw 영향 10 nm 이하"
+    },
+    {
+      "id": "xy_scanner_x",
+      "verdict": "ok",
+      "reason": "X로 +31 µm 밀어도(Y 라인) 회전 1.2 µrad 이하 — X 구동 정상"
+    },
+    {
+      "id": "xy_scanner_y",
+      "verdict": "warn",
+      "reason": "X 라인 적용 스캐너 Y −8.2 µm에서 θx 0.95 µrad — 경고 기준(0.7) 초과. κ_eff 0.116 µrad/µm로 회전 원인은 그대로 남아 있음"
+    },
+    {
+      "id": "chuck",
+      "verdict": "na",
+      "reason": "이번 진단으로는 판정할 수 없음 — 게이지 시험 또는 스캐너 회전 시험 필요"
+    },
+    {
+      "id": "sample",
+      "verdict": "ok",
+      "reason": "돌려진 쪽이지 원인이 아님 — 정렬 직후에는 돌아 있지 않음"
+    },
+    {
+      "id": "body",
+      "verdict": "ok",
+      "reason": "착지 순간 카메라·Tip은 거의 움직이지 않았음 (Tip 0.3 µrad, 전체의 5 %) — 본체·헤드 쪽 원인 아님"
+    },
+    {
+      "id": "anti_vibration",
+      "verdict": "ok",
+      "reason": "진동·충격 흔적 없음 (Lot 안 반복성 정상)"
+    },
+    {
+      "id": "efem",
+      "verdict": "ok",
+      "reason": "Align Angle Offset 0.4° → 0°에서도 θx 그대로(5.48 µrad)"
+    }
+  ],
+  "actions": [
+    "측정 전 워밍업 또는 더미 Lot — Y 워밍업 흐름(−3.80 → −3.49 µm)으로 Y 여유가 줄었음",
+    "스캐너 회전 시험(폐루프 2지점 스윕) — 미측정, 출하 검사/스캐너 교체·선형화 후 필수",
+    "Y1/Y2 디텍터 상대 보정 확인 — 필요하면 재보정 후 스윕 시험 반복",
+    "레시피 −5 µm 유지 (현장 실측 X PASS) — 우회책이므로 근본 원인 부품 특정은 계속"
+  ],
+  "warnings": [
+    "테스트용 고정 데이터(fixture) — 현장 −5 µm 10 Lot 숫자로 만든 예시입니다. Die 화살표는 기준 사례(p1)를 θx 비(0.95/5.18)로 줄인 값이고, Lot 평균·Lot 안 기울기·Positioning 단계 값 일부는 예시값입니다."
+  ],
+  "rotation_test": null
+}

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XY Stage 트러블슈팅 사례 라이브러리</title>
+<style>
+:root{color-scheme:light;--bg:#f4f3f0;--card:#fcfcfb;--soft:#f0efec;--border:#dedcd5;--text:#0b0b0b;--text2:#52514e;--muted:#7a7873;--accent:#2a78d6;--good:#0ca30c;--good-bg:#e7f5e7;--warn-bg:#fdf3dc;--warning:#fab219}
+@media (prefers-color-scheme: dark){:root{color-scheme:dark;--bg:#121211;--card:#1a1a19;--soft:#242422;--border:#383835;--text:#f0efec;--text2:#c3c2b7;--muted:#8f8d86;--accent:#3987e5;--good-bg:#16301a;--warn-bg:#3a3018}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 "Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:23px;margin:0 0 4px} h2{font-size:18px;margin:0 0 6px}
+.sub{color:var(--text2);font-size:13.5px}
+.case{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 22px;margin:18px 0}
+.meta{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 10px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;border-radius:999px;padding:1px 10px;background:var(--soft);color:var(--text)}
+.chip.ok{background:var(--good-bg)} .chip.ok::before{content:"✔";color:var(--good)}
+.chip.warn{background:var(--warn-bg)} .chip.warn::before{content:"▲";color:var(--warning)}
+.case p{margin:6px 0;font-size:14.5px}
+.links{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media(max-width:760px){.links{grid-template-columns:1fr}}
+.links a{display:block;background:var(--soft);border-radius:9px;padding:9px 12px;color:var(--text);text-decoration:none;border:1px solid transparent}
+.links a:hover{border-color:var(--accent)}
+.links b{color:var(--accent)}
+.links span{display:block;font-size:12.5px;color:var(--text2)}
+.note{font-size:12.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>XY Stage 트러블슈팅 사례 라이브러리</h1>
+<div class="sub">끝난 조사의 HTML 페이지 모음입니다. 사례마다 한 폴더이며, 페이지는 인터넷 연결 없이 열립니다. 앱의 "3D 트러블슈팅 보고서"는 새 측정의 진단 결과로 같은 형식의 보고서를 만듭니다.</div>
+
+<section class="case" id="case-2026-11-xy-scanner-rotation">
+  <h2>XY 위치 맞춤 X Spec Out — 시료 XY 스캐너 Y 구동 시 회전</h2>
+  <div class="meta">
+    <span class="chip">2026-11</span>
+    <span class="chip">Park NX-Wafer 300 mm</span>
+    <span class="chip">Vision Pattern 시험</span>
+    <span class="chip ok">우회 조치 효과 확인</span>
+    <span class="chip warn">근본 원인 부품 특정 진행 중</span>
+  </div>
+  <p><b>증상</b> — 21 Die × 10 반복 위치 맞춤 시험에서 X Range 1.458 µm(Spec ≤ 1.0), StdDev 0.326 µm(Spec ≤ 0.2)로 X FAIL, Y는 PASS. 14회차 모두 같은 결과.</p>
+  <p><b>원인</b> — X 라인을 잴 때 시료 XY 스캐너를 Y로 약 −28 µm 밀어 두는데, 이때 웨이퍼 전체가 약 5.6 µrad 돌아 X 오차가 Die의 Y 위치에 비례(θx 5.18 µrad)해 커짐. 스캐너 Y 1 µm당 약 0.19 µrad.</p>
+  <p><b>조치</b> — X 라인 레시피 Y 오프셋 −25 → −5 µm: 현장 10 Lot에서 X Range 0.439 µm, StdDev 0.080 µm로 PASS(θx 0.95 µrad). 우회책이며, 어느 부품이 도는지(Y PZT·플렉셔·척 체결·Y1/Y2 디텍터 보정)는 스캐너 회전 시험으로 가릴 예정.</p>
+  <ul class="links">
+    <li><a href="2026-11_xy-scanner-rotation/xy-explainer-3d.html"><b>장비 3D로 보는 원인과 트러블슈팅</b><span>처음 보는 분께 권장 — 하드웨어 3D, 조사 단계, 증거 장면, 레시피·시험</span></a></li>
+    <li><a href="2026-11_xy-scanner-rotation/xy-where-is-the-problem.html"><b>어디가 문제인가</b><span>그림으로 짚어 보기 — 착지 영상 화살표, 스캐너 위치별 회전</span></a></li>
+    <li><a href="2026-11_xy-scanner-rotation/xy-root-cause-troubleshooting.html"><b>원인과 트러블슈팅 (v2)</b><span>원인 확인 과정과 확인·조치 절차</span></a></li>
+    <li><a href="2026-11_xy-scanner-rotation/xy-root-cause-final.html"><b>근본 원인 분석 — 최종 보고</b><span>상세 — 데이터 범위, 단계별 오차 분해, 통계</span></a></li>
+  </ul>
+  <p class="note" style="margin-top:10px">공개용 사본입니다 — 고객사 이름, 장비 일련번호, 분석 PC 경로를 지웠습니다. 수치와 장비 모델은 원본과 같습니다. 자세한 내용은 폴더 안 README.md.</p>
+</section>
+
+<p class="note">새 사례 추가: 이 폴더 아래 <code>YYYY-MM_주제/</code> 폴더를 만들고 페이지를 넣은 뒤(고객사 이름·공유 폴더 경로 삭제), 이 목록에 한 칸을 더합니다.</p>
+</main>
+</body>
+</html>

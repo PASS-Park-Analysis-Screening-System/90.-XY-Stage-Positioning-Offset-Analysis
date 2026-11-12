@@ -176,7 +176,8 @@ def test_verify_build_fails_exe_with_private_settings(tmp_path, monkeypatch):
     exe = tmp_path / 'app.exe'
     exe.write_bytes(b'')
     monkeypatch.setattr(verify_build, 'read_bundle', lambda _: [
-        'assets/checklist_guide.png', 'core/settings.json'])
+        'assets/checklist_guide.png', 'core/settings.json',
+        'resources/troubleshoot/report_template.html', 'resources/cases/index.html'])
 
     monkeypatch.setattr(verify_build, 'read_bundled_settings', lambda _: {'last_folder': 'Z:/x'})
     assert verify_build.verify(str(exe)) == 1

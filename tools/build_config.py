@@ -39,12 +39,18 @@ DATAS = [
 
     # core/settings.py 가 os.path.join(sys._MEIPASS, 'core', 'settings.json') 로 찾는다
     (os.path.join('src', 'core', 'settings.json'), 'core'),
+
+    # core/troubleshoot_report.py 가 _MEIPASS/resources/troubleshoot, resources/cases 로 찾는다
+    (os.path.join('src', 'resources', 'troubleshoot'), os.path.join('resources', 'troubleshoot')),
+    (os.path.join('src', 'resources', 'cases'), os.path.join('resources', 'cases')),
 ]
 
 # 빌드 후 EXE 아카이브에 존재해야 하는 파일 (verify_build.py가 검사)
 REQUIRED_IN_BUNDLE = [
     os.path.join('assets', 'checklist_guide.png'),
     os.path.join('core', 'settings.json'),
+    os.path.join('resources', 'troubleshoot', 'report_template.html'),
+    os.path.join('resources', 'cases', 'index.html'),
 ]
 
 # ──────────────────────────────────────────────────────────────────────────
