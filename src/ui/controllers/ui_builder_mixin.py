@@ -14,6 +14,7 @@ from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 from ui.widgets.busy_overlay import BusyOverlay
 from ui.dialogs.image_shift_dialog import open_image_shift_dialog
+from ui.dialogs.scanner_rotation_dialog import open_scanner_rotation_dialog
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -881,6 +882,7 @@ class UIBuilderMixin:
             ('AI 분석용 Markdown', 'Spec 초과 원인 분석을 LLM에 맡기기 위한 Markdown 한 파일\n'
              '요약·원인 단서·회차 비교·Die×Repeat 편차 표 포함', self._export_llm_markdown, PURPLE),
             ('이미지 2장 이동량 분석', 'Capture 이미지 2장(이상)의 이동량을 sub-pixel로 재서 카메라 축 각도·배율 계산 (별도 창)', lambda: open_image_shift_dialog(self), ACCENT),
+            ('스캐너 회전 시험 분석', '폐루프 2지점 스윕 로그(또는 PQC Non-linearity 시트)로 스캐너 회전 κ(µrad/µm)를 계산해 잠정 규격으로 판정 (별도 창)', lambda: open_scanner_rotation_dialog(self), ORANGE),
         ]
         for text, desc, slot, color in export_buttons_data:
             btn = QPushButton(f"{text}")
