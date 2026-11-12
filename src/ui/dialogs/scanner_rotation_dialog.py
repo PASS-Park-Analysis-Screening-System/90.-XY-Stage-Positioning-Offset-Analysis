@@ -12,9 +12,10 @@ Det Stroke를 가설 ④(Y1/Y2 상대 교정) 참고값으로 보인다 (판정 
 해석은 멈추고(취소 깃발) 결과를 버린다. 앱을 끝낼 때도 멈추고 기다리며, 그래도 남으면 main()이
 threads_alive()로 보고 os._exit로 끝낸다.
 
-Y 스윕(본 시험)과 X 스윕(대조)을 차례로 분석하면 Y 결과에 X 결과를 '대조'로 붙인다.
-"진단에 추가"는 결과 dict를 메인 창 _rotation_test_result에 두고, 진단(_xy_diagnosis)이 있으면
-그 'rotation_test'에도 넣는다.
+Y 스윕(본 시험)과 X 스윕(대조)을 차례로 분석하면 Y 결과에 X 결과를 '대조'로 붙인다. X 스윕만으로는 판정하지
+않는다(참고). 지점 좌표는 폐루프·xlsx 모드와 축마다 따로 기억한다.
+"진단에 추가"(폐루프 Y 스윕만)는 복사본을 메인 창 _rotation_test_result에 두고, 메인 창에 set_rotation_test가
+있으면 다른 복사본으로 부른다 (진단 쪽 갱신은 워크스트림 A가 한다 — _xy_diagnosis는 직접 고치지 않는다).
 """
 
 import copy
@@ -45,7 +46,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 TEXT_FILTER = 'XEPi 로그·CSV (*.txt *.log *.csv);;모든 파일 (*)'
 XLSX_FILTER = 'Excel (*.xlsx *.xlsm);;모든 파일 (*)'
 CLOSED_HEADERS = ['구분', '지점', '좌표 (mm)', '이득', '이득 σ', '직각 (mrad)', 'n', '잔차 p-p (µm)', '비선형 (%)',
-                  '빠진 단계 (µm)']
+                  '최저 Score', '빠진·뺀 단계 (µm)']
 OPEN_HEADERS = ['시트', '검출기', '이득 (비전/명령)', '검출기/명령', '비전/검출기', '직각 (mrad)', '잔차 p-p (µm)',
                 'Det Stroke 전 → 후', 'n']
 CHIP_COLORS = {sr.STATUS_OK: GREEN, sr.STATUS_WARN: ORANGE, sr.STATUS_FAIL: RED, sr.STATUS_NA: BG3}
@@ -148,7 +149,8 @@ class _SpotInput(QGroupBox):
         self.text = QPlainTextEdit()
         self.text.setPlaceholderText('XEPi 로그를 붙여 넣으세요 — 한 단계에 한 줄\n'
                                      '15:22:33 Match 1 : (1369.01, 1066.92),Angle = 0.02,Score = 0.97\n'
-                                     '빠진 단계는 그 자리에 "누락" 한 줄\n\n'
+                                     '빠진 단계는 그 자리에 "누락" 한 줄, 다시 잰 단계는 이전 줄을 지우기\n'
+                                     '(또는 줄마다 앞에 명령 값: "-30<탭>Match 1 : …")\n\n'
                                      '또는 CSV: command_um, x_px, y_px[, angle, score]')
         self.text.setStyleSheet(f'background: {BG2}; border: 1px solid {BG3};')
         self.text.setFont(QFont('Consolas', 9))
@@ -172,7 +174,9 @@ class ScannerRotationDialog(QDialog):
         self.setStyleSheet(f'QDialog {{ background: {BG}; color: {FG}; }}')
         self.result = None              # 표시 중인 rotation_test dict
         self._axis = 'Y'
-        self._coords = {axis: list(sr.DEFAULT_SPOT_MM) for axis in sr.AXES}
+        # 지점 좌표는 모드·축마다 따로 (폐루프 지점과 xlsx 검출기 지점은 다른 자리다)
+        self._coords = {(mode, axis): list(sr.DEFAULT_SPOT_MM) for mode in (MODE_CLOSED, MODE_XLSX)
+                        for axis in sr.AXES}
         self._parsed = {}               # 축 → {'a': Sweep, 'b': Sweep, 'date': 분석 시각}
         self._xlsx_path = None
         self._open_parsed = None        # parse_nonlinearity_xlsx 결과
@@ -180,8 +184,11 @@ class ScannerRotationDialog(QDialog):
         self._error = ''
         self._job = 0                   # 해석 작업 번호 (늦게 온 이전 결과는 버린다)
         self._task = None               # 결과를 기다리는 해석 작업
+        self._task_kind = None          # 그 작업이 폐루프 로그(MODE_CLOSED)인지 xlsx(MODE_XLSX)인지
         self._analysis_tasks = set()    # 아직 도는 해석 작업 (멈추라고 한 것 포함) — 끝나야 새로 시작
         self._load_jobs = {}            # 작업 번호 → (지점 입력, 경로)
+        self._latest_load = {}          # 지점 이름 → 마지막으로 시작한 불러오기 작업 번호 (늦게 온 이전 것은 버린다)
+        self._applying_load = False     # 불러온 글을 넣는 중 (사용자가 고친 것으로 보지 않는다)
         self._next_load_job = 1_000_000
         self._build_ui()
         self._sync_coord_inputs()
@@ -365,7 +372,7 @@ class ScannerRotationDialog(QDialog):
         self.btn_csv.clicked.connect(self._save_csv)
         self.btn_add.clicked.connect(self._add_to_diagnosis)
         for spot in (self.spot_a, self.spot_b):
-            spot.text.textChanged.connect(self._on_inputs_changed)
+            spot.text.textChanged.connect(lambda s=spot: self._on_spot_text_changed(s))
             spot.coord.valueChanged.connect(self._on_coord_changed)
             spot.btn_load.clicked.connect(lambda _=False, s=spot: self._choose_spot_file(s))
 
@@ -381,9 +388,9 @@ class ScannerRotationDialog(QDialog):
         self.axis_combo.setCurrentIndex(self.axis_combo.findData(axis))
 
     def _sync_coord_inputs(self):
-        """지점 좌표 칸을 지금 축의 값·이름으로 (Y 스윕 지점은 X로, X 스윕 지점은 Y로 떨어져 있다)."""
+        """지점 좌표 칸을 지금 모드·축의 값·이름으로 (Y 스윕 지점은 X로, X 스윕 지점은 Y로 떨어져 있다)."""
         coord_axis = 'X' if self._axis == 'Y' else 'Y'
-        for spot, value in zip((self.spot_a, self.spot_b), self._coords[self._axis]):
+        for spot, value in zip((self.spot_a, self.spot_b), self._coords[(self._mode(), self._axis)]):
             spot.coord_label.setText(f'스테이지 {coord_axis}')
             spot.coord.blockSignals(True)
             spot.coord.setValue(value)
@@ -398,14 +405,17 @@ class ScannerRotationDialog(QDialog):
         self._recompute()
 
     def _on_coord_changed(self, *_):
-        self._coords[self._axis] = [self.spot_a.coord.value(), self.spot_b.coord.value()]
+        self._coords[(self._mode(), self._axis)] = [self.spot_a.coord.value(), self.spot_b.coord.value()]
         self._recompute()
 
+    def _on_spot_text_changed(self, spot):
+        if not self._applying_load:
+            self._latest_load.pop(spot.name, None)      # 직접 고친 글을 늦게 끝난 불러오기가 덮지 않게
+        self._on_inputs_changed()
+
     def _on_inputs_changed(self, *_):
-        """로그 글·명령 목록이 바뀌면 지금 축의 해석 결과는 맞지 않으므로 버린다."""
-        if self._mode() != MODE_CLOSED:
-            return
-        self._cancel_running()
+        """로그 글·명령 목록이 바뀌면 지금 축의 해석 결과는 맞지 않으므로 (모드와 상관없이) 버린다."""
+        self._cancel_running(MODE_CLOSED)
         self._parsed.pop(self._axis, None)
         self._recompute()
 
@@ -416,6 +426,7 @@ class ScannerRotationDialog(QDialog):
             w.setEnabled(closed)
         self.chk_xlsx_coords.setEnabled(not closed)
         self._cancel_running()
+        self._sync_coord_inputs()
         self._recompute()
 
     def _choose_spot_file(self, spot):
@@ -426,10 +437,11 @@ class ScannerRotationDialog(QDialog):
             self.load_spot_file(spot, path)
 
     def load_spot_file(self, spot, path):
-        """파일을 작업 스레드에서 읽어 지점 글 칸에 넣는다."""
+        """파일을 작업 스레드에서 읽어 지점 글 칸에 넣는다. 지점마다 마지막으로 고른 파일만 넣는다."""
         job = self._next_load_job
         self._next_load_job += 1
         self._load_jobs[job] = (spot, path)
+        self._latest_load[spot.name] = job
         spot.source.setText(f'읽는 중… {path}')
         task = _Task(job, lambda _progress, p=path: sr.read_text_file(p))
         task.done.connect(self._on_load_done)
@@ -438,14 +450,20 @@ class ScannerRotationDialog(QDialog):
 
     def _on_load_done(self, job, text):
         spot, path = self._load_jobs.pop(job, (None, None))
-        if spot is None:
-            return
-        spot.text.setPlainText(text)            # → 입력이 바뀌었으니 이전 결과는 지운다
+        if spot is None or self._latest_load.get(spot.name) != job:
+            return                                  # 그 사이 다른 파일을 골랐거나 글을 직접 고쳤다
+        del self._latest_load[spot.name]
+        self._applying_load = True
+        try:
+            spot.text.setPlainText(text)            # → 입력이 바뀌었으니 이전 결과는 지운다
+        finally:
+            self._applying_load = False
         spot.source.setText(path)
 
     def _on_load_failed(self, job, msg):
         spot, _path = self._load_jobs.pop(job, (None, None))
-        if spot is not None:
+        if spot is not None and self._latest_load.get(spot.name) == job:
+            del self._latest_load[spot.name]
             spot.source.setText(f'읽기 실패: {msg}')
 
     def _choose_xlsx(self):
@@ -457,7 +475,7 @@ class ScannerRotationDialog(QDialog):
             self._run()
 
     def set_xlsx_path(self, path):
-        self._cancel_running()
+        self._cancel_running(MODE_XLSX)
         self._xlsx_path = os.path.normpath(str(path))
         self._open_parsed = None
         self.xlsx_label.setText(self._xlsx_path)
@@ -465,15 +483,21 @@ class ScannerRotationDialog(QDialog):
         self.set_mode(MODE_XLSX)
         self._recompute()
 
-    def _spec(self):
+    def _settings(self, key):
         settings = getattr(self.parent(), 'settings', None)
-        return sr.resolve_spec(settings.get('rotation_spec') if isinstance(settings, dict) else None)
+        return settings.get(key) if isinstance(settings, dict) else None
+
+    def _spec(self):
+        return sr.resolve_spec(self._settings('rotation_spec'))
+
+    def _gate(self):
+        return sr.resolve_gate(self._settings('rotation_test_gate'))
 
     # ── 해석 (작업 스레드) ───────────────────────────────
 
-    def _cancel_running(self):
-        """진행 중인 해석은 다음 단계에서 멈추게 하고, 그 사이 도착한 결과도 버린다."""
-        if self._task is not None:
+    def _cancel_running(self, kind=None):
+        """진행 중인 해석(kind를 주면 그 종류만)은 다음 단계에서 멈추게 하고, 그 사이 도착한 결과도 버린다."""
+        if self._task is not None and (kind is None or self._task_kind == kind):
             self._task.cancelled = True
             self._job += 1
             self._set_busy(False)
@@ -497,18 +521,20 @@ class ScannerRotationDialog(QDialog):
                 self._set_status(str(e), RED)
                 return
             texts = (self.spot_a.text.toPlainText(), self.spot_b.text.toPlainText())
-            axis, ps, coords = self._axis, self.pixel_size.value(), list(self._coords[self._axis])
+            axis, ps = self._axis, self.pixel_size.value()
+            coords, gate = list(self._coords[(MODE_CLOSED, axis)]), self._gate()
 
             def fn(progress):
                 progress(0, 2)
                 a = sr.parse_spot_text(texts[0], commands, 'A')
                 progress(1, 2)
                 b = sr.parse_spot_text(texts[1], commands, 'B')
-                sr.analyze_rotation_test(a, b, axis, ps, coords)    # 계산할 수 있는지 미리 본다 (오류는 문구로)
+                sr.analyze_rotation_test(a, b, axis, ps, coords, gate=gate)     # 계산할 수 있는지 미리 본다
                 progress(2, 2)
                 return 'closed', axis, {'a': a, 'b': b}
         self._job += 1
         task = _Task(self._job, fn)
+        self._task_kind = self._mode()
         task.done.connect(self._on_done)
         task.failed.connect(self._on_failed)
         task.progress.connect(self._on_progress)
@@ -534,6 +560,8 @@ class ScannerRotationDialog(QDialog):
             t.wait()
             _live_threads.discard(t)
             self._analysis_tasks.discard(t)
+        if self._task is None and self.status.text().startswith(('이전 분석을 멈추는 중', '분석 중')):
+            self._show_results()                    # 멈춘 작업의 '분석 중…'이 남지 않게
         self._update_buttons()
 
     def run_and_wait(self, timeout_ms=60000):
@@ -582,15 +610,15 @@ class ScannerRotationDialog(QDialog):
     # ── 계산·표시 ────────────────────────────────────────
 
     def _compute(self):
-        stage, spec = self.stage_combo.currentText(), self._spec()
+        stage, spec, gate = self.stage_combo.currentText(), self._spec(), self._gate()
         if self._mode() == MODE_XLSX:
             if self._open_parsed is None:
                 return None
-            positions = tuple(self._coords[self._axis]) if self.chk_xlsx_coords.isChecked() else None
+            positions = tuple(self._coords[(MODE_XLSX, self._axis)]) if self.chk_xlsx_coords.isChecked() else None
             return sr.analyze_open_loop(self._open_parsed, axis=self._axis, positions_mm=positions,
-                                        stage=stage, spec=spec, date=self._open_date)
-        results = {axis: sr.analyze_rotation_test(p['a'], p['b'], axis, self.pixel_size.value(), self._coords[axis],
-                                                  stage, spec, p['date'])
+                                        stage=stage, spec=spec, date=self._open_date, gate=gate)
+        results = {axis: sr.analyze_rotation_test(p['a'], p['b'], axis, self.pixel_size.value(),
+                                                  self._coords[(MODE_CLOSED, axis)], stage, spec, p['date'], gate)
                    for axis, p in self._parsed.items()}
         if 'Y' in results:
             return sr.combine_control(results['Y'], results.get('X'))
@@ -622,6 +650,8 @@ class ScannerRotationDialog(QDialog):
             else:
                 text = (f'분석 완료 — {res["axis"]} 스윕' if res['loop'] == sr.LOOP_CLOSED
                         else '분석 완료 — 개루프 PQC Non-linearity 시트 (참고값)')
+                if res['loop'] == sr.LOOP_CLOSED and res['axis'] != 'Y':
+                    text += ' (대조, 참고 — 판정하려면 Y 스윕도 분석하세요)'
                 if res.get('control'):
                     text += f' + 대조 {res["control"]["axis"]} 스윕'
                 if res['loop'] == sr.LOOP_CLOSED and self._axis not in self._parsed:
@@ -641,10 +671,18 @@ class ScannerRotationDialog(QDialog):
         elif res['loop'] == sr.LOOP_OPEN:
             status, text = sr.STATUS_NA, '참고\n개루프'
             self.spec_label.setText('개루프(servo OFF) 참고값 — 잠정 규격으로 판정하지 않습니다 (가설 ④ Y1/Y2 상대 교정)')
-            self.kappa_label.setText(sr.kappa_text(res) + (' (개루프 비틀림)' if res.get('kappa') is not None else ''))
+            self.kappa_label.setText(sr.kappa_text(res))
+        elif res.get('gate'):
+            status, text = sr.STATUS_NA, '판정\n보류'
+            self.spec_label.setText('입력이 그럴듯하지 않아 판정하지 않습니다 — 이유 맨 앞 [판정 보류] 항목을 확인하세요')
+            self.kappa_label.setText(sr.kappa_text(res))
+        elif res['axis'] != 'Y':
+            status, text = sr.STATUS_NA, '참고\nX 대조'
+            self.spec_label.setText('X 스윕은 대조(참고) — 판정하지 않습니다. 본 시험은 Y 스윕입니다')
+            self.kappa_label.setText(sr.kappa_text(res))
         else:
             status = res['status']
-            text = sr.STATUS_LABELS[status] + ('\n불합격' if status == sr.STATUS_FAIL else '')
+            text = sr.verdict_label(res) + ('\n불합격' if status == sr.STATUS_FAIL else '')
             self.spec_label.setText(sr.spec_text(res.get('spec')) + ' — 장비 데이터(평균 + 3σ)로 확정 예정')
             self.kappa_label.setText(sr.kappa_text(res))
         color = CHIP_COLORS[status]
@@ -675,7 +713,7 @@ class ScannerRotationDialog(QDialog):
                                  sr.fmt_num(loc.get('gain'), '.5f'), sr.fmt_num(loc.get('gain_se'), '.5f'),
                                  sr.fmt_num(loc.get('perp_mrad'), '+.2f'), f'{loc.get("n")}/{loc.get("n_total")}',
                                  sr.fmt_num(loc.get('residual_pp_um'), '.3f'), sr.fmt_num(loc.get('nonlinearity_pct'), '.2f'),
-                                 ', '.join(f'{v:+g}' for v in loc.get('missing_um') or []) or '없음'])
+                                 sr.fmt_num(loc.get('min_score'), '.2f'), sr.excluded_text(loc)])
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setRowCount(len(rows))
@@ -740,8 +778,13 @@ class ScannerRotationDialog(QDialog):
 
     def _update_buttons(self):
         has = self.result is not None
-        for b in (self.btn_copy, self.btn_csv, self.btn_add):
+        for b in (self.btn_copy, self.btn_csv):
             b.setEnabled(has)
+        # 진단에는 폐루프 Y 스윕 결과만 판정으로 넣는다 (X 대조·개루프는 참고값)
+        addable = sr.can_add_to_diagnosis(self.result)
+        self.btn_add.setEnabled(addable)
+        self.btn_add.setToolTip('결과를 진단(rotation_test)에 넣습니다' if addable or not has else
+                                'X 스윕 대조·개루프 시트는 참고값이라 진단에 넣지 않습니다 — 폐루프 Y 스윕을 분석하세요')
         # 멈추라고 한 이전 해석이 끝나기 전에는 새로 시작하지 않는다 (작업이 쌓이지 않게)
         self.btn_run.setEnabled(self._task is None and not self._analysis_tasks)
 
@@ -772,19 +815,23 @@ class ScannerRotationDialog(QDialog):
         self._set_status(f'CSV 저장: {path}', GREEN)
 
     def _add_to_diagnosis(self):
-        """결과를 메인 창 _rotation_test_result에 두고, 진단이 있으면 rotation_test에 넣는다."""
+        """결과를 메인 창에 넘긴다 (워크스트림 A와 맞춘 약속).
+
+        - 메인 창 _rotation_test_result에 복사본을 둔다 (진단을 실행하면 A가 읽는다).
+        - 메인 창에 set_rotation_test가 있으면 다른 복사본으로 부른다 (A가 저장된 진단을 고친다).
+        - _xy_diagnosis는 직접 고치지 않는다.
+        """
         window = self.parent()
-        if self.result is None or window is None:
+        if window is None or not sr.can_add_to_diagnosis(self.result):
             return
-        data = copy.deepcopy(self.result)
-        window._rotation_test_result = data
-        diag = getattr(window, '_xy_diagnosis', None)
-        if isinstance(diag, dict):
-            diag['rotation_test'] = data
-            msg = '진단에 추가했습니다 (rotation_test)'
-        elif diag is not None and hasattr(diag, 'rotation_test'):
-            diag.rotation_test = data
-            msg = '진단에 추가했습니다 (rotation_test)'
-        else:
-            msg = '결과를 저장했습니다 — 진단을 만들면 rotation_test로 들어갑니다'
-        self._set_status(msg, GREEN)
+        window._rotation_test_result = copy.deepcopy(self.result)
+        hook = getattr(window, 'set_rotation_test', None)
+        if not callable(hook):
+            self._set_status('메인 창에 두었습니다 — 진단 실행 시 포함됩니다', GREEN)
+            return
+        try:
+            hook(copy.deepcopy(self.result))
+        except Exception as e:      # A 쪽 오류가 창을 막지 않게 — 사용자에게 보인다
+            self._set_status(f'진단 저장 실패: {e} (결과는 메인 창에 두었고 진단 실행 시 포함됩니다)', RED)
+            return
+        self._set_status('진단에 저장됨 (rotation_test)', GREEN)
