@@ -15,6 +15,7 @@ from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 from ui.widgets.busy_overlay import BusyOverlay
 from ui.dialogs.image_shift_dialog import open_image_shift_dialog
 from ui.dialogs.troubleshoot_launcher import open_case_library, open_troubleshoot_report
+from ui.dialogs.scanner_rotation_dialog import open_scanner_rotation_dialog
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -884,6 +885,7 @@ class UIBuilderMixin:
             ('이미지 2장 이동량 분석', 'Capture 이미지 2장(이상)의 이동량을 sub-pixel로 재서 카메라 축 각도·배율 계산 (별도 창)', lambda: open_image_shift_dialog(self), ACCENT),
             ('3D 트러블슈팅 보고서', '진단 결과로 장비 3D·Die 화살표·What-if가 든 HTML 한 파일을 만들어 기본 브라우저로 열기', lambda: open_troubleshoot_report(self), GREEN),
             ('사례 라이브러리', '끝난 조사 사례(HTML 페이지 모음)를 기본 브라우저로 열기', lambda: open_case_library(self), PURPLE),
+            ('스캐너 회전 시험 분석', '폐루프 2지점 스윕 로그(또는 PQC Non-linearity 시트)로 스캐너 회전 κ(µrad/µm)를 계산해 잠정 규격으로 판정 (별도 창)', lambda: open_scanner_rotation_dialog(self), ORANGE),
         ]
         for text, desc, slot, color in export_buttons_data:
             btn = QPushButton(f"{text}")
