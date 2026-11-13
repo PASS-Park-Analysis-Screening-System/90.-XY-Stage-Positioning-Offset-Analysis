@@ -126,7 +126,7 @@ a{color:var(--accent)}
 <div class="card">
   <h2>그림 1. 무슨 일이 일어나나 (회전은 ×10,000 확대)</h2>
   <svg id="mech" viewBox="0 0 1060 330" width="100%" role="img" aria-label="측정 순서별 웨이퍼 회전 모식도"></svg>
-  <p style="margin:8px 0 0">비전은 ① 스캐너가 가운데(0)에 있을 때 패턴을 정확히 맞춥니다. 그다음 ② X 라인 위치(정렬점에서 Y −25 µm 아래)로 가기 위해
+  <p style="margin:8px 0 0">비전은 ① 스캐너가 가운데(0)에 있을 때 패턴을 정확히 맞춥니다. 그다음 ② X 라인 위치(Tip 기준점 = 패턴 바깥 틀의 좌상단 꼭짓점에서 Y −25 µm 아래, 패턴의 왼쪽 세로 엣지)로 가기 위해
   <b>스테이지가 아니라 시료 스캐너</b>를 −28 µm 움직이는데, 이때 스캐너 위의 척·웨이퍼가 함께 미세하게 돕니다.
   회전 중심에서 먼 Die일수록 더 많이 밀립니다. 비전은 이미 정렬을 끝낸 뒤이고, 스캐너 센서는 이동 거리만 재므로(지령값과 2 nm 이내 일치) <b>아무도 이 회전을 보지 못합니다</b>.</p>
   <table style="margin-top:10px">
@@ -214,24 +214,27 @@ a{color:var(--accent)}
   <div class="arrow-down"></div>
 
   <div class="step"><div class="snum">2</div><div class="body">
-    <h3>확정 시험 — X 라인의 스캐너 Y 오프셋만 바꿔서 3 Lot</h3>
+    <h3>확정 시험 겸 대책 — X 라인의 스캐너 Y 오프셋만 −25 / −15 / −5 µm로 바꿔 3 Lot</h3>
     <table>
-      <tr><th>X 라인 스캐너 Y 오프셋</th><th class="r">−25 µm (지금)</th><th class="r">0 µm</th><th class="r">+25 µm</th></tr>
-      <tr><td>예측 θx (µrad)</td><td class="r">+5.3</td><td class="r">+0.5</td><td class="r"><b>−4.3 (부호 반전)</b></td></tr>
-      <tr><td>예측 X 판정</td><td class="r">Spec Out</td><td class="r">PASS</td><td class="r">Spec Out (반대 방향)</td></tr>
+      <tr><th>X 라인 레시피 Y 오프셋</th><th class="r">−25 µm (이전)</th><th class="r">−15 µm</th><th class="r">−5 µm (현장 적용)</th></tr>
+      <tr><td>예측 θx (µrad)</td><td class="r">5.4</td><td class="r">3.5</td><td class="r">1.5</td></tr>
+      <tr><td>예측 X 판정</td><td class="r">Spec Out</td><td class="r">대부분 Spec Out (StdDev, 1/140 Lot PASS)</td><td class="r">PASS</td></tr>
+      <tr><td>현장 실측</td><td class="r">θx 5.18 · 0/14 PASS</td><td class="r">—</td><td class="r"><span class="tag ok">θx 0.95 · X Range 0.439 / Std 0.080 PASS</span></td></tr>
     </table>
-    <p style="font-size:13.5px;margin:8px 0 0">같은 패턴 위치를 재야 하므로, 오프셋 0·+25 µm에서는 <b>모자란 거리를 스테이지 이동으로</b> 채워야 합니다(레시피에서 정렬 기준·Translate로 조정).
-    패턴의 세로 엣지가 ±25 µm 범위까지 이어져 있으면 스캐너 오프셋만 바꿔도 됩니다. PASS 앱 Positioning Log 탭에서 θx를 바로 확인합니다.</p>
+    <p style="font-size:13.5px;margin:8px 0 0">세 값 모두 X 라인이 <b>같은 왼쪽 세로 엣지</b>를 꼭짓점(Tip 기준점) 아래에서 가로지르므로, <b>스캐너 오프셋만</b> 바꾸면 됩니다(엣지는 꼭짓점 아래로 약 200 µm 이어짐).
+    0은 꼭짓점 자체라 깨끗한 엣지가 없고, + 값은 꼭짓점 위쪽 = 패턴 밖이라 엣지가 없어 측정할 수 없습니다.
+    θx가 5.4 → 3.5 → 1.5처럼 오프셋을 따라 줄어들면 원인 확정이면서 동시에 대책 검증입니다. PASS 앱 Positioning Log 탭에서 θx를 바로 확인합니다.</p>
+    <div class="verdict A" style="background:var(--good-bg)">−5 µm는 현장에서 이미 확인됨 (2026-11-12, 10 Lot): 앱 판정 X Range 0.439 µm, StdDev 0.080 µm → PASS, θx 0.95 µrad(예측 1.5보다 작음). 남은 −15 µm 1 Lot은 중간 값에서도 θx가 예측대로 줄어드는지 보는 확인용입니다(선택).</div>
     <div class="branch">
-      <div class="b a"><h3>결과 A — θx가 오프셋을 따라 변하고 +25에서 부호가 바뀜</h3>
+      <div class="b a"><h3>결과 A — θx가 오프셋을 따라 줄어듦 (−5에서 이미 확인: 5.18 → 0.95)</h3>
         <b>원인 확정.</b>
         <ul style="margin:6px 0 0;padding-left:18px;font-size:13.5px">
-          <li><b>단기 조치 (바로 PASS):</b> X 라인을 <b>스캐너 Y 오프셋 ≈ 0</b>에서 측정하도록 레시피 변경 — 패턴 위치까지는 스테이지로 이동. 예측: X Range 1.32 → 약 0.4 µm.</li>
+          <li><b>단기 조치 (적용 완료):</b> X 라인 레시피 Y 오프셋 <b>−25 → −5 µm</b> (같은 왼쪽 엣지, 꼭짓점 여유 5 µm) — 현장 결과 앱 판정 X Range 0.439 / StdDev 0.080 µm PASS.</li>
           <li>레시피를 못 바꾸면 SW 보정: <span class="kbd">ΔX = 0.19 µrad/µm × (스캐너 Y µm) × (Die Y mm) / 1000</span> µm (부호는 시험 결과에 맞춤).</li>
           <li><b>근본 조치:</b> 도는 부품 찾기 — 척 위에 오토콜리메이터를 두고 스캐너 Y를 움직이며 각도 측정. 스캐너 플렉셔의 기생 회전(yaw)이면 스캐너 교정/교체, 척·θ축이면 체결·강성 점검. 장비 제조사 문의 자료로 이 페이지와 상세 보고서를 사용.</li>
         </ul></div>
       <div class="b bb"><h3>결과 B — θx가 오프셋과 무관</h3>
-        회전 모델 기각 → 상세 보고서 §7의 정지 시험(T2·T3)으로 다시 추적. 이 경우 시험 1 결과와 함께 다시 분석합니다.</div>
+        (−5 µm 실측에서 θx가 5.18 → 0.95로 줄어 현재는 해당 없음.) 이런 결과가 나왔다면 회전 모델 기각 → 상세 보고서 §7의 정지 시험(T2·T3)으로 다시 추적. 이 경우 시험 1 결과와 함께 다시 분석합니다.</div>
     </div>
   </div></div>
   <div class="arrow-down"></div>
@@ -301,24 +304,31 @@ function draw(){
   const p0x=10,pw=250;
   el('rect',{x:p0x,y:30,width:pw-10,height:250,rx:10,fill:css('--surface-2'),stroke:css('--border')},m);
   txt(m,p0x+(pw-10)/2,20,'Die 한 개 확대 — 측정 위치',{'text-anchor':'middle','font-weight':700,'font-size':13});
-  const ox=p0x+95,oy=120,s=2.6; // px per µm
-  el('rect',{x:ox-14,y:oy-14,width:28,height:28,rx:3,fill:'none',stroke:css('--text-secondary'),'stroke-width':2},m);
-  el('circle',{cx:ox,cy:oy,r:3,fill:css('--text-primary')},m);
-  txt(m,ox-20,oy-20,'비전 정렬점',{'font-size':11.5,'text-anchor':'middle',fill:css('--text-secondary')});
-  // X line at y -25
-  const xl=oy+25*s;
-  el('line',{x1:ox-26,x2:ox+26,y1:xl,y2:xl,stroke:css('--critical'),'stroke-width':3,'stroke-linecap':'round'},m);
-  txt(m,ox,xl+20,'X 라인 (Y −25 µm)',{'font-size':11.5,'text-anchor':'middle'});
-  el('line',{x1:ox-40,x2:ox-40,y1:oy,y2:xl,stroke:css('--critical'),'stroke-width':1.5,'stroke-dasharray':'4 3'},m);
-  txt(m,ox-36,oy+30,'스캐너 Y −28 µm',{'font-size':11,'text-anchor':'start',fill:css('--critical')});
-  // Y line at x +30
-  const yx=ox+30*s;
-  el('line',{x1:yx,x2:yx,y1:oy-26,y2:oy+26,stroke:css('--accent'),'stroke-width':3,'stroke-linecap':'round'},m);
-  txt(m,yx,oy-34,'Y 라인 (X +30 µm)',{'font-size':11.5,'text-anchor':'middle'});
-  el('line',{x1:ox,x2:yx,y1:oy+40,y2:oy+40,stroke:css('--accent'),'stroke-width':1.5,'stroke-dasharray':'4 3'},m);
-  txt(m,(ox+yx)/2,oy+56,'스캐너 X +31, Y −1',{'font-size':11,'text-anchor':'middle',fill:css('--accent')});
+  // pattern as on the vision screen: ~200 µm frame (light), dark squares top-right & bottom-left,
+  // Tip reference point = frame's top-left corner. Scale 0.8 px/µm.
+  const ox=p0x+60,oy=70,s=0.8,X=u=>ox+u*s,Y=v=>oy-v*s;
+  // fixed image grays (like the camera picture, same in both themes)
+  el('rect',{x:p0x+6,y:36,width:pw-22,height:200,rx:6,fill:'#cfcdc7'},m);
+  el('rect',{x:X(0),y:Y(0),width:200*s,height:Math.min(200*s,236-oy),fill:'#f7f6f3'},m);
+  el('rect',{x:X(100),y:Y(-20),width:80*s,height:80*s,fill:'#9a9891'},m);
+  el('rect',{x:X(20),y:Y(-100),width:80*s,height:Math.min(80*s,236-Y(-100)),fill:'#9a9891'},m);
+  el('line',{x1:ox-8,x2:ox+8,y1:oy,y2:oy,stroke:css('--accent'),'stroke-width':2},m);
+  el('line',{x1:ox,x2:ox,y1:oy-8,y2:oy+8,stroke:css('--accent'),'stroke-width':2},m);
+  txt(m,ox-6,oy-12,'Tip 기준점',{'font-size':11.5,'text-anchor':'end','font-weight':700,fill:'#1c5cab'});
+  // X line: 20 µm horizontal, 25 µm below the corner, crossing the LEFT vertical edge
+  el('line',{x1:X(-10),x2:X(10),y1:Y(-25),y2:Y(-25),stroke:css('--critical'),'stroke-width':3,'stroke-linecap':'round'},m);
+  txt(m,X(-14),Y(-25)-2,'X 라인',{'font-size':11.5,'text-anchor':'end','font-weight':700,fill:'#0b0b0b'});
+  txt(m,X(-14),Y(-25)+12,'−25 µm',{'font-size':11,'text-anchor':'end',fill:'#52514e'});
+  // new recipe: 5 µm below the corner, same left edge
+  el('line',{x1:X(-10),x2:X(10),y1:Y(-5),y2:Y(-5),stroke:css('--good'),'stroke-width':2.5,'stroke-dasharray':'4 3'},m);
+  // Y line: 20 µm vertical, 30 µm right of the corner, crossing the TOP horizontal edge
+  el('line',{x1:X(30),x2:X(30),y1:Y(12),y2:Y(-8),stroke:css('--accent'),'stroke-width':3,'stroke-linecap':'round'},m);
+  txt(m,X(30)+6,oy-16,'Y 라인 (+30 µm)',{'font-size':11.5,'text-anchor':'start','font-weight':700,fill:'#0b0b0b'});
+  txt(m,p0x+10,248,'X 라인: 왼쪽 세로 엣지 → 스캐너 Y −28 µm',{'font-size':11,'text-anchor':'start',fill:css('--critical')});
+  txt(m,p0x+10,262,'Y 라인: 위쪽 가로 엣지 → 스캐너 X +31, Y −1',{'font-size':11,'text-anchor':'start',fill:css('--accent')});
+  txt(m,p0x+10,276,'초록 점선 = 새 레시피 −5 µm (같은 엣지)',{'font-size':10.5,'text-anchor':'start',fill:css('--text-secondary')});
   const h0=el('rect',{x:p0x,y:30,width:pw-10,height:250,fill:'transparent'},m);
-  hover(h0,'<b>측정 위치</b><br>X 라인 패턴은 비전 정렬점에서 Y로 −25 µm 아래에 있어, 장비가 시료 스캐너를 Y −28 µm(기준 스캔 보정 −2.7 포함) 옮겨 잽니다.<br>Y 라인은 X로 +30 µm 옆이라 스캐너를 X로 옮기고, Y는 거의 0입니다.');
+  hover(h0,'<b>측정 위치</b> (비전 화면 기준)<br>패턴 = 약 200 µm 바깥 틀 + 안쪽 어두운 사각형 2개(오른쪽 위·왼쪽 아래). <b>Tip 기준점 = 바깥 틀의 좌상단 꼭짓점</b>.<br>X 라인은 꼭짓점에서 Y로 −25 µm 아래에서 <b>왼쪽 세로 엣지</b>를 가로지르므로, 장비가 시료 스캐너를 Y −28 µm(기준 스캔 보정 −2.7 포함) 옮겨 잽니다.<br>Y 라인은 X로 +30 µm 옆에서 <b>위쪽 가로 엣지</b>를 가로지르므로 스캐너를 X로 옮기고, Y는 거의 0입니다.<br>+ 값은 꼭짓점 위쪽 = 패턴 밖 → 엣지 없음, 측정 불가.');
 
   const panels=[
     ['① 비전 정렬','스캐너 (0, 0)',0,false,'패턴을 십자(Tip 위치)에 정확히 맞춤 — 회전 없음'],

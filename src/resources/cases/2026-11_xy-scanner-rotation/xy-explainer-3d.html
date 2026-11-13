@@ -17,7 +17,7 @@
   --m-avt:#e3e1db; --m-body:#d6d4cd; --m-stage:#bfe3ea; --m-scan:#cfe8cf; --m-plate:#e2f1e2;
   --m-hinge:#8f8d86; --m-pzt:#b9b7b0; --m-chuck:#b9b6af; --m-wafer:#d3d9e2; --m-die:#f7f9fc;
   --m-zst:#bfe3ea; --m-fst:#bfe3ea; --m-vis:#ece8c0; --m-cone:#efe39a; --m-zsc:#cfe8cf; --m-tip:#7a7873;
-  --m-efem:#d9d7d0; --m-pattern:#8f8d86; --m-gauge:#6f6d68;
+  --m-efem:#d9d7d0; --m-pattern:#8f8d86; --m-gauge:#6f6d68; --m-piezo:#79c27d;
 }
 @media (prefers-color-scheme: dark){
   :root:where(:not([data-theme="light"])) .viz-root{
@@ -31,7 +31,7 @@
     --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
     --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
     --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
-    --m-efem:#42413d; --m-pattern:#6b6a66; --m-gauge:#9a9890;
+    --m-efem:#42413d; --m-pattern:#6b6a66; --m-gauge:#9a9890; --m-piezo:#3f8a4a;
   }
 }
 :root[data-theme="dark"] .viz-root{
@@ -45,7 +45,7 @@
   --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
   --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
   --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
-  --m-efem:#42413d; --m-pattern:#6b6a66; --m-gauge:#9a9890;
+  --m-efem:#42413d; --m-pattern:#6b6a66; --m-gauge:#9a9890; --m-piezo:#3f8a4a;
 }
 *{box-sizing:border-box}
 body{margin:0;background:#f4f3f0}
@@ -313,12 +313,13 @@ svg text{font-family:inherit}
       <!-- D -->
       <div data-side="D">
         <div class="h"><label for="dOff">X 라인 레시피 Y 오프셋</label></div>
-        <input type="range" id="dOff" min="0" max="5" step="1" value="3" style="width:100%">
-        <div class="ticks6"><span>−25</span><span>−15</span><span>−10</span><span style="color:var(--good);font-weight:800">−5 ✔</span><span>−3</span><span>0</span></div>
+        <input type="range" id="dOff" min="0" max="6" step="1" value="3" style="width:100%">
+        <div class="ticks6"><span>−25</span><span>−15</span><span>−10</span><span style="color:var(--good);font-weight:800">−5 ✔</span><span>−3</span><span>0</span><span style="color:var(--critical)">+5</span></div>
         <div style="margin-top:4px"><span class="chip ok" style="white-space:normal">−5 µm: 현장 적용됨 · 실측 X Range 0.44 µm / Std 0.080 µm (PASS)</span></div>
         <div class="read" id="dRead"></div>
         <div class="h">Die 확대 — X 라인 위치</div>
         <svg id="insetD" viewBox="0 0 312 230" width="100%" style="max-width:380px;display:block" role="img" aria-label="레시피 오프셋별 X 라인 위치"></svg>
+        <div class="legend" id="dLeg" style="margin-top:4px"></div>
         <div id="dBars"></div>
       </div>
       <!-- E -->
@@ -357,22 +358,21 @@ svg text{font-family:inherit}
   <div class="below" data-below="C">
     <table>
       <tr><th style="width:5%">#</th><th style="width:29%">의심 부위</th><th>이렇게 되면</th><th style="width:27%">구분 방법</th></tr>
-      <tr><td>①</td><td>Y PZT가 미는 점·선의 정렬 (예압, 접촉면, 접착)</td><td>미는 힘이 상판의 강성 중심(⊕)을 비껴가 → 밀 때마다 상판이 비틀림</td><td>게이지 시험에서 <b>상판도 돎</b></td></tr>
-      <tr><td>②</td><td>Y 방향 플렉셔 힌지의 좌·우 강성 차 (체결 볼트 토크, 힌지 손상)</td><td>한쪽이 덜 휘어 → 같은 힘에도 상판이 비틀림</td><td>게이지 시험에서 <b>상판도 돎</b> (①과는 분해 점검으로 구분)</td></tr>
+      <tr><td>①</td><td>Y PZT 쌍(앞·뒤)의 미는 힘 불균형·정렬·예압 (스크류·압축 스프링, Force lever 접촉점)</td><td>두 힘이 같지 않거나 미는 선이 이동부의 강성 중심(⊕)을 비껴가 → 밀 때마다 이동부가 비틀림</td><td>게이지 시험에서 <b>상판도 돎</b></td></tr>
+      <tr><td>②</td><td>플렉셔 힌지 강성 차 (네 모서리 힌지, 체결 볼트 토크, 힌지 손상)</td><td>한쪽이 덜 휘어 → 같은 힘에도 이동부가 비틀림</td><td>게이지 시험에서 <b>상판도 돎</b> (①과는 분해 점검으로 구분)</td></tr>
       <tr><td>③</td><td>XY Scanner 상판과 척/θ 사이 체결</td><td>상판은 곧게 가는데 Y 구동 반력으로 척만 비틀림</td><td>게이지 시험에서 <b>상판은 안 돌고 척만 돎</b></td></tr>
       <tr><td>④</td><td>Y1/Y2 디텍터 상대 보정(선형화) 불일치 <span class="chip warn">가설</span></td><td>듀얼 서보가 Y1·Y2를 같은 값으로 맞추는데, 보정이 δ만큼 달라 실제 위치가 δ × (Y 이동)만큼 어긋남 → 회전 = δ × Y 이동 ÷ (Y1–Y2의 X 거리). 거리 100–200 mm에서 δ ≈ 2–4 %면 0.19 µrad/µm 설명</td><td><b>폐루프 2지점 스윕 시험</b> → DB 확인 → 재보정 후 재시험. <b>기계 작업 없이</b> 고칠 수 있음</td></tr>
     </table>
     <div class="box warn"><b>데이터가 증명한 것:</b> 스캐너를 <b>Y로 구동할 때</b> 웨이퍼가 돈다(1 µm당 0.19 µrad, t ≈ 11). X 구동은 거의 없다(≤ 0.04 µrad/µm).<br>
     <b>증명하지 못한 것:</b> ①②③④ 중 어느 것인지. 데이터만으로는 가를 수 없어 장면 E의 시험으로 가립니다.</div>
-    <p class="src">④와 개루프 수치(Y1 1.19, Y2 1.31 등)의 출처: PQC 작업지시서 WI-XY Scanner-01 "XY Non-linearity error" 시험(2026-09-14 Before/After). 위치 맞춤 통계와는 별개의 시험입니다.</p>
+    <p class="src">④와 개루프 수치(Y1 1.19, Y2 1.31–1.33 등)의 출처: PQC 작업지시서 WI-XY Scanner-01 "XY Non-linearity error" 시험(2026-09-14 Before/After). 위치 맞춤 통계와는 별개의 시험입니다.</p>
   </div>
   <div class="below" data-below="D">
     <table id="dTable">
       <tr><th class="r">레시피 Y 오프셋 (µm)</th><th class="r">실제 스캐너 Y (µm)</th><th class="r">예측 θx (µrad)</th><th class="r">X Range 평균 / 최대 (µm)</th><th class="r">X Std 평균 / 최대 (µm)</th><th class="r">PASS Lot</th></tr>
     </table>
     <p class="note" style="margin:4px 0 0">예측: 140 Lot 데이터, 회전이 Y 구동량에 비례(선형)한다고 가정. Spec: X Range ≤ 1.0 µm, StdDev ≤ 0.2 µm. 초록 행 = 현장 실측(2026-11-12, 10 Lot, 실제 적용 스캐너 Y −8.2 µm).</p>
-    <div class="box good"><b>현장 결과 (2026-11-12, 10 Lot):</b> X 라인 Y Offset −25 → −5 µm 적용 후 앱 판정 X Range <b>0.439 µm</b>, X StdDev <b>0.080 µm</b> → <b>PASS</b>. Lot당 X Range 평균 0.30 µm(예측 0.46), θx 0.95 ± 0.14 µrad(예측 1.53)로 예측보다 좋았습니다 — 오프셋이 작을 때 1 µm당 회전도 작기 때문입니다(여기 0.95 ÷ 8.2 ≈ 0.12 µrad/µm, −28 µm에서는 0.19). Y는 PASS지만 워밍업 흐름 때문에 여유가 줄어, 측정 전 워밍업 또는 더미 Lot을 권합니다.<br><br><b>권장: −5 µm.</b> 꼭짓점과 <b>같은 쪽</b>이라 엣지 방향(밝기가 바뀌는 방향)이 지금과 같고, 같은 세로 엣지를 꼭짓점에서 5 µm 떨어진 곳에서 그대로 가로지릅니다.
-    꼭짓점 <b>너머(+ 값)</b>로 넘어가면 엣지 방향이 뒤집히므로 쓰지 않습니다. <b>0 µm</b>는 선이 꼭짓점 자체를 지나 쓸 수 없습니다.</div>
+    <div class="box good"><b>현장 결과 (2026-11-12, 10 Lot):</b> X 라인 Y Offset −25 → −5 µm 적용 후 앱 판정 X Range <b>0.439 µm</b>, X StdDev <b>0.080 µm</b> → <b>PASS</b>. Lot당 X Range 평균 0.30 µm(예측 0.46), θx 0.95 ± 0.14 µrad(예측 1.53)로 예측보다 좋았습니다 — 오프셋이 작을 때 1 µm당 회전도 작기 때문입니다(여기 0.95 ÷ 8.2 ≈ 0.12 µrad/µm, −28 µm에서는 0.19). Y는 PASS지만 워밍업 흐름 때문에 여유가 줄어, 측정 전 워밍업 또는 더미 Lot을 권합니다.<br><br><b>권장: −5 µm.</b> X 라인은 <b>같은 왼쪽 세로 엣지</b>를, Tip 기준점(패턴 바깥 틀의 좌상단 꼭짓점)에서 5 µm 아래에서 가로지릅니다 — 엣지도 극성(밝기가 바뀌는 방향)도 지금과 같습니다. <b>0 µm</b>는 꼭짓점 자체라 깨끗한 엣지가 없어 쓸 수 없고, <b>+ 값은 꼭짓점 위쪽 = 패턴 밖</b>이라 엣지가 없어 측정할 수 없습니다. 왼쪽 엣지는 약 200 µm 이어지므로 −5 ~ −190 µm는 모두 기하학적으로 가능하지만, |오프셋|이 작을수록 회전이 작으므로 꼭짓점 여유 5 µm를 둔 −5 µm를 씁니다.</div>
     <div class="box info"><b>시험 겸 대책:</b> −25 / −15 / −5 µm로 3 Lot을 재면 원인 확인과 대책 검증이 한 번에 됩니다. 예측 θx는 5.4 / 3.5 / 1.5 µrad. 데이터에는 작은 오프셋에서 회전이 더 작아지는(비선형) 흔적이 있어, 실제 결과는 표보다 좋을 수 있습니다 — 현장 실측이 실제로 그랬습니다(θx 0.95, 예측 1.53).</div>
   </div>
   <div class="below" data-below="E">
@@ -388,7 +388,7 @@ svg text{font-family:inherit}
       <table style="margin-top:10px">
         <tr><th>게이지 위치</th><th>①·②·④(스캐너 안)라면</th><th>③(척 체결)이라면</th></tr>
         <tr><td>척 좌·우 끝</td><td>약 3 µm 차이</td><td>약 3 µm 차이</td></tr>
-        <tr><td>스캐너 상판 좌·우 끝</td><td>약 3 µm 차이</td><td>거의 0</td></tr>
+        <tr><td>스캐너 상판 좌·우 끝</td><td>차이 있음 (게이지 간격에 비례)</td><td>거의 0</td></tr>
       </table>
       <p class="note">그림 메모: 둥근 척의 가장자리는 돌아도 모양이 같아 게이지가 회전을 보기 어렵습니다. 그림에서는 척 위에 곧은 기준 블록을 고정하고 그 앞면에 댔습니다. 게이지 대신 척 위 거울 + 오토콜리메이터로 각도를 직접 재도 됩니다(약 11 µrad 변화 예상).</p>
     </div>
@@ -427,7 +427,7 @@ if(HS.theme==='dark'||HS.theme==='light')document.documentElement.setAttribute('
 
 /* ---------- theme colours ---------- */
 const C={};
-const CK=['surface-0','surface-1','surface-2','border','grid','text-primary','text-secondary','text-muted','accent','pos','series-2','good','warning','critical','bg3d','m-avt','m-body','m-stage','m-scan','m-plate','m-hinge','m-pzt','m-chuck','m-wafer','m-die','m-zst','m-fst','m-vis','m-cone','m-zsc','m-tip','m-efem','m-pattern','m-gauge'];
+const CK=['surface-0','surface-1','surface-2','border','grid','text-primary','text-secondary','text-muted','accent','pos','series-2','good','warning','critical','bg3d','m-avt','m-body','m-stage','m-scan','m-plate','m-hinge','m-pzt','m-chuck','m-wafer','m-die','m-zst','m-fst','m-vis','m-cone','m-zsc','m-tip','m-efem','m-pattern','m-gauge','m-piezo'];
 function readTheme(){const cs=getComputedStyle(root);CK.forEach(k=>C[k]=cs.getPropertyValue('--'+k).trim());C.dark=(cs.getPropertyValue('color-scheme')||'').indexOf('dark')>=0;}
 function hex2rgb(h){h=(h||'#888888').replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return [(n>>16)&255,(n>>8)&255,n&255];}
 const rgbs=(c,a)=>{const v=c.map(x=>Math.round(clamp(x,0,255)));return a==null?`rgb(${v.join(',')})`:`rgba(${v.join(',')},${a})`;};
@@ -441,6 +441,7 @@ const VG=v=>v==='no'?'✖':v==='warn'?'▲':v==='ok'?'✔':v==='info'?'●':'—
 const F=[[-6,0,0.197,-0.176,-0.027,-0.732,-0.028,-0.202,-0.02,-0.111],[-4,-4,0.052,0.277,0.441,-0.516,0.091,-0.171,-0.027,-0.072],[-4,0,0.025,-0.119,-0.028,-0.445,-0.027,-0.089,-0.013,-0.077],[-4,4,0.134,0.015,-0.472,-0.518,-0.128,-0.168,-0.01,-0.072],[-2,-2,0.031,0.404,0.141,-0.273,-0.03,-0.115,-0.028,-0.04],[-2,0,0.052,-0.26,-0.043,-0.201,-0.029,-0.021,-0.012,-0.047],[-2,2,-0.044,-0.212,-0.229,-0.209,-0.061,-0.027,0.004,-0.054],[0,-6,-0.102,0.364,0.673,-0.025,0.144,-0.043,-0.04,0.027],[0,-4,0.109,0.259,0.429,0.022,0.094,0.017,-0.039,0.03],[0,-2,-0.029,0.265,0.118,0.004,-0.064,-0.01,-0.037,0.027],[0,2,-0.019,-0.278,-0.194,0,-0.022,0.015,0.007,-0.018],[0,4,0.187,-0.141,-0.394,0.002,-0.031,0.009,0.004,-0.031],[0,6,0.34,-0.223,-0.68,-0.064,-0.152,-0.061,0.007,-0.04],[2,-2,0.021,0.426,0.101,0.266,-0.075,0.075,-0.049,0.082],[2,0,0.124,-0.41,0.059,0.31,0.076,0.146,0.154,0.066],[2,2,0.001,-0.136,-0.164,0.225,0.014,0.051,0.028,0.02],[4,-4,-0.153,0.313,0.372,0.484,0.004,0.13,-0.053,0.117],[4,0,-0.321,-0.061,0.112,0.494,0.111,0.143,0.081,0.072],[4,4,-0.288,-0.067,-0.356,0.469,-0.019,0.122,0.006,0.043],[6,0,-0.317,-0.239,0.14,0.707,0.131,0.199,0.038,0.079]];
 const SITES=F.map(r=>[r[0],r[1]]).concat([[0,0]]);
 // recipe table (Scene D) — brief: 140 lots, linear rotation, spec range ≤ 1.0, std ≤ 0.2
+const DOFF=[-25,-15,-10,-5,-3,0,5];
 const REC=[[-25,-28,5.37,1.32,1.42,0.330,0.346,'0/140'],[-15,-18,3.45,0.86,0.96,0.216,0.232,'1/140'],[-10,-13,2.49,0.64,0.73,0.162,0.179,'140/140'],[-5,-8,1.53,0.46,0.57,0.113,0.130,'140/140'],[-3,-6,1.15,0.41,0.53,0.097,0.114,'140/140'],[0,-3,0.57,0.36,0.46,0.080,0.098,'140/140']];
 const KAPPA=0.192; // µrad per µm of scanner Y drive (summary.md)
 
@@ -453,19 +454,19 @@ const PARTS={
  body:{n:'Body (본체)',v:'ok',vt:'관련 없음',what:'ㄴ자 모양의 뼈대입니다. 두꺼운 아랫부분 위에 스테이지들이 놓이고, +Y 쪽 기둥이 위로 올라가 헤드(Z Stage)를 붙잡습니다.',why:BODYWHY},
  encl:{n:'Acoustic Enclosure (방음 인클로저)',v:'ok',vt:'관련 없음',what:'장비 전체를 감싸는 방음 덮개입니다. 바깥 소음과 공기 흐름을 막습니다. 그림을 가리지 않도록 처음에는 숨겨 두었습니다.',why:BODYWHY},
  stage:{n:'XY Stage (장거리 XY 스테이지)',v:'ok',vt:'정상',what:'본체 위에서 300 mm 범위로 크게 움직여, 잴 Die를 Tip 아래로 가져옵니다. 개략도의 굵은 화살표 = 긴 이동.',why:'Stage Cal(스테이지 이동 보정)을 꺼도 θx가 그대로(5.36 µrad)였고, 이동 중 생기는 회전(yaw)이 측정에 주는 영향은 10 nm 이하입니다.'},
- scanner:{n:'XY Scanner (시료 XY 스캐너)',v:'no',vt:'여기 — Y 구동',what:'XY Stage 위에 얹혀 시료를 약 100 µm 범위로 아주 정밀하게 옮깁니다(개략도의 점선 화살표 = 짧은 이동). 플렉셔 + X PZT + Y PZT + 위치 디텍터 4개(X1·X2·Y1·Y2)로 되어 있고, 측정 위치(스캐너 오프셋)를 잡아 둡니다. DB 설정 bUseDualServo = 1 — 한 축의 디텍터 2개를 함께 쓰는 듀얼 서보로 상판이 비틀리지 않게 붙잡습니다(XEPi: XY Servo Type "Det 1 & 2", Rotation feedback gain). PQC Non-linearity 시험(WI-XY Scanner-01)은 각 디텍터를 비전에 맞춰 보정합니다.',
+ scanner:{n:'XY Scanner (시료 XY 스캐너)',v:'no',vt:'여기 — Y 구동',what:'XY Stage 위에 얹혀 시료를 약 100 µm 범위로 아주 정밀하게 옮깁니다(개략도의 점선 화살표 = 짧은 이동). <b>고정부</b>(바깥 틀)와 <b>이동부</b>(Sample Chuck과 시료가 올라감)로 되어 있고, 네 모서리의 <b>Flexure hinge</b>가 둘을 잇습니다. 구동은 <b>Stacked Piezo 2쌍 + Force lever</b>(각 4개) — 앞·뒤 쌍이 Y, 좌·우 쌍이 X. 위치 디텍터 4개는 이동부 네 변 가운데에 있습니다(<b>Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞</b>). 측정 위치(스캐너 오프셋)를 잡아 둡니다. DB 설정 bUseDualServo = 1 — 한 축의 디텍터 2개를 함께 쓰는 듀얼 서보로 상판이 비틀리지 않게 붙잡습니다(XEPi: XY Servo Type "Det 1 & 2", Rotation feedback gain). PQC Non-linearity 시험(WI-XY Scanner-01)은 각 디텍터를 비전에 맞춰 보정합니다.',
    rows:[['no','Y 구동','Y로 −28 µm 밀어 둔 동안에만 웨이퍼 전체가 반시계로 5.6 µrad 돕니다.'],['ok','X 구동','X로 +31 µm 밀어도 회전은 1.2 µrad 이하입니다.']]},
- ypzt:{n:'Y PZT (Y 방향 구동)',v:'no',vt:'여기 — Y 구동',what:'전압을 걸면 늘어나 상판을 Y 방향(개략도의 가로 방향)으로 미는 압전 소자입니다.',why:'이 방향으로 밀어 둔 동안에만 회전이 생깁니다(1 µm당 0.19 µrad). 후보 ① — 미는 점·정렬·예압이 상판 중심을 비껴가면 밀 때마다 비틀립니다. 1순위 후보로 보지만 ②·③·④와 아직 구분되지 않았습니다.'},
- xpzt:{n:'X PZT (X 방향 구동)',v:'ok',vt:'정상',what:'상판을 X 방향으로 미는 압전 소자입니다.',why:'X로 +31 µm 밀어도(Y 라인 측정) 회전은 1.2 µrad 이하 — X 구동은 정상입니다.'},
- flexure:{n:'Flexure (플렉셔 힌지)',v:'warn',vt:'후보 ②',what:'상판을 붙잡고 있는 얇은 금속 힌지입니다. 마찰 없이 휘면서 상판이 곧게 움직이도록 안내합니다.',why:'Y 방향 힌지의 좌·우 강성(뻣뻣함)이 다르면 같은 힘에도 상판이 비틀립니다. 게이지 시험 + 분해 점검으로 확인합니다.'},
- detector:{n:'Detector X1·X2·Y1·Y2 (위치 디텍터)',v:'warn',vt:'후보 ④ — Y1/Y2 상대 보정',what:'스캐너가 얼마나 움직였는지 재는 센서 4개입니다. Y1과 Y2는 X 방향으로 서로 다른 쪽에, X1과 X2는 Y 방향으로 서로 다른 쪽에 있습니다(작업지시서 그림 기준 대략 위치). 듀얼 서보는 같은 축의 두 디텍터 값을 맞춰 상판의 비틀림을 잡습니다.',why:'디텍터 값은 지령과 2 nm 이내로 일치합니다 — 다만 이것은 "이동량"이 맞다는 뜻이고 회전은 보지 못합니다. 가설 ④: Y1과 Y2의 상대 보정이 몇 % 어긋나 있으면, 서보가 두 값을 같게 맞추는 순간 실제로는 작은 회전이 남습니다. 2026-09-14 Non-linearity 시험은 각 디텍터를 자기 축 방향으로 한 지점에서만 보므로 이 가설을 배제하지 못합니다.'},
+ ypzt:{n:'Y PZT 쌍 (앞·뒤, Y 구동)',v:'no',vt:'여기 — Y 구동',what:'앞·뒤 두 변에 있는 적층 압전 소자(Stacked Piezo) 한 쌍입니다. 전압을 걸면 늘어나고, Force lever(지렛대)를 통해 이동부를 Y 방향(개략도의 가로 방향)으로 움직입니다. 스크류와 압축 스프링으로 예압을 줍니다.',why:'이 방향으로 밀어 둔 동안에만 회전이 생깁니다(1 µm당 0.19 µrad). 후보 ① — 앞·뒤 PZT의 미는 힘 불균형, 미는 점의 정렬, 예압(스크류·압축 스프링)이 어긋나면 밀 때마다 이동부가 비틀립니다. 1순위 후보로 보지만 ②·③·④와 아직 구분되지 않았습니다.'},
+ xpzt:{n:'X PZT 쌍 (좌·우, X 구동)',v:'ok',vt:'정상',what:'좌·우 두 변의 Stacked Piezo 한 쌍이 Force lever로 이동부를 X 방향으로 움직입니다.',why:'X로 +31 µm 밀어도(Y 라인 측정) 회전은 1.2 µrad 이하 — X 구동은 정상입니다.'},
+ flexure:{n:'Flexure hinge (플렉셔 힌지)',v:'warn',vt:'후보 ②',what:'고정부(바깥 틀)와 이동부를 네 모서리에서 잇는 얇은 금속 힌지입니다. 마찰 없이 휘면서 이동부가 곧게 움직이도록 안내합니다.',why:'후보 ② — 힌지 강성(뻣뻣함)이 서로 다르면 같은 힘에도 이동부가 비틀립니다. 게이지 시험 + 분해 점검으로 확인합니다.'},
+ detector:{n:'Detector Y1·Y2·X1·X2 (위치 디텍터)',v:'warn',vt:'후보 ④ — Y1/Y2 상대 보정',what:'스캐너가 얼마나 움직였는지 재는 센서 4개로, 이동부 네 변 가운데에 있습니다(작업지시서 그림 "XY detector 위치"): <b>Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞</b>. 이동부의 PSPD가 아래 LED 빛의 위치로 이동량을 읽습니다. Y1·Y2는 X 방향으로 떨어져 있어, Y로 밀 때 생기는 비틀림을 감지·보정할 수 있는 쌍입니다(듀얼 서보, Rotation feedback). X1·X2는 Y 방향으로 떨어져 있습니다.',why:'디텍터 값은 지령과 2 nm 이내로 일치합니다 — 다만 이것은 "이동량"이 맞다는 뜻이고 회전은 보지 못합니다. 가설 ④: Y1과 Y2의 상대 보정이 몇 % 어긋나 있으면, 서보가 두 값을 같게 맞추는 순간 실제로는 작은 회전이 남습니다. 2026-09-14 Non-linearity 시험은 각 디텍터를 자기 축 방향으로 한 지점에서만 보므로 이 가설을 배제하지 못합니다.'},
  chuck:{n:'척 / θ (시료 고정)',v:'warn',vt:'후보 ③',what:'웨이퍼를 붙잡는 판(척)과 방향을 맞추는 회전축(θ)입니다. XY Scanner 상판 위에 체결되어 있습니다. 공식 개략도에서는 Sample(시료) 묶음 안에 함께 그려져 있는데, 후보 ③(상판 ↔ 척/θ 체결)을 보이기 위해 얇은 층으로 따로 그렸습니다.',why:'상판과 척/θ 사이 체결이 약하면, 상판은 곧게 가는데 척만 비틀릴 수 있습니다. 게이지 시험(장면 E)으로 상판과 구분합니다.'},
  wafer:{n:'Sample (시료 / 웨이퍼)',v:'ok',vt:'원인 아님',what:'300 mm Metrocal 기준 웨이퍼입니다. Die가 20 mm 간격이고, X/Y −120 ~ +120 mm 사이 21개 Die를 잽니다.',why:'"돌려진 쪽"이지 원인이 아닙니다. 비전 정렬 직후에는 돌아 있지 않고, Die마다 스캐너 오프셋이 ±0.4 µm씩 다른 만큼 오차도 따라 변해(t ≈ 11) 웨이퍼 자체의 패턴 오차가 아닙니다.'},
  zstage:{n:'Z Stage (Z 스테이지)',v:'ok',vt:'정상',what:'본체 기둥의 −Y 면에 볼트로 붙은 큰 상하 이동축입니다. F Stage(비전)와 Z Scanner(Tip)를 함께 싣고 위아래로 크게 움직입니다.',why:TIPWHY},
  fstage:{n:'F Stage (초점 스테이지)',v:'ok',vt:'정상',what:'Z Stage의 −Y 쪽에 붙어 비전 카메라를 위아래로 움직여 초점을 맞춥니다.',why:VISWHY},
  vision:{n:'Vision (비전 카메라)',v:'ok',vt:'정상',what:'F Stage에 달린 카메라입니다. 아래로 뻗은 원뿔이 광학 경로로, 시료 표면에 초점이 모입니다. 패턴을 보고 측정 위치를 맞추는 비전 정렬에 쓰고, Tip이 내려앉는 순간도 찍습니다.',why:VISWHY},
- zscan:{n:'Z Scanner (Z 스캐너)',v:'ok',vt:'정상',what:'F Stage 아래, Z Stage의 −Y 쪽에 매달린 미세 상하 구동부입니다(개략도의 점선 화살표 = 짧은 이동). 아래 끝에 캔틸레버와 Tip이 달려 있고, 표면 높이를 따라 Tip을 위아래로 움직입니다. 라인 스캔 때 옆으로 움직이는 것은 XY Scanner입니다.',why:TIPWHY},
- tip:{n:'Cantilever / Tip (캔틸레버 / 탐침)',v:'ok',vt:'정상',what:'Z Scanner 아래 끝의 얇은 판(캔틸레버)과 그 끝의 뾰족한 바늘(Tip)입니다. 비전 원뿔이 시료에 닿는 곳 바로 옆에 내려앉아 표면을 더듬습니다.',why:TIPWHY+' 정렬 영상의 캔틸레버 그림자도 반대 부호(−0.97 µrad)여서 "Tip이 움직였다"는 가설은 기각되었습니다. 별도 발견: Lot 진행 중 Tip 쪽 Y가 조금씩 흐르는 현상이 Y Fail 3/149 Lot의 원인이었습니다(이번 X 문제와는 별개).'},
+ zscan:{n:'Z Scanner (Z 스캐너)',v:'ok',vt:'정상',what:'F Stage 아래, Z Stage의 −Y 쪽에 매달린 미세 상하 구동부입니다(개략도의 점선 화살표 = 짧은 이동). 아래 끝에 캔틸레버와 Tip(Probe)이 달려 있습니다. 헤드 안의 <b>레이저</b>가 빔 조정 거울을 거쳐 캔틸레버 뒷면에 빛을 쏘고, 반사된 빛을 <b>PSPD</b>(빛의 위치를 재는 센서)가 받아 캔틸레버가 휘는 양을 잽니다(광 지렛대, 그림의 빨간 선). Z Scanner는 이 신호로 Probe를 위아래로 움직여 표면 높이를 따라갑니다. 라인 스캔 때 옆으로 움직이는 것은 XY Scanner입니다.',why:TIPWHY},
+ tip:{n:'Cantilever / Tip (캔틸레버 / 탐침)',v:'ok',vt:'정상',what:'Z Scanner 아래 끝의 얇은 판(캔틸레버)과 그 끝의 뾰족한 바늘(Tip)입니다. 비전 원뿔이 시료에 닿는 곳 바로 옆에 내려앉아 표면을 더듬습니다. 캔틸레버가 휘는 양은 헤드의 레이저와 PSPD(광 지렛대)로 읽습니다.',why:TIPWHY+' 정렬 영상의 캔틸레버 그림자도 반대 부호(−0.97 µrad)여서 "Tip이 움직였다"는 가설은 기각되었습니다. 별도 발견: Lot 진행 중 Tip 쪽 Y가 조금씩 흐르는 현상이 Y Fail 3/149 Lot의 원인이었습니다(이번 X 문제와는 별개).'},
  efem:{n:'EFEM (웨이퍼 로더)',v:'ok',vt:'원인 아님',what:'장비 정면에서 볼 때 <b>왼쪽</b>(−X), 인클로저 밖에 있는 웨이퍼 반송 장치입니다(공식 개략도에는 없음). 웨이퍼를 <b>왼쪽에서</b> 장비 안으로 넣어 척 위에 올리고(그림의 점선 원판과 화살표), 넣을 때 Align Angle Offset(0.4°)만큼 웨이퍼 방향을 돌려 맞춥니다.',why:'Align Angle Offset을 0°로 바꿔도 θx가 그대로(5.48 µrad)였습니다.'}
 };
 const PLIST=[
@@ -656,17 +657,23 @@ function machine(S,o){
   const L0=[mkBox(sx,sy,Z.stage+dS,360,360,61,C['m-stage'],'stage',{after:(v,b)=>{const z=246+dS,cl=C['text-primary'];if(b.vis.includes(2))v.arrow3([sx-120,sy-180.6,z],[sx+120,sy-180.6,z],cl,3.6,11,true);else if(b.vis.includes(4))v.arrow3([sx+180.6,sy-120,z],[sx+180.6,sy+120,z],cl,3.6,11,true);else if(b.vis.includes(5))v.arrow3([sx-180.6,sy-120,z],[sx-180.6,sy+120,z],cl,3.6,11,true);}})];
   const L1=[],zs=Z.scan+dSc;
   const wall=(x,y,w,d,aft)=>L1.push(mkBox(sx+x,sy+y,zs,w,d,54,C['m-scan'],'scanner',{after:aft}));
-  if(!o.noFrontWall){wall(-96,-161,148,18);wall(96,-161,148,18,(v,b)=>{if(b.vis.includes(2))v.arrow3([sx+38,sy-170.6,304+dSc],[sx+152,sy-170.6,304+dSc],C['text-secondary'],2,8,true,[5,4]);});}
-  wall(0,161,340,18);wall(-161,0,18,304);wall(161,-87,18,130);wall(161,87,18,130);
-  L1.push(mkBox(pc[0],pc[1],281+dP,260,260,50,C['m-plate'],'scanner',{rot:rp,pv:pc}));
-  [[-141,80,'L'],[-141,-80,'L'],[141,80,'R'],[141,-80,'R']].forEach(q=>{const hot=o.hingeHot===q[2];L1.push(mkBox(sx+q[0]+sh[0]*0.5,sy+q[1]+sh[1]*0.5,zs+10,22,hot?18:10,32,hot?C.critical:C['m-hinge'],'flexure'));});
-  const ypx=o.ypzX||0,yEnd=-130+sh[1];
-  L1.push(mkBox(sx+ypx,sy+(-170+yEnd)/2,zs+14,40,yEnd+170,26,o.ypzCol||(o.hotY?C.critical:C['m-pzt']),'ypzt'));
-  const xEnd=130+sh[0];
-  L1.push(mkBox(sx+(170+xEnd)/2,sy,zs+14,170-xEnd,40,26,o.hotX?C.critical:C['m-pzt'],'xpzt'));
-  // four position detectors (approximate places from the WI drawing)
-  const DET=[['X1',90,161,24,14],['Y1',-60,161,24,14],['Y2',161,45,14,24],['X2',-90,-161,24,14]];
-  DET.forEach(q=>{const hot=o.detHot&&q[0][0]==='Y';L1.push(mkBox(sx+q[1],sy+q[2],zs+54,q[3],q[4],12,hot?C.critical:C.accent,'detector',{after:o.detTags?((v)=>v.tag3([sx+q[1]+(q[2]>150?0:q[1]>150?20:0),sy+q[2]+(q[2]>150?20:q[2]<-150?-20:0),zs+66],q[0],{size:11.5,w:800,col:hot?C.critical:C.accent,align:'center'})):null}));});
+  /* XY Scanner after the official structure slide: fixed frame + moving stage joined by corner flexure hinges,
+     2 pairs of stacked piezos with force levers (Y pair front/back, X pair left/right),
+     4 detectors in the middle of each side of the moving stage (Y1 left, Y2 right, X1 back, X2 front). */
+  if(!o.noFrontWall){wall(-110,-161,120,18);wall(110,-161,120,18,(v,b)=>{if(b.vis.includes(2))v.arrow3([sx+58,sy-170.6,304+dSc],[sx+162,sy-170.6,304+dSc],C['text-secondary'],2,8,true,[5,4]);});}
+  wall(-110,161,120,18);wall(110,161,120,18);
+  wall(-161,-101,18,102);wall(-161,101,18,102);wall(161,-101,18,102);wall(161,101,18,102);
+  L1.push(mkBox(pc[0],pc[1],281+dP,220,220,50,C['m-plate'],'scanner',{rot:rp,pv:pc}));
+  [[1,1],[-1,1],[1,-1],[-1,-1]].forEach(q=>{const hot=o.hingeHot==='L'&&q[0]<0;const ax=q[0]*110+sh[0],ay=q[1]*110+sh[1],bx=q[0]*152,by=q[1]*152,cx=sx+(ax+bx)/2,cy=sy+(ay+by)/2;
+    L1.push(mkBox(cx,cy,zs+12,Math.hypot(bx-ax,by-ay),hot?16:9,30,hot?C.critical:C['m-hinge'],'flexure',{rot:Math.atan2(by-ay,bx-ax),pv:[cx,cy]}));});
+  const pzY=o.ypzCol||(o.hotY?C.critical:C['m-piezo']),pzX=o.hotX?C.critical:C['m-piezo'],lv=C['m-hinge'],fo=o.ypzOff||0;
+  L1.push(mkBox(sx,sy-160,zs+16,84,16,24,pzY,'ypzt'));L1.push(mkBox(sx+fo,sy+(-262+sh[1])/2,zs+20,12,42+sh[1],14,o.ypzOff?C.critical:lv,'ypzt'));
+  L1.push(mkBox(sx,sy+160,zs+16,84,16,24,pzY,'ypzt'));L1.push(mkBox(sx,sy+(262+sh[1])/2,zs+20,12,42-sh[1],14,lv,'ypzt'));
+  L1.push(mkBox(sx-160,sy,zs+16,16,84,24,pzX,'xpzt'));L1.push(mkBox(sx+(-262+sh[0])/2,sy,zs+20,42+sh[0],12,14,lv,'xpzt'));
+  L1.push(mkBox(sx+160,sy,zs+16,16,84,24,pzX,'xpzt'));L1.push(mkBox(sx+(262+sh[0])/2,sy,zs+20,42-sh[0],12,14,lv,'xpzt'));
+  [['Y1',-95,0],['Y2',95,0],['X1',0,95],['X2',0,-95]].forEach(q=>{const hot=o.detHot&&q[0][0]==='Y';const P=rotZ([pc[0]+q[1],pc[1]+q[2],0],rp,pc);
+    L1.push(mkBox(P[0],P[1],327+dP,18,18,8,hot?C.critical:C.accent,'detector'));
+    if(o.detTags)S.post.push(v=>v.tag3([P[0],P[1],346+dP],q[0],{size:11.5,w:800,col:hot?C.critical:C.accent,align:'center'}));});
   const L2=[];
   if(o.chuck!==false)L2.push(mkCyl(pc[0],pc[1],Z.chuck+dC,152,20,o.chuckCol||C['m-chuck'],'chuck',{n:44,rot,pv:pc,alpha:o.chuckAlpha,after:(v)=>chuckDecal(v,o,pc,pc0,rot,Z.chuck+dC+20)}));
   const L3=[];
@@ -689,6 +696,7 @@ function machine(S,o){
   if(o.loadPath)S.post.push(v=>{const z=392,pts=[];for(let i=0;i<48;i++){const a=i/48*2*Math.PI;pts.push([-310+150*Math.cos(a),150*Math.sin(a),z]);}v.poly3(pts,rgbs(hex2rgb(C['m-wafer']),0.35),C['text-secondary'],1.2,[5,4]);v.arrow3([-468,0,z+2],[-150,0,z+2],C.accent,2.6,11,false,[8,6]);});
   if(o.transit){const t=o.transit;S.free.push(mkCyl(t[0],t[1],t[2],150,4,C['m-wafer'],'wafer',{n:56,after:(v)=>waferDecal(v,{},[t[0],t[1]],[t[0],t[1]],0,t[2]+4)}));}
   if(o.encl)S.post.push(v=>wireBox(v,[-430,430],[-410,565],[0,860]));
+  if(o.laser&&o.head!==false){const zt=360*e+((o.tipGap==null?14:o.tipGap)-14),L=[-40,30,470+zt],Cb=[0,4,392+zt],P=[40,30,470+zt];S.post.push(v=>{v.pl3([L,Cb,P],C.pos,1.6);[L,P].forEach(q=>{const r=v.p(q);v.ctx.fillStyle=C.pos;v.ctx.beginPath();v.ctx.arc(r[0],r[1],3,0,Math.PI*2);v.ctx.fill();});});}
 }
 function wireBox(v,X,Y,Zr){const col=C['text-muted'];const P=(i,j,k)=>[X[i],Y[j],Zr[k]];
   v.poly3([P(0,0,1),P(1,0,1),P(1,1,1),P(0,1,1)],rgbs(hex2rgb(C['text-muted']),0.05),col,1.4);
@@ -738,9 +746,9 @@ function frame(ts){
 const HW={e:0,eT:0,sel:null,labels:true,encl:false};
 function hwLabels(e){
   const dB=60*e,dS=110*e,dSc=170*e,dC=250*e,dW=300*e,dH=360*e;
-  const L=[['avt',[300,-370,48]],['body',[-260,-287,170+dB]],['stage',[150,-180,250+dS]],['scanner',[-150,-170,300+dSc]],['ypzt',[0,-170,306+dSc]],['chuck',[125,-85,341+dC]],['wafer',[-90,-110,355+dW]],
+  const L=[['avt',[300,-370,48]],['body',[-260,-287,170+dB]],['stage',[150,-180,250+dS]],['scanner',[-150,-170,300+dSc]],['ypzt',[0,-160,317+dSc]],['chuck',[125,-85,341+dC]],['wafer',[-90,-110,355+dW]],
     ['zstage',[60,140,790+dH]],['fstage',[-55,80,700+dH]],['vision',[-55,-113,700+dH]],['zscan',[40,49,520+dH]],['tip',[0,0,375+dH]],['efem',[-600,-200,430]]];
-  if(e>0.5)L.push(['xpzt',[170,0,306+dSc]],['flexure',[141,-80,330+dSc]],['detector',[-90,-161,343+dSc]]);
+  if(e>0.5)L.push(['xpzt',[160,0,317+dSc]],['flexure',[131,-131,322+dSc]],['detector',[0,-95,335+200*e]]);
   if(HW.encl)L.push(['encl',[-430,-410,860]]);
   const SIDE={body:'L',efem:'L',scanner:'L',wafer:'L',vision:'L',fstage:'L',detector:'L',encl:'L',zstage:'R',zscan:'R',tip:'R',chuck:'R',ypzt:'R',stage:'R',avt:'R',xpzt:'R',flexure:'R'};
   const out=L.map(q=>({a:q[1],t:PARTS[q[0]].n,v:PARTS[q[0]].v,part:q[0],side:SIDE[q[0]]}));
@@ -750,7 +758,7 @@ function hwLabels(e){
 const V1=new View($('cv1'),{
   home:{yaw:0.28,pitch:0.34,zoom:1,target:[-140,20,400],fit:{w:1330,h:1150,pad:150,dist:3400,dy:-28}},
   yawR:[-1.2,1.2],
-  build:(S,v)=>{v.sel=HW.sel;v.zoomMul=1/(1+0.42*HW.e);machine(S,{e:HW.e,efem:true,loadPath:HW.e<0.05,encl:HW.encl,detTags:HW.e>0.5});if(HW.labels)S.labels=hwLabels(HW.e);v.target[2]=400+190*HW.e;},
+  build:(S,v)=>{v.sel=HW.sel;v.zoomMul=1/(1+0.42*HW.e);machine(S,{e:HW.e,efem:true,loadPath:HW.e<0.05,encl:HW.encl,detTags:HW.e>0.5,laser:true});if(HW.labels)S.labels=hwLabels(HW.e);v.target[2]=400+190*HW.e;},
   onPick:(part)=>{selectPart(part);},
   onHover:(v,x,y,e)=>{if(x==null){v.hov=null;hideTip();v.cv.style.cursor='';v.dirty=true;return;}const p=v.pick(x,y);if(p!==v.hov){v.hov=p;v.dirty=true;}v.cv.style.cursor=p?'pointer':'';if(p){const P=PARTS[p];showTip(e.clientX,e.clientY,`<b>${P.n}</b><br>${VG(P.v)} ${P.vt}`);}else hideTip();}
 });
@@ -808,7 +816,7 @@ const TL=[
  {t:'전체 Raw 분석',v:'no',vt:'원인 확인 — Y 구동 때 회전',h:'X를 재는 순간 실제로 움직인 것은 무엇인가 — Tip인가, 웨이퍼인가?',d:'공유 폴더 전체 원본 <b>150 Lot · 32,169 파일 · 10.78 GB</b>. 특히 X·Y 라인 시작 순간 찍힌 "착지" 카메라 영상과 원본 AFM 파일 헤더(스캐너 위치).',
   r:['착지 영상에서 웨이퍼 패턴이 <b>소용돌이 모양</b>으로 이동 — X 라인 시작 순간 반시계 약 <b>5.6 µrad</b> 회전','Tip(캔틸레버)은 거의 그대로: 0.3 µrad (5 %)','회전은 시료 스캐너가 <b>Y ≈ −28 µm</b>에 있을 때만. Y 라인(스캐너 X +31, Y −1)에서는 1.2 µrad로 대부분 사라짐','스캐너 Y 1 µm당 <b>0.19 µrad</b> 회전 (t ≈ 11: 우연으로는 나올 수 없는 수준). 0.19 × 28 = 5.4 µrad → 실측 5.18 µrad와 <b>4 % 이내</b>로 일치','결론: <b>시료 XY 스캐너를 Y로 구동할 때 생기는 기생 회전</b>(원하지 않는데 덤으로 생기는 회전)'],link:['B','3D로 보기 → 장면 B (증거)']},
  {t:'레시피 확인',v:'info',vt:'레시피가 −28 µm 조건을 만듦',h:'왜 X 라인만 스캐너를 Y −28 µm로 옮겨서 재나?',d:'원본 Log.csv의 ImageJob 파라미터 <b>3,080건</b> — 값이 모두 같음(편차 0).',
-  r:['레시피 오프셋: X 라인 <b>(0, −25) µm</b>, Y 라인 <b>(+30, +2) µm</b>','여기에 기준 스캔 보정 <b>(+0.74, −2.69)</b>과 미세 보정 <b>(+0.07, −0.30)</b>이 더해짐','실제 위치: X 라인 <b>(0.8, −28.0)</b>, Y 라인 <b>(30.8, −1.0)</b>','패턴은 두 사각형이 한 꼭짓점에서 맞닿은 체커보드 모양. 비전은 그 <b>꼭짓점</b>에 맞춤','X 라인은 세로 엣지를 가로질러야 하므로, 꼭짓점에서 엣지를 따라 <b>25 µm</b> 떨어진 곳에 둠. 세로 엣지는 꼭짓점에서 약 80 µm 이어짐'],fig:true},
+  r:['레시피 오프셋: X 라인 <b>(0, −25) µm</b>, Y 라인 <b>(+30, +2) µm</b>','여기에 기준 스캔 보정 <b>(+0.74, −2.69)</b>과 미세 보정 <b>(+0.07, −0.30)</b>이 더해짐','실제 위치: X 라인 <b>(0.8, −28.0)</b>, Y 라인 <b>(30.8, −1.0)</b>','패턴: 비전 화면(836.2 × 626.5 µm)에서 약 200 µm 크기의 사각 <b>바깥 틀</b> 안에, 어두운 사각형 2개가 체커보드로(오른쪽 위·왼쪽 아래, 틀에서 약 20 µm 안쪽) 놓여 있음. 비전 패턴 매칭은 바깥 틀 전체를 찾음(점선 상자, 일치도 99 %)','<b>Tip 기준점 = 패턴(바깥 틀) 좌상단 꼭짓점</b> — Tip이 이 점에 맞춰짐','<b>X 라인은 왼쪽 세로 엣지</b>를 가로지르는 20 µm 가로 스캔으로, 꼭짓점에서 <b>25 µm 아래</b>(레시피 (0, −25)). 왼쪽 엣지는 꼭짓점에서 아래로 약 200 µm 이어짐','<b>Y 라인은 위쪽 가로 엣지</b>를 가로지르는 20 µm 세로 스캔으로, 꼭짓점에서 30 µm 오른쪽(레시피 (+30, +2), 새 레시피는 +25)'],fig:true},
  {t:'XY Scanner Non-linearity 시험 (2026-09-14, Before/After)',v:'warn',vt:'단서 — 가설 ④',h:'XY Scanner의 디텍터 4개(X1·X2·Y1·Y2)는 제대로 보정되어 있나? — PQC 작업지시서 WI-XY Scanner-01 "XY Non-linearity error" (Spec ≤ 4 %).',d:'서보 OFF(개루프)로 스캐너 오프셋 −70 … +70 µm를 10 µm 간격으로 옮기며, 각 디텍터 근처 척 지점에서 비전 패턴 매칭으로 실제 이동을 잼. <b>이 단계의 숫자는 모두 이 시험 자료이며, 위치 맞춤 통계와 섞지 않았습니다.</b>',
   r:['서보 없이 Y로 밀면 <b>Y2 쪽이 Y1 쪽보다 약 11 % 더</b> 움직임 — 140 µm 지령에 약 167 µm 대 186 µm, 차이 약 18 µm. X1과 X2는 약 7 % 차이',NL1,'같은 지점의 Before와 After는 약 1.5 % 안에서 같음 → 그 자리의 특성이지, 시험마다 흔들리는 값이 아님',NL2,'보정 후 비전/디텍터 기울기: Y1 1.004, Y2 1.000'],
   m:'<b>쉽게 말하면:</b> 서보를 끄면 스캐너 상판은 밀 때 크게 비틀립니다. 평소에는 듀얼 서보가 두 디텍터(Y1·Y2)로 이 비틀림을 잡는데, <b>Y1과 Y2의 상대 보정이 몇 % 어긋나 있으면 작은 회전이 남을 수 있습니다</b> — 우리가 찾은 0.19 µrad/µm(가설 ④). 이 시험은 각 디텍터를 자기 축 방향으로 한 지점에서만 보기 때문에 회전은 확인하지 않습니다. 보정할 때 쓴 비전 지점이 그 디텍터의 X 위치와 정확히 같지 않고 상판이 비틀리고 있으면, 그 디텍터는 자기 것이 아닌 이동에 맞춰 보정될 수 있습니다.',link:['C','3D로 보기 → 장면 C (④)']},
@@ -828,45 +836,53 @@ function renderTL(){
   <div class="lab">시험 · 데이터</div><div>${s.d}</div>
   <div class="lab">결과</div><ul>${s.r.map(x=>x.startsWith('<table')?`<li style="list-style:none;margin-left:-20px">${x}</li>`:`<li>${x}</li>`).join('')}</ul>`;
   if(s.m)h+=`<div class="box ${s.mc||'warn'}" style="margin-top:10px">${s.m}</div>`;
-  if(s.fig)h+=PATFIG+'<div class="note">개념도(크기 비율은 대략). 비전 정렬점 = 꼭짓점. X 라인은 세로 엣지를, Y 라인은 가로 엣지를 가로지릅니다.</div>';
+  if(s.fig)h+=PATFIG+'<div class="note">비전 화면을 본뜬 그림(비율 대략). 파란 + = Tip 기준점(패턴 바깥 틀의 좌상단 꼭짓점). X 라인은 왼쪽 세로 엣지, Y 라인은 위쪽 가로 엣지를 가로지릅니다. 초록 점선 = 새 레시피 −5 µm(같은 왼쪽 엣지).</div>';
   const links=(s.link?[s.link]:[]).concat(s.link2||[]);
   h+=`<div class="tl-nav"><button class="btn" id="tlPrev" type="button" ${tlSel===0?'disabled':''}>← 이전</button><button class="btn" id="tlNext" type="button" ${tlSel===TL.length-1?'disabled':''}>다음 →</button>${links.map(l=>`<button class="btn" data-go="${l[0]}" type="button">${l[1]}</button>`).join('')}</div>`;
   $('tlDetail').innerHTML=h;
   $('tlPrev').onclick=()=>{if(tlSel>0){tlSel--;renderTL();}};$('tlNext').onclick=()=>{if(tlSel<TL.length-1){tlSel++;renderTL();}};
   $('tlDetail').querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{setTab(3);setScene(b.dataset.go);});
-  if(s.fig)patternSVG($('patFig'),{W:520,H:330,s:2.3,ox:235,oy:100,xLineY:-25,yLineX:30,dims:true,xLabX:-34,cue:true});
+  if(s.fig)patternSVG($('patFig'),{W:520,H:330,s:1.3,ox:150,oy:56,xLineY:-25,yLineX:30,dims:true,match:true,xLabAt:-28,xLab:'X 라인 (−25 µm)',x2Y:-5,x2Lab:'−5 µm (새 레시피)',yLab:'Y 라인 (위쪽 가로 엣지)',cue:true});
 }
 
 /* ---------- die pattern drawing (2D SVG) ---------- */
 let clipN=0;
 function patternSVG(svg,o){
+  /* Vision-screen geometry: a ~200 µm square frame (light) with two dark inner squares
+     (top-right, bottom-left, inset ~20 µm). Tip reference point = frame's top-left corner = (0,0).
+     X right, Y up (front of the tool at the bottom). */
   const NS='http://www.w3.org/2000/svg';svg.innerHTML='';
   const E=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||svg).appendChild(e);return e;};
-  const T=(p,x,y,s,a)=>{const t=E('text',Object.assign({x,y,'font-size':11.5,fill:C['text-primary'],stroke:C['surface-2'],'stroke-width':3.5,'paint-order':'stroke','stroke-linejoin':'round','dominant-baseline':'middle'},a||{}),p);t.textContent=s;return t;};
-  const s=o.s,X=u=>o.ox+u*s,Y=v=>o.oy-v*s;
+  const PB='#cfcdc7',PF='#f7f6f3',PS='#9a9891',INK='#0b0b0b'; // fixed image grays (same in light and dark theme, like the camera picture)
+  const T=(p,x,y,s,a)=>{const t=E('text',Object.assign({x,y,'font-size':11.5,fill:INK,stroke:PF,'stroke-width':3.5,'paint-order':'stroke','stroke-linejoin':'round','dominant-baseline':'middle'},a||{}),p);t.textContent=s;return t;};
+  const s=o.s,X=u=>o.ox+u*s,Y=v=>o.oy-v*s,FR=200,LB=o.lineLabels!==false;
   const id='pclip'+(++clipN);const cp=E('clipPath',{id},E('defs',{}));E('rect',{x:0,y:0,width:o.W,height:o.H,rx:8},cp);
   const g=E('g',{'clip-path':`url(#${id})`});
-  E('rect',{x:0,y:0,width:o.W,height:o.H,fill:C['surface-1']},g);
-  const sh=o.shift||[0,0],SQ=[[-80,-80],[0,0]];
-  if(Math.hypot(sh[0],sh[1])>0.3)SQ.forEach(q=>E('rect',{x:X(q[0]),y:Y(q[1]+80),width:80*s,height:80*s,fill:'none',stroke:C['text-muted'],'stroke-dasharray':'4 3'},g));
+  E('rect',{x:0,y:0,width:o.W,height:o.H,fill:PB},g);
+  const sh=o.shift||[0,0],moved=Math.hypot(sh[0],sh[1])*s>2;
+  if(moved)E('rect',{x:X(0),y:Y(0),width:FR*s,height:FR*s,fill:'none',stroke:'#52514e','stroke-dasharray':'4 3'},g);
   const pg=E('g',{transform:`translate(${sh[0]*s},${-sh[1]*s})`},g);
-  SQ.forEach(q=>E('rect',{x:X(q[0]),y:Y(q[1]+80),width:80*s,height:80*s,fill:C['m-pattern'],'fill-opacity':0.5},pg));
-  E('circle',{cx:X(0),cy:Y(0),r:4.5,fill:C['text-primary'],stroke:C['surface-1'],'stroke-width':1.5},pg);
-  if(o.cornerUp)T(g,X(-6),Y(9),'정렬점 (꼭짓점)',{'text-anchor':'end'});else T(g,X(-6),Y(-6),'정렬점 (꼭짓점)',{'text-anchor':'end'});
-  if(Math.hypot(sh[0],sh[1])*s>10){const yy=Y(34);E('line',{x1:X(0),y1:yy,x2:X(sh[0]),y2:yy-sh[1]*s,stroke:C.critical,'stroke-width':2},g);E('path',{d:`M${X(sh[0])},${yy-sh[1]*s} l${sh[0]<0?6:-6},-4 l0,8 z`,fill:C.critical},g);}
-  if(o.ghostY!=null){E('line',{x1:X(-10),y1:Y(o.ghostY),x2:X(10),y2:Y(o.ghostY),stroke:C['text-muted'],'stroke-width':2,'stroke-dasharray':'4 3'},g);T(g,X(12),Y(o.ghostY),'지금 ('+fmtS(o.ghostY)+')',{fill:C['text-secondary'],'font-size':11});}
-  if(o.xLineY!=null){const on=o.active==='x';E('line',{x1:X(-10),y1:Y(o.xLineY),x2:X(10),y2:Y(o.xLineY),stroke:C.pos,'stroke-width':on?4.5:3,'stroke-linecap':'round'},g);T(g,X(o.xLabX!=null?o.xLabX:0),Y(o.xLineY)+20,o.xLab||'X 라인',{'text-anchor':o.xLabX!=null?'start':'middle','font-weight':700});}
-  if(o.yLineX!=null){const on=o.active==='y';E('line',{x1:X(o.yLineX),y1:Y(-8),x2:X(o.yLineX),y2:Y(12),stroke:C.accent,'stroke-width':on?4.5:3,'stroke-linecap':'round'},g);T(g,X(o.yLineX)+16,Y(2),'Y 라인',{'text-anchor':'start','font-weight':700});}
+  E('rect',{x:X(0),y:Y(0),width:FR*s,height:FR*s,fill:PF},pg);
+  [[100,-20],[20,-100]].forEach(q=>E('rect',{x:X(q[0]),y:Y(q[1]),width:80*s,height:80*s,fill:PS},pg));
+  E('line',{x1:X(0)-9,y1:Y(0),x2:X(0)+9,y2:Y(0),stroke:C.accent,'stroke-width':2},pg);E('line',{x1:X(0),y1:Y(0)-9,x2:X(0),y2:Y(0)+9,stroke:C.accent,'stroke-width':2},pg);
+  T(g,X(-6),Y(16),'Tip 기준점',{'text-anchor':'end','font-weight':700,fill:'#1c5cab'});
+  if(o.match){E('rect',{x:X(-5),y:Y(5),width:(FR+10)*s,height:(FR+10)*s,fill:'none',stroke:C.accent,'stroke-width':1.5,'stroke-dasharray':'3 3'},g);T(g,X(FR+8),Y(-FR+6),'비전 매칭 99 %',{'font-size':11,fill:C.accent});}
+  if(Math.hypot(sh[0],sh[1])*s>8){const yy=Y(-120),x2=X(sh[0]),y2=yy-sh[1]*s;E('line',{x1:X(0),y1:yy,x2,y2,stroke:C.critical,'stroke-width':2},g);E('path',{d:`M${x2},${y2} l${sh[0]<0?6:-6},-4 l0,8 z`,fill:C.critical},g);}
+  if(o.ghostY!=null){E('line',{x1:X(-10),y1:Y(o.ghostY),x2:X(10),y2:Y(o.ghostY),stroke:'#52514e','stroke-width':2,'stroke-dasharray':'4 3'},g);}
+  if(o.x2Y!=null){E('line',{x1:X(-10),y1:Y(o.x2Y),x2:X(10),y2:Y(o.x2Y),stroke:C.good,'stroke-width':3,'stroke-dasharray':'5 3'},g);if(o.x2Lab)T(g,X(o.xLabAt!=null?o.xLabAt:-14),Y(o.x2Y),o.x2Lab,{'text-anchor':'end','font-size':11,fill:C.good,'font-weight':700});}
+  if(o.xLineY!=null){const on=o.active==='x';E('line',{x1:X(-10),y1:Y(o.xLineY),x2:X(10),y2:Y(o.xLineY),stroke:C.pos,'stroke-width':on?4.5:3,'stroke-linecap':'round'},g);if(LB)T(g,X(o.xLabAt!=null?o.xLabAt:-14),Y(o.xLineY),o.xLab||'X 라인',{'text-anchor':'end','font-weight':700});}
+  if(o.yLineX!=null){const on=o.active==='y';E('line',{x1:X(o.yLineX),y1:Y(-8),x2:X(o.yLineX),y2:Y(12),stroke:C.accent,'stroke-width':on?4.5:3,'stroke-linecap':'round'},g);if(LB)T(g,X(o.yLineX+5),Y(9),o.yLab||'Y 라인',{'text-anchor':'start','font-weight':700});}
   if(o.dims){
-    const dl=(x1,y1,x2,y2)=>E('line',{x1,y1,x2,y2,stroke:C['text-secondary'],'stroke-width':1},g);
-    dl(X(6),Y(0),X(6),Y(-25));dl(X(3),Y(0),X(9),Y(0));dl(X(3),Y(-25),X(9),Y(-25));T(g,X(9),Y(-12.5),'25 µm',{'font-size':11});
-    dl(X(-9),Y(0),X(-9),Y(-80));dl(X(-12),Y(-80),X(-6),Y(-80));T(g,X(-12),Y(-55),'세로 엣지 약 80 µm',{'text-anchor':'end','font-size':11});
-    dl(X(0),Y(-80),X(0),Y(-97));dl(X(30),Y(-8),X(30),Y(-97));dl(X(0),Y(-93),X(30),Y(-93));T(g,X(15),Y(-93)-9,'30 µm',{'text-anchor':'middle','font-size':11});
+    const dl=(x1,y1,x2,y2)=>E('line',{x1,y1,x2,y2,stroke:'#52514e','stroke-width':1},g);
+    dl(X(16),Y(0),X(16),Y(-25));dl(X(13),Y(0),X(19),Y(0));dl(X(13),Y(-25),X(19),Y(-25));T(g,X(19),Y(-17),'25 µm',{'font-size':11});
+    dl(X(0),Y(0),X(0),Y(22));dl(X(30),Y(12),X(30),Y(22));dl(X(0),Y(20),X(30),Y(20));T(g,X(15),Y(20)-9,'30 µm',{'text-anchor':'middle','font-size':11});
+    dl(X(-22),Y(0),X(-22),Y(-FR));dl(X(-25),Y(0),X(-19),Y(0));dl(X(-25),Y(-FR),X(-19),Y(-FR));T(g,X(-26),Y(-130),'왼쪽 엣지 약 200 µm',{'text-anchor':'end','font-size':11});
   }
-  if(o.warn)T(g,X(9),Y(-42),o.warn,{fill:C.critical,'font-weight':800,'font-size':12});
-  if(o.tip){const tx=X(o.tip[0]),ty=Y(o.tip[1]);E('circle',{cx:tx,cy:ty,r:7,fill:'none',stroke:C['text-primary'],'stroke-width':1.6},g);E('line',{x1:tx-11,y1:ty,x2:tx+11,y2:ty,stroke:C['text-primary'],'stroke-width':1.4},g);E('line',{x1:tx,y1:ty-11,x2:tx,y2:ty+11,stroke:C['text-primary'],'stroke-width':1.4},g);T(g,tx-9,ty-13,'Tip',{'font-weight':800,'text-anchor':'end'});}
-  if(o.caption)T(g,8,o.H-11,o.caption,{'font-size':10.5,fill:C['text-secondary']});
-  if(o.cue)T(g,o.W-6,11,'↑ 뒤(기둥) · ← EFEM · ↓ 정면',{'text-anchor':'end','font-size':10,fill:C['text-secondary']});
+  if(o.warn)T(g,X(10),Y(-45),o.warn,{fill:C.critical,'font-weight':800,'font-size':12});
+  if(o.tip){const tx=X(o.tip[0]),ty=Y(o.tip[1]);E('circle',{cx:tx,cy:ty,r:7,fill:'none',stroke:INK,'stroke-width':1.6},g);E('line',{x1:tx-11,y1:ty,x2:tx+11,y2:ty,stroke:INK,'stroke-width':1.4},g);E('line',{x1:tx,y1:ty-11,x2:tx,y2:ty+11,stroke:INK,'stroke-width':1.4},g);
+    if(Math.hypot(o.tip[0],o.tip[1])>2)T(g,tx+10,ty+16,'Tip',{'font-weight':800});}
+  if(o.caption)T(g,8,o.H-11,o.caption,{'font-size':10.5,fill:'#52514e'});
+  if(o.cue)T(g,o.W-6,11,'↑ 뒤(기둥) · ← EFEM · ↓ 정면',{'text-anchor':'end','font-size':10,fill:'#52514e'});
 }
 const fmtS=v=>(v>0?'+':v<0?'−':'')+Math.abs(v);
 const f2=(v,d)=>(v<0?'−':v>0?'+':'')+Math.abs(v).toFixed(d==null?2:d);
@@ -909,7 +925,7 @@ function buildA(S,v){
   machine(S,{avt:false,efem:true,stage:st.stage,wafer:st.wafer,transit:st.load,rot:st.rot*1e-6*ex(),hotY:st.hotY,hotX:st.hotX,camHot:st.camHot,tipGap:st.gap,ghost:st.rot>0.05,focus:[0,st.site],arc:st.rot>0.5&&ex()>=1000});
   const sx=st.stage[0],sy=st.stage[1];
   v.target[0]=st.k===0?-260:st.k===1?lerp(-260,0,ease(st.p)):0;
-  S.labels=[{a:[sx,sy-170,306],t:'Y PZT (Y 구동)',hot:st.hotY},{a:[-55,-113,700],t:'Vision (비전 카메라)',hot:st.camHot},{a:[0,0,372],t:'Tip'},{a:[sx+150,sy-170,300],t:'XY Scanner'},{a:[sx+150,sy-180,250],t:'XY Stage'}];if(st.hotX)S.labels.push({a:[sx+170,sy,306],t:'X PZT (X 구동)',hot:true});
+  S.labels=[{a:[sx,sy-160,317],t:'Y PZT 쌍 (Y 구동)',hot:st.hotY},{a:[-55,-113,700],t:'Vision (비전 카메라)',hot:st.camHot},{a:[0,0,372],t:'Tip'},{a:[sx+150,sy-170,300],t:'XY Scanner'},{a:[sx+150,sy-180,250],t:'XY Stage'}];if(st.hotX)S.labels.push({a:[sx+160,sy,317],t:'X PZT 쌍 (X 구동)',hot:true});
   if(st.k===0)S.labels.push({a:[-600,-200,430],t:'EFEM (웨이퍼 로더, 장비 왼쪽)',hot:true});
   v.labTop=40;
   S.notes=[{t:(ex()>1?'회전 '+exTxt()+' 확대 표시':'실제 크기(×1) — 회전이 너무 작아 보이지 않음'),col:C['text-secondary']}];
@@ -932,31 +948,32 @@ function buildC(S,v){
   let rot=0,rotPlate=true;
   if(off)rot=0.07*u;else if(cc>0)rot=KAPPA*drive*1e-6*ex();
   if(!off&&cc===3)rotPlate=false;
-  machine(S,{avt:false,body:false,head:false,efem:false,wafer:false,chuckRef:true,chuckAlpha:0.55,shift:[0,drive*T],rot,rotPlate,ypzX:(!off&&cc===1)?55:0,hotY:!off&&cc===1,hingeHot:(!off&&cc===2)?'L':null,boltsHot:!off&&cc===3,detHot:off||cc===4,detTags:true});
+  machine(S,{avt:false,body:false,head:false,efem:false,wafer:false,chuckRef:true,chuckAlpha:0.55,shift:[0,drive*T],rot,rotPlate,ypzOff:(!off&&cc===1)?30:0,hotY:!off&&cc===1,hingeHot:(!off&&cc===2)?'L':null,boltsHot:!off&&cc===3,detHot:off||cc===4,detTags:true});
   const pc=[0,drive*T];
   S.post.push(vv=>{
-    vv.poly3([[-130,-130,331.5],[130,-130,331.5],[130,130,331.5],[-130,130,331.5]],null,C['text-muted'],1.2,[5,4]);
-    const ypx=(!off&&cc===1)?55:0;
+    vv.poly3([[-110,-110,331.5],[110,-110,331.5],[110,110,331.5],[-110,110,331.5]],null,C['text-muted'],1.2,[5,4]);
+    const fo=(!off&&cc===1)?30:0,h1=cc===1&&!off;
     const c=Math.cos(rotPlate?rot:0),s=Math.sin(rotPlate?rot:0),W=(x,y)=>[pc[0]+x*c-y*s,pc[1]+x*s+y*c,333];
-    vv.pl3([W(ypx,-130),W(ypx,130)],cc===1&&!off?C.critical:C['text-secondary'],1.8,[7,5]);
-    vv.arrow3([ypx,-215,333],[ypx,-150,333],cc===1&&!off?C.critical:C['text-primary'],3.2,10);
+    vv.pl3([W(fo,-110),W(fo,0)],h1?C.critical:C['text-secondary'],1.8,[7,5]);vv.pl3([W(0,0),W(0,110)],C['text-secondary'],1.8,[7,5]);
+    vv.arrow3([fo,-158,333],[fo,-118,333],h1?C.critical:C['text-primary'],3.4,10);vv.arrow3([0,158,333],[0,118,333],C['text-primary'],2.4,9);
     const q=vv.p(W(0,0));const cx=vv.ctx;cx.strokeStyle=C['text-primary'];cx.lineWidth=1.8;cx.beginPath();cx.arc(q[0],q[1],7,0,Math.PI*2);cx.stroke();cx.beginPath();cx.moveTo(q[0]-7,q[1]);cx.lineTo(q[0]+7,q[1]);cx.moveTo(q[0],q[1]-7);cx.lineTo(q[0],q[1]+7);cx.stroke();
     if(rot>0.004)vv.arc3(pc[0],pc[1],334,175,0.3,1.2,C.critical,2.4);
   });
   const hotL=k=>!off&&cc===k;
   S.labels=[
-    {a:[(!off&&cc===1)?55:0,-185,320],t:'① Y PZT — 미는 점·정렬',hot:hotL(1),side:'L'},
-    {a:[-141,80,330],t:'② Y 플렉셔 힌지 — 좌·우 강성',hot:hotL(2),side:'L'},
+    {a:[0,-160,317],t:'① Y PZT 쌍(앞·뒤) 힘·정렬·예압',hot:hotL(1),side:'L'},
+    {a:[-131,131,322],t:'② 플렉셔 힌지 강성 차',hot:hotL(2),side:'L'},
     {a:[83,-83+drive*T,352],t:'③ 상판 ↔ 척/θ 체결',hot:hotL(3),side:'R'},
-    {a:[161,45,343],t:'④ Y2 디텍터',hot:hotL(4)||off,side:'R'},
-    {a:[-60,161,343],t:'④ Y1 디텍터',hot:hotL(4)||off,side:'L'},
-    {a:[170,0,306],t:'X PZT',side:'R'},
-    {a:[122,-122+drive*T,331],t:'상판 (움직이는 판)',side:'R'}];
+    {a:[95,drive*T,335],t:'④ Y2 디텍터 (오른쪽)',hot:hotL(4)||off,side:'R'},
+    {a:[-95,drive*T,335],t:'④ Y1 디텍터 (왼쪽)',hot:hotL(4)||off,side:'L'},
+    {a:[160,0,317],t:'X PZT 쌍 (좌·우)',side:'R'},
+    {a:[100,-100+drive*T,331],t:'이동부 (상판)',side:'R'}];
   v.labTop=40;
   S.notes=[{t:off?'서보 OFF: 비틀림은 개념 표시(크게 과장) · 이동 ×500':'회전 '+exTxt()+' · 이동 ×500 확대 표시',col:C['text-secondary']}];S.cue=true;
 }
 /* Scene D — recipe change */
 function buildD(S,v){
+  if(!REC[S3.dI]){machine(S,{avt:false,body:false,head:false,efem:false});S.notes=[{t:'레시피 +5 µm → X 라인이 꼭짓점 위쪽 = 패턴 밖',col:C.critical},{t:'왼쪽 엣지 없음 — 측정 불가',col:C.critical}];S.cue=true;return;}
   const R=REC[S3.dI],th=R[2],rv=th*1e-6*ex(),store=[];
   const rows=SITES.filter(q=>!(q[0]===0&&q[1]===0)).map(q=>{const x=q[0]*20,y=q[1]*20;return [q[0],q[1],-th*y/1000,th*x/1000];});
   machine(S,{avt:false,body:false,head:false,efem:false,rot:rv,ghost:ex()>=100,ypzCol:mixHex(C['m-pzt'],C.critical,Math.abs(R[1])/28),waferExtra:arrowsExtra(rows,2,3,C.pos,S3.K,store),arc:rv>0.01});
@@ -973,16 +990,16 @@ function buildE(S,v){
     const sh=ay?[0,d*T]:[d*T,0];
     machine(S,{avt:false,column:false,head:false,efem:false,noFrontWall:true,wafer:false,refBar:true,shift:sh,rot:rv,rotPlate:!chuckOnly});
     const pc=[sh[0],sh[1]],onChuck=S3.eLoc==='chuck';
-    const ang=onChuck?rv:(chuckOnly?0:rv),face=onChuck?-40:-130;
+    const ang=onChuck?rv:(chuckOnly?0:rv),face=onChuck?-40:-110,GX=onChuck?140:95;
     const x0=pc[0]+(-face)*Math.sin(ang),y0=pc[1]+face*Math.cos(ang);
     const gz=onChuck?358:306;
-    [-140,140].forEach(gx=>{
+    [-GX,GX].forEach(gx=>{
       const yc=y0+Math.tan(ang)*(gx-x0);
       S.mid.push(mkBox(gx,-232,216,20,20,gz-216-14,C['m-pzt'],'gauge'));
       S.mid.push(mkBox(gx,-238,gz-14,40,32,28,C['m-gauge'],'gauge'));
       S.mid.push(mkBox(gx,(-222+yc)/2,gz-3,6,yc+222,6,C['text-secondary'],'gauge'));
     });
-    S.labels=[{a:[-140,-238,gz+14],t:'게이지 L',side:'L'},{a:[140,-238,gz+14],t:'게이지 R',side:'R'},{a:onChuck?[150,pc[1]-40,365]:[130,pc[1]-130,306],t:onChuck?'기준 블록 (척에 고정)':'스캐너 상판 앞면',side:'R'}];
+    S.labels=[{a:[-GX,-238,gz+14],t:'게이지 L',side:'L'},{a:[GX,-238,gz+14],t:'게이지 R',side:'R'},{a:onChuck?[150,pc[1]-40,365]:[110,pc[1]-110,306],t:onChuck?'기준 블록 (척에 고정)':'스캐너 이동부(상판) 앞면',side:'R'}];
     S.notes=[{t:'회전 '+exTxt()+' · 이동 ×500 확대 표시',col:C['text-secondary']}];S.cue=true;
   } else {
     const d=-70+140*u,ay=S3.eSw==='Y',T=0.3;
@@ -1014,18 +1031,18 @@ function sideUpdate(){
     const st=S3.aCur||aState();
     $('aSteps').querySelectorAll('button').forEach((b,i)=>b.setAttribute('aria-pressed',String(i===st.k)));
     const top=st.site>0,row=st.row,ph=st.k<=1?null:st.k<=3?'x':'y';
-    patternSVG($('insetA'),{W:312,H:250,s:2.15,ox:140,oy:100,xLineY:-25,yLineX:30,tip:st.k<=1?null:st.tip,shift:[st.shift[0]*20,st.shift[1]*20],active:st.line,cue:true,caption:st.k===0?'웨이퍼 로딩 중 — 아직 정렬 전':st.k===1?'스테이지 이동 중 — 아직 정렬 전':'패턴 이동은 ×20 확대 · 점선 = 이동 전'});
-    $('insetAnote').innerHTML=`${top?'위쪽 끝':'아래쪽 끝'} Die(X 0, Y ${top?'+120':'−120'} mm)의 실측 평균: X 라인 시작 때 패턴 X <b>${f2(row[4])} µm</b>, Y 라인 시작 때 <b>${f2(row[6])} µm</b>. Tip은 그대로인데 엣지가 옆으로 밀려 X 값이 틀어집니다.`;
+    patternSVG($('insetA'),{W:312,H:250,s:1.0,ox:70,oy:44,xLineY:-25,yLineX:30,tip:st.k<=1?null:st.tip,shift:[st.shift[0]*20,st.shift[1]*20],active:st.line,cue:true});
+    $('insetAnote').innerHTML=(st.k===0?'웨이퍼 로딩 중 — 아직 정렬 전. ':st.k===1?'스테이지 이동 중 — 아직 정렬 전. ':'패턴 이동은 ×20 확대, 점선 = 이동 전. ')+`파란 + = Tip 기준점(패턴 바깥 틀의 좌상단 꼭짓점). ${top?'위쪽 끝':'아래쪽 끝'} Die(X 0, Y ${top?'+120':'−120'} mm)의 실측 평균: X 라인 시작 때 패턴 X <b>${f2(row[4])} µm</b>, Y 라인 시작 때 <b>${f2(row[6])} µm</b>. Tip은 그대로인데 엣지가 옆으로 밀려 X 값이 틀어집니다.`;
     const SP=['— (웨이퍼 로딩)','— (스테이지 이동)','(0, 0)','(0, 0) → (0.8, −28.0)','(0.8, −28.0)','(0.8, −28.0) → (30.8, −1.0)','(30.8, −1.0)'];
     const RT=['—','—','≈ 0 (−0.4)','0 → +5.6','+5.6 (반시계)','+5.6 → +1.2','+1.2'];
     $('aRead').innerHTML=`<div><span>스캐너 위치 (µm)</span><b>${SP[st.k]}</b></div><div><span>웨이퍼 회전 (µrad)</span><b style="color:${st.rot>3?C.critical:'inherit'}">${RT[st.k]}</b></div><div><span>미는 축</span><b>${st.hotY?'Y PZT (빨강)':st.hotX?'X PZT':'—'}</b></div>`+(st.k===0?`<div><span>Align Angle Offset</span><b>0.4° (EFEM에서 적용)</b></div>`:'');
     const CAP=['<b>⓪ 웨이퍼 로딩</b> — 장비 <b>왼쪽</b>의 EFEM이 웨이퍼를 왼쪽에서 넣어 척 위에 올립니다. 넣기 전에 Align Angle Offset(0.4°)만큼 웨이퍼 방향을 돌려 맞춥니다.',
       '<b>① 스테이지 이동</b> — XY Stage가 웨이퍼를 옮겨, 잴 Die를 Tip 바로 아래로 가져옵니다.',
-      '<b>② 비전 정렬</b> — 카메라가 체커보드 꼭짓점을 찾아 Tip 바로 아래에 맞춥니다. 이때 시료 스캐너는 가운데(0, 0)에 있고, 웨이퍼는 돌아 있지 않습니다.',
+      '<b>② 비전 정렬</b> — 카메라가 패턴(바깥 틀)을 찾아, 그 좌상단 꼭짓점(Tip 기준점)을 Tip 바로 아래에 맞춥니다. 이때 시료 스캐너는 가운데(0, 0)에 있고, 웨이퍼는 돌아 있지 않습니다.',
       '<b>③ X 라인 위치로 이동</b> — 시료 스캐너가 Y로 −28 µm 밀어 X 라인 자리를 Tip 아래로 가져옵니다. <b>이때 웨이퍼 전체가 반시계로 돕니다</b>(5.6 µrad, 그림은 과장). 빨간 Y PZT가 미는 축입니다.',
-      '<b>④ 착지 + X 스캔</b> — Tip이 내려와 닿고, 시료 스캐너가 X로 20 µm 움직이며 세로 엣지를 가로질러 잽니다. 웨이퍼가 돌아간 만큼 엣지가 옆으로 밀려 있어 X 값이 틀어집니다.',
+      '<b>④ 착지 + X 스캔</b> — Tip이 내려와 닿고, 시료 스캐너가 X로 20 µm 움직이며 패턴의 왼쪽 세로 엣지를 가로질러 잽니다. 웨이퍼가 돌아간 만큼 엣지가 옆으로 밀려 있어 X 값이 틀어집니다.',
       '<b>⑤ Y 라인 위치로 이동</b> — 스캐너가 X +31, Y −1 µm로 옮겨 갑니다. Y로는 거의 밀지 않으므로 회전이 대부분 사라집니다(1.2 µrad).',
-      '<b>⑥ Y 스캔</b> — Y 방향으로 가로 엣지를 가로질러 잽니다. 회전이 작아 Y는 PASS입니다.'];
+      '<b>⑥ Y 스캔</b> — Y 방향으로 패턴의 위쪽 가로 엣지를 가로질러 잽니다. 회전이 작아 Y는 PASS입니다.'];
     $('cap3').innerHTML=CAP[st.k];
   }
   if(sc==='B'){
@@ -1038,26 +1055,32 @@ function sideUpdate(){
   if(sc==='C'){
     setPressed($('cServo'),S3.servo);setPressed($('cCase'),S3.cc);
     $('cCase').querySelectorAll('button').forEach(b=>b.disabled=S3.servo==='off');
-    const D={0:'<b>정상</b> — Y PZT가 미는 선이 강성 중심(⊕)을 지나고 좌·우 힌지가 같으면, 상판은 곧게 평행 이동만 합니다.',
-      1:'<b>① Y PZT 미는 점·정렬·예압</b> — 미는 선이 ⊕를 비껴가면, 밀 때마다 상판이 비틀립니다.',
-      2:'<b>② Y 플렉셔 힌지 좌·우 강성 차</b> — 한쪽 힌지가 더 뻣뻣하면(그림: 왼쪽) 같은 힘에도 그쪽이 덜 가서 상판이 비틀립니다.',
+    const D={0:'<b>정상</b> — 앞·뒤 Y PZT 쌍의 힘이 같고 미는 선이 이동부의 강성 중심(⊕)을 지나며, 네 모서리 플렉셔 힌지가 같으면 이동부는 곧게 평행 이동만 합니다.',
+      1:'<b>① Y PZT 쌍(앞·뒤) 미는 힘 불균형·정렬·예압</b> — 앞·뒤 PZT의 힘이 다르거나, Force lever가 미는 점이 ⊕를 비껴가거나(그림: 앞쪽 미는 점이 오른쪽으로 어긋남), 예압(스크류·압축 스프링)이 어긋나면 밀 때마다 이동부가 비틀립니다.',
+      2:'<b>② 플렉셔 힌지 강성 차</b> — 모서리 힌지 중 한쪽이 더 뻣뻣하면(그림: 왼쪽 두 개) 같은 힘에도 그쪽이 덜 가서 이동부가 비틀립니다.',
       3:'<b>③ 상판 ↔ 척/θ 체결</b> — 상판은 곧게 가는데, 체결이 약하면 Y 구동 반력으로 척만 비틀립니다. 디텍터는 스캐너 쪽 이동을 재므로 척만 도는 것은 보지 못합니다.',
-      4:'<b>④ Y1/Y2 디텍터 상대 보정(선형화) 불일치 — 가설</b> — 듀얼 서보는 Y1과 Y2가 같은 값을 읽도록 상판을 붙잡습니다. 두 디텍터의 보정이 δ만큼 다르면, "같은 값"이 실제로는 δ × (Y 이동)만큼 다른 위치입니다 → 회전 = δ × Y 이동 ÷ (Y1–Y2의 X 거리). 거리 100–200 mm에서 δ ≈ 2–4 %면 0.19 µrad/µm를 설명합니다. <b>기계 작업 없이 재보정으로 고칠 수 있습니다.</b>'};
+      4:'<b>④ Y1/Y2 디텍터 상대 보정(선형화) 불일치 — 가설</b> — 듀얼 서보는 Y1과 Y2가 같은 값을 읽도록 상판을 붙잡습니다. 두 디텍터의 보정이 δ만큼 다르면, "같은 값"이 실제로는 δ × (Y 이동)만큼 다른 위치입니다 → 회전 = δ × Y 이동 ÷ (Y1–Y2의 X 거리). 거리 100–200 mm에서 δ ≈ 2–4 %면 0.19 µrad/µm를 설명합니다(그림: Y1 왼쪽, Y2 오른쪽 변 가운데). <b>기계 작업 없이 재보정으로 고칠 수 있습니다.</b>'};
     if(S3.servo==='off'){
-      $('cDesc').innerHTML='<b>서보 OFF (개루프, Non-linearity 시험 조건)</b> — 서보 없이 Y로 밀면 <b>Y2 쪽이 Y1 쪽보다 약 11 % 더</b> 움직입니다: 140 µm 지령에 약 167 µm 대 186 µm, 차이 약 18 µm. 상판이 크게 비틀린다는 뜻입니다. 평소에는 듀얼 서보가 두 디텍터로 이 비틀림을 잡습니다.';
-      const bar=(lab,v)=>`<div class="bl"><div class="t"><span>${lab}</span><b>${v.toFixed(2)}</b></div><div class="trk"><div class="fill" style="width:${(v/1.4*100).toFixed(1)}%;background:${C.accent}"></div></div></div>`;
-      $('cBars').innerHTML='<div class="h">지령 1 µm당 비전이 잰 이동 (Before)</div>'+bar('Y1 쪽',1.19)+bar('Y2 쪽',1.31)+bar('X1 쪽',1.20)+bar('X2 쪽',1.29)+'<div class="note">자료: WI-XY Scanner-01 Non-linearity 시험, 2026-09-14</div>';
+      $('cDesc').innerHTML='<b>서보 OFF (개루프, Non-linearity 시험 조건)</b> — 서보 없이 Y로 밀면 <b>Y2 쪽(오른쪽)이 Y1 쪽(왼쪽)보다 약 11 % 더</b> 움직입니다: 지령 1 µm당 1.19 대 1.31–1.33, 140 µm 지령에 약 167 µm 대 186 µm, 차이 약 18 µm. 이동부가 크게 비틀린다는 뜻입니다. 평소에는 듀얼 서보가 두 디텍터로 이 비틀림을 잡습니다.';
+      const bar=(lab,v,txt)=>`<div class="bl"><div class="t"><span>${lab}</span><b>${txt||v.toFixed(2)}</b></div><div class="trk"><div class="fill" style="width:${(v/1.4*100).toFixed(1)}%;background:${C.accent}"></div></div></div>`;
+      $('cBars').innerHTML='<div class="h">지령 1 µm당 비전이 잰 이동 (Before–After)</div>'+bar('Y1 쪽 (왼쪽)',1.19)+bar('Y2 쪽 (오른쪽)',1.31,'1.31–1.33')+bar('X1 쪽 (뒤)',1.20,'1.20–1.21')+bar('X2 쪽 (앞)',1.29,'1.29–1.30')+'<div class="note">자료: WI-XY Scanner-01 Non-linearity 시험, 2026-09-14</div>';
     } else {$('cDesc').innerHTML=D[S3.cc]+(S3.cc>0?'<div class="note" style="margin-top:6px">회전 = 0.19 µrad/µm × 구동량, 그림은 '+exTxt()+'</div>':'');$('cBars').innerHTML='';}
-    $('cap3').innerHTML=S3.servo==='off'?'서보 OFF에서는 Y1 쪽과 Y2 쪽이 다르게 움직여 상판이 크게 비틀립니다. 점선 = 움직이기 전, 굵은 십자 = 척 위 기준선.':'Y PZT가 상판을 Y로 28 µm까지 밉니다(이동 ×500). 점선 사각형 = 움직이기 전 상판, 점선 십자 = 움직이기 전 척 기준선, ⊕ = 강성 중심. 빨간 부분이 지금 고른 의심 부위입니다.';
+    $('cap3').innerHTML=S3.servo==='off'?'서보 OFF에서는 Y1 쪽(왼쪽)과 Y2 쪽(오른쪽)이 다르게 움직여 이동부가 크게 비틀립니다. 점선 = 움직이기 전, 굵은 십자 = 척 위 기준선.':'앞·뒤 Y PZT 쌍이 Force lever로 이동부를 Y로 28 µm까지 움직입니다(이동 ×500). 굵은 화살표 = 앞·뒤 PZT의 미는 힘, 점선 사각형 = 움직이기 전 이동부, 점선 십자 = 움직이기 전 척 기준선, ⊕ = 강성 중심. 빨간 부분이 지금 고른 의심 부위입니다.';
   }
   if(sc==='D'){
-    const R=REC[S3.dI];$('dOff').value=S3.dI;
+    const off=DOFF[S3.dI],R=REC[S3.dI];$('dOff').value=S3.dI;
+    const sw=(c,d)=>`<svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${c}" stroke-width="3"${d?' stroke-dasharray="4 3"':''}/></svg>`;
+    $('dLeg').innerHTML=`<span>${sw(C.pos)} X 라인 (${fmtS(off)} µm)</span>`+(off!==-25?`<span>${sw(C['text-muted'],1)} 지금 (−25)</span>`:'')+`<span>${sw(C.accent)} Y 라인</span><span style="color:${C.accent};font-weight:700">+ Tip 기준점</span>`;
+    patternSVG($('insetD'),{W:312,H:230,s:1.0,ox:70,oy:44,xLineY:off,yLineX:30,ghostY:off!==-25?-25:null,lineLabels:false,cue:true,warn:off===0?'꼭짓점 — 사용 불가':off>0?'패턴 밖 — 측정 불가':null});
+    if(!R){$('dRead').innerHTML=`<div><span>레시피 Y 오프셋</span><b>+5 µm</b></div><div><span>판정</span><b style="color:${C.critical}">패턴 밖 — 측정 불가</b></div>`;$('dBars').innerHTML='';$('dTable').querySelectorAll('tr[data-i]').forEach(tr=>tr.classList.remove('hl'));
+      $('cap3').innerHTML='<b>+ 값은 꼭짓점 위쪽 = 패턴 밖</b>입니다. 그 위치에는 왼쪽 세로 엣지가 없어서 X 라인이 엣지를 가로지르지 못하므로 <b>측정할 수 없습니다</b>. (그래서 표에 + 값이 없습니다.)';}
+    else{
     $('dRead').innerHTML=`<div><span>레시피 Y 오프셋</span><b>${fmtS(R[0])} µm</b></div><div><span>실제 스캐너 Y</span><b>${fmtS(R[1])} µm</b></div><div><span>예측 θx</span><b>${R[2].toFixed(2)} µrad</b></div><div><span>예측 PASS Lot</span><b>${R[7]}</b></div>`+(R[0]===-5?'<div><span>실측 θx (10 Lot)</span><b style="color:'+C.good+'">0.95 ± 0.14 µrad</b></div><div><span>실측 적용 스캐너 Y</span><b>−8.2 µm</b></div><div><span>실측 앱 판정 X</span><b style="color:'+C.good+'">0.439 / 0.080 µm PASS</b></div>':'');
-    patternSVG($('insetD'),{W:312,H:230,s:2.15,ox:140,oy:95,xLineY:R[0],yLineX:30,ghostY:R[0]!==-25?-25:null,xLab:'X 라인 ('+fmtS(R[0])+')',cornerUp:true,cue:true,warn:R[0]===0?'꼭짓점 위 → 사용 불가':null});
     const bl=(lab,mean,max,spec,scale,unit)=>{const ok=max<=spec;const col=ok?C.good:C.critical;return `<div class="bl"><div class="t"><span>${lab}</span><b>${mean.toFixed(unit==='r'?2:3)} / ${max.toFixed(unit==='r'?2:3)} µm <span class="chip ${ok?'ok':'no'}" style="font-size:11px">${ok?'Spec 안':'Spec 밖'}</span></b></div><div class="trk"><div class="fill" style="width:${(mean/scale*100).toFixed(1)}%;background:${col}"></div><div class="mx" style="left:${(max/scale*100).toFixed(1)}%"></div><div class="spec" style="left:${(spec/scale*100).toFixed(1)}%"></div></div></div>`;};
     $('dBars').innerHTML='<div class="h">예측 (막대 = 평균, 검은 선 = 최대, 빨간 점선 = Spec)</div>'+bl('X Range 평균 / 최대',R[3],R[4],1.0,1.6,'r')+bl('X StdDev 평균 / 최대',R[5],R[6],0.2,0.4,'s')+(R[0]===-5?'<div class="h">실측 (현장 10 Lot, Lot당)</div>'+bl('X Range 평균 / 최대',0.30,0.41,1.0,1.6,'r')+bl('X StdDev 평균 / 최대',0.079,0.099,0.2,0.4,'s'):'');
     $('dTable').querySelectorAll('tr[data-i]').forEach(tr=>tr.classList.toggle('hl',+tr.dataset.i===S3.dI));
     $('cap3').innerHTML=`X 라인 레시피 Y 오프셋 <b>${fmtS(R[0])} µm</b>(실제 스캐너 Y ${fmtS(R[1])} µm)일 때의 예측 — 화살표는 회전 모델(θx ${R[2].toFixed(2)} µrad)로 계산한 Die 이동, 점선 = 회전 전 Die 위치.`+(R[0]===-5?' <span class="chip ok">권장</span> <span class="chip ok">현장 적용됨 · 실측 X Range 0.44 µm / Std 0.080 µm (PASS)</span>':'');
+    }
   }
   if(sc==='E'){
     setPressed($('eTest'),S3.eTest);setPressed($('eAxis'),S3.eAxis);setPressed($('eLoc'),S3.eLoc);setPressed($('eAsm'),S3.eAsm);setPressed($('eSw'),S3.eSw);
@@ -1066,11 +1089,11 @@ function sideUpdate(){
     const u=S3.eU==null?ePhase():S3.eU;let full,max,ticks,res,col;
     if(S3.eTest==='gauge'){
       const ay=S3.eAxis==='Y',zero=ay&&!(S3.eLoc==='plate'&&S3.eAsm==='3');
-      full=zero?3.4:0.05;max=3.6;ticks=['0','1','2','3 µm'];
+      const pl=S3.eLoc==='plate';full=zero?3.4:0.05;max=3.6;ticks=pl?['0','','','차이 있음']:['0','1','2','3 µm'];
       $('eMeterH').textContent='좌·우 게이지 차이 (예측, 구동 시작 기준)';
-      res=!ay?'<span class="chip ok">차이 거의 없음</span> X 구동은 정상이라는 데이터 예측과 같아야 합니다.':zero?(S3.eLoc==='chuck'?'<span class="chip no">약 3 µm</span> 끝까지(−30 → +30 µm) 밀면 좌·우 차이 약 3 µm = 회전 확정.':'<span class="chip no">상판도 약 3 µm</span> → ①·②·④ (스캐너 쪽)'):'<span class="chip ok">상판은 거의 0</span> 척에서만 약 3 µm라면 → ③ (척/θ 체결)';
+      res=!ay?'<span class="chip ok">차이 거의 없음</span> X 구동은 정상이라는 데이터 예측과 같아야 합니다.':zero?(S3.eLoc==='chuck'?'<span class="chip no">약 3 µm</span> 끝까지(−30 → +30 µm) 밀면 좌·우 차이 약 3 µm = 회전 확정.':'<span class="chip no">상판도 돎</span> 차이는 게이지 간격에 비례합니다(척 끝 약 300 mm 간격이면 약 3 µm). → ①·②·④ (스캐너 쪽)'):'<span class="chip ok">상판은 거의 0</span> 척에서만 약 3 µm라면 → ③ (척/θ 체결)';
       col=zero?C.critical:C.good;
-      $('cap3').innerHTML='게이지 2개를 X 방향으로 약 300 mm 떨어진 두 점에 Y 방향으로 대고, 스캐너를 '+(ay?'Y':'X')+'로 −30 → +30 µm 움직입니다. 좌·우 값이 다르면 평행 이동이 아니라 회전입니다.';
+      $('cap3').innerHTML='게이지 2개를 '+(pl?'스캐너 이동부(상판)의 좌·우 끝':'척 좌·우 끝(X 방향으로 약 300 mm 떨어진 두 점)')+'에 Y 방향으로 대고, 스캐너를 '+(ay?'Y':'X')+'로 −30 → +30 µm 움직입니다. 좌·우 값이 다르면 평행 이동이 아니라 회전입니다.';
     } else {
       const ay=S3.eSw==='Y';full=ay?6.4:0.05;max=7;ticks=['0','2','4','6 µm'];
       $('eMeterH').textContent='두 지점의 Y 이동 차이 (예측, 스윕 시작 기준)';
@@ -1114,7 +1137,7 @@ $('eSw').querySelectorAll('button').forEach(b=>b.onclick=()=>{S3.eSw=b.dataset.v
 $('dTable').insertAdjacentHTML('beforeend',REC.map((r,i)=>`<tr data-i="${i}"><td class="r">${fmtS(r[0])}${r[0]===-5?' <span class="chip ok" style="font-size:11px">권장</span>':''}</td><td class="r">${fmtS(r[1])}</td><td class="r">${r[2].toFixed(2)}</td><td class="r">${r[3].toFixed(2)} / ${r[4].toFixed(2)}</td><td class="r">${r[5].toFixed(3)} / ${r[6].toFixed(3)}</td><td class="r">${r[7]}</td></tr>`+(r[0]===-5?`<tr class="fld"><td class="r"><b>−5 실측</b> (10 Lot)</td><td class="r">−8.2</td><td class="r"><b>0.95 ± 0.14</b></td><td class="r"><b>0.30 / 0.41</b></td><td class="r"><b>0.079 / 0.099</b></td><td class="r">앱 판정 PASS</td></tr>`:'')).join(''));
 $('dTable').querySelectorAll('tr[data-i]').forEach(tr=>{tr.style.cursor='pointer';tr.onclick=()=>{S3.dI=+tr.dataset.i;if(S3.playing)setPlay(false);V3.dirty=true;};});
 // B auto-advance when playing
-setInterval(()=>{if(!$('tab3').hidden&&S3.playing){if(S3.scene==='B'){S3.b=S3.b%4+1;V3.dirty=true;}if(S3.scene==='D'){S3.dI=(S3.dI+1)%6;V3.dirty=true;}}},3200);
+setInterval(()=>{if(!$('tab3').hidden&&S3.playing){if(S3.scene==='B'){S3.b=S3.b%4+1;V3.dirty=true;}if(S3.scene==='D'){S3.dI=(S3.dI+1)%7;V3.dirty=true;}}},3200);
 
 /* mini concept diagrams for Scene B */
 function mini3(){
@@ -1150,7 +1173,7 @@ if(HS.die==='bot')S3.die='bot';setPressed($('aDie'),S3.die);
 if(HS.state)S3.b=clamp(+HS.state,1,4);
 if(HS.servo==='off')S3.servo='off';
 if(HS.case!=null)S3.cc=clamp(+HS.case,0,4);
-if(HS.off!=null){const i=REC.findIndex(r=>r[0]===+HS.off);if(i>=0)S3.dI=i;}
+if(HS.off!=null){const i=DOFF.indexOf(+HS.off);if(i>=0)S3.dI=i;}
 if(HS.test==='sweep')S3.eTest='sweep';
 if(HS.axis==='X')S3.eAxis='X';if(HS.loc==='plate')S3.eLoc='plate';if(HS.asm==='3')S3.eAsm='3';if(HS.sw==='X')S3.eSw='X';
 renderPartCard();renderPartList();renderTL();mini3();

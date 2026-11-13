@@ -75,8 +75,9 @@ LINE_KEYS = {'X': 'X_line', 'Y': 'Y_line'}
 
 # what-if: X 라인 레시피 Y Offset 후보 |값| (µm). 지금 레시피와 같은 쪽(부호)으로 만든다
 WHATIF_RECIPES_Y = (-25.0, -15.0, -10.0, -5.0, -3.0, 0.0)
-# 권장 후보는 패턴 꼭짓점에서 이만큼 떨어져야 한다 (체커보드 꼭짓점 여유 — X 라인이 세로 엣지를
-# 가로질러야 함, 0이면 꼭짓점 위). 3D 보고서(B)의 템플릿과 같은 규칙
+# 권장 후보는 패턴 좌상단 꼭짓점 (Tip 기준점)에서 이만큼 떨어져야 한다 (꼭짓점 여유 — X 라인이
+# 패턴의 왼쪽 세로 엣지를 가로질러야 함, 0이면 꼭짓점 위, + 값은 꼭짓점 위쪽 = 패턴 밖).
+# 3D 보고서(B)의 템플릿과 같은 규칙
 CORNER_CLEARANCE_UM = 5.0
 # 지금 레시피가 이보다 작으면 0으로 본다 (부호를 정할 수 없음 → 기본 쪽 −)
 ZERO_RECIPE_UM = 0.5
@@ -731,8 +732,8 @@ def _whatif(shape: dict, drive, recipe_y, matrix: dict, positions: dict, spec_ra
     """X 라인 레시피 Y Offset 후보별 예측 (선형·원점 통과). 후보는 지금 레시피와 같은 쪽(부호).
 
     권장 (3D 보고서 템플릿과 같은 규칙, 많아야 한 행):
-      지금 행이 모든 Lot PASS면 지금 행('현재 유지'). 아니면 |레시피| ≥ 5 µm(꼭짓점 여유)이고 모든 Lot
-      PASS인 후보 중 |레시피|가 가장 작은 것. 그런 후보가 없으면 권장 없음. 레시피 값을 모르면
+      지금 행이 모든 Lot PASS면 지금 행('현재 유지'). 아니면 |레시피| ≥ 5 µm(패턴 좌상단 꼭짓점
+      (Tip 기준점) 여유)이고 모든 Lot PASS인 후보 중 |레시피|가 가장 작은 것. 그런 후보가 없으면 권장 없음. 레시피 값을 모르면
       (스캐너 Y 목표 행) 지금 행만 권장할 수 있다.
     """
     out = {'assumption': 'linear kappa_eff', 'kappa_eff': None, 'kappa_signed': None,
@@ -1197,8 +1198,8 @@ def _actions(parts: dict, rotation: dict, offsets: dict, whatif: dict, drift: di
             actions.append(f"X 라인 스캐너 Y 적용값({drive:+.1f} µm)을 줄이세요 — {NO_REF_TEXT}. "
                            '레시피 Y Offset을 같은 양만큼 바꾸면 됨')
         elif rows:
-            actions.append('X 라인 레시피 Y Offset을 줄이세요 — what-if에서 꼭짓점 여유(5 µm)를 지키며 모든 Lot '
-                           'PASS인 후보가 없음, 다른 원인도 확인')
+            actions.append('X 라인 레시피 Y Offset을 줄이세요 — what-if에서 패턴 좌상단 꼭짓점 (Tip 기준점) '
+                           '여유(5 µm)를 지키며 모든 Lot PASS인 후보가 없음, 다른 원인도 확인')
     kappa = rotation.get('kappa_eff')
     if scanner in ('warn', 'fail') or (kappa is not None and kappa >= spec['kappa_warn']
                                        and rotation.get('significant')):
