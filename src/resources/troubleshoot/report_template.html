@@ -17,7 +17,7 @@
   --m-avt:#e3e1db; --m-body:#d6d4cd; --m-stage:#bfe3ea; --m-scan:#cfe8cf; --m-plate:#e2f1e2;
   --m-hinge:#8f8d86; --m-pzt:#b9b7b0; --m-chuck:#b9b6af; --m-wafer:#d3d9e2; --m-die:#f7f9fc;
   --m-zst:#bfe3ea; --m-fst:#bfe3ea; --m-vis:#ece8c0; --m-cone:#efe39a; --m-zsc:#cfe8cf; --m-tip:#7a7873;
-  --m-efem:#d9d7d0; --m-pattern:#8f8d86; --m-na:#a3a19a;
+  --m-efem:#d9d7d0; --m-pattern:#8f8d86; --m-na:#a3a19a; --m-piezo:#79c27d;
 }
 @media (prefers-color-scheme: dark){
   :root:where(:not([data-theme="light"])) .viz-root{
@@ -31,7 +31,7 @@
     --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
     --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
     --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
-    --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955;
+    --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955; --m-piezo:#3f8a4a;
   }
 }
 :root[data-theme="dark"] .viz-root{
@@ -45,7 +45,7 @@
   --m-avt:#2f2f2d; --m-body:#3d3d3a; --m-stage:#2f5a62; --m-scan:#35523b; --m-plate:#41604a;
   --m-hinge:#8f8d86; --m-pzt:#6b6a66; --m-chuck:#55534f; --m-wafer:#46505e; --m-die:#7d8899;
   --m-zst:#2f5a62; --m-fst:#2f5a62; --m-vis:#5c5835; --m-cone:#8a7f3c; --m-zsc:#35523b; --m-tip:#b9b7b0;
-  --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955;
+  --m-efem:#42413d; --m-pattern:#6b6a66; --m-na:#5a5955; --m-piezo:#3f8a4a;
 }
 *{box-sizing:border-box}
 body{margin:0;background:#f4f3f0}
@@ -257,7 +257,7 @@ const DIAG = /*__PASS_DIAG__*/null;
   <p class="sub" style="margin-top:-4px">측정 라인마다 시료 스캐너를 옮겨 둔 거리입니다. 적용 오프셋이 클수록 스캐너 구동에 따른 회전이 커집니다. <span id="omTxt"></span><span id="omTag"></span></p>
   <div class="two">
     <div id="offTables"></div>
-    <div><svg id="offFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="Die 확대 — 정렬점과 X·Y 라인 위치"></svg><div class="note" id="offFigNote"></div></div>
+    <div><svg id="offFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="Die 확대 — Tip 기준점(패턴 좌상단 꼭짓점)과 X·Y 라인 위치"></svg><div class="note" id="offFigNote"></div></div>
   </div>
 </div>
 
@@ -299,11 +299,11 @@ const DIAG = /*__PASS_DIAG__*/null;
     <div><b class="gt">µm · µrad</b>µm(마이크로미터) = 1 mm의 1/1000. µrad(마이크로라디안) = 아주 작은 각도. 1 µrad는 1 m 떨어진 곳이 1 µm 옮겨지는 각도(약 0.00006°).</div>
     <div><b class="gt">θx · θy (세타)</b>Die 위치에 따라 오차가 얼마나 커지는지 나타내는 기울기(µrad). θx = Die의 Y 위치에 비례하는 X 오차. θx 1 µrad = Y 1 mm마다 X 오차 1 nm → 웨이퍼 끝(±120 mm)에서 약 ±0.12 µm.</div>
     <div><b class="gt">HZ1_O</b>AFM 결과 파일에서 Spec 판정에 쓰는 값의 이름. 패턴의 엣지(경계선)가 있어야 할 자리에서 얼마나 벗어났는지를 나타냅니다.</div>
-    <div><b class="gt">비전 정렬</b>카메라(Vision)로 Die의 패턴을 보고, 잴 자리를 Tip 바로 아래로 정확히 맞추는 단계. 시료 스캐너를 측정 라인 위치로 밀기 <b>전</b>에 끝납니다.</div>
-    <div><b class="gt">PZT (압전 소자)</b>전압을 걸면 µm 단위로 아주 조금 늘어나는 세라믹. 스캐너 안에서 상판을 미는 '미세 모터' 역할을 합니다.</div>
-    <div><b class="gt">플렉셔</b>마찰 없이 휘면서 움직임을 한 방향으로 안내하는 얇은 금속 힌지(판 스프링). 스캐너 상판을 붙잡고 있습니다.</div>
+    <div><b class="gt">비전 정렬 · Tip 기준점</b>카메라(Vision)가 Die의 패턴(약 200 µm 사각 틀 안에 어두운 사각형 2개)을 통째로 찾아, 틀의 <b>좌상단 꼭짓점(Tip 기준점)</b>을 Tip 바로 아래로 맞추는 단계. 시료 스캐너를 측정 라인 위치로 밀기 <b>전</b>에 끝납니다.</div>
+    <div><b class="gt">PZT (압전 소자)</b>전압을 걸면 µm 단위로 아주 조금 늘어나는 세라믹. 스캐너 안에서 Force lever로 이동부를 미는 '미세 모터' — 앞·뒤 쌍이 Y, 좌·우 쌍이 X.</div>
+    <div><b class="gt">플렉셔</b>마찰 없이 휘면서 움직임을 한 방향으로 안내하는 얇은 금속 힌지(판 스프링). 스캐너의 고정부와 이동부를 네 모서리에서 잇습니다.</div>
     <div><b class="gt">스캐너 오프셋</b>스테이지는 그대로 두고 시료 스캐너만으로 웨이퍼를 옮겨 둔 거리(µm). 레시피 오프셋 + 기준 스캔 보정 + 미세 보정 = 적용 오프셋.</div>
-    <div><b class="gt">디텍터 · 듀얼 서보</b>디텍터 = 스캐너가 얼마나 움직였는지 재는 위치 센서(X1·X2·Y1·Y2). 듀얼 서보 = 한 축의 디텍터 2개를 함께 써서 상판이 비틀리지 않게 붙잡는 제어.</div>
+    <div><b class="gt">디텍터 · 듀얼 서보</b>디텍터 = 스캐너가 얼마나 움직였는지 재는 위치 센서 4개(이동부 네 변 가운데: Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞 — PSPD가 아래 LED를 읽음). 듀얼 서보 = 한 축의 디텍터 2개를 함께 써서 이동부가 비틀리지 않게 붙잡는 제어.</div>
     <div><b class="gt">Die · Lot · 캔틸레버</b>Die = 웨이퍼 위 측정 칸. Lot = 웨이퍼 한 장을 Die × 반복으로 잰 묶음. 캔틸레버 = Tip을 끝에 단 얇은 판.</div>
     <div><b class="gt">κ (카파)</b>스캐너를 1 µm 구동할 때 생기는 회전(µrad/µm). κ_eff = θ ÷ 적용 스캐너 오프셋 — 레시피 오프셋을 바꿨을 때의 회전을 예측하는 데 씁니다.</div>
     <div><b class="gt">t 값</b>계수가 측정 흔들림에 비해 얼마나 큰지. |t| ≥ 3이면 우연으로 보기 어렵습니다.</div>
@@ -331,7 +331,7 @@ if(HS.theme==='dark'||HS.theme==='light')document.documentElement.setAttribute('
 
 /* ---------- theme colours ---------- */
 const C={};
-const CK=['surface-0','surface-1','surface-2','border','grid','axis','text-primary','text-secondary','text-muted','accent','series-1','series-2','pos','good','warning','critical','bg3d','m-avt','m-body','m-stage','m-scan','m-plate','m-hinge','m-pzt','m-chuck','m-wafer','m-die','m-zst','m-fst','m-vis','m-cone','m-zsc','m-tip','m-efem','m-pattern','m-na'];
+const CK=['surface-0','surface-1','surface-2','border','grid','axis','text-primary','text-secondary','text-muted','accent','series-1','series-2','pos','good','warning','critical','bg3d','m-avt','m-body','m-stage','m-scan','m-plate','m-hinge','m-pzt','m-chuck','m-wafer','m-die','m-zst','m-fst','m-vis','m-cone','m-zsc','m-tip','m-efem','m-pattern','m-na','m-piezo'];
 function readTheme(){const cs=getComputedStyle(root);CK.forEach(k=>C[k]=cs.getPropertyValue('--'+k).trim());C.dark=(cs.getPropertyValue('color-scheme')||'').indexOf('dark')>=0;}
 function hex2rgb(h){h=(h||'#888888').replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return [(n>>16)&255,(n>>8)&255,n&255];}
 const rgbs=(c,a)=>{const v=c.map(x=>Math.round(clamp(x,0,255)));return a==null?`rgb(${v.join(',')})`:`rgba(${v.join(',')},${a})`;};
@@ -468,6 +468,7 @@ function renderKPI(){
 const LD=(()=>{const v=[0.45,-0.55,0.72];const n=Math.hypot(v[0],v[1],v[2]);return v.map(x=>x/n);})();
 function newell(P){let x=0,y=0,z=0;for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];x+=(a[1]-b[1])*(a[2]+b[2]);y+=(a[2]-b[2])*(a[0]+b[0]);z+=(a[0]-b[0])*(a[1]+b[1]);}const n=Math.hypot(x,y,z)||1;return [x/n,y/n,z/n];}
 function pip(x,y,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if(((a[1]>y)!==(b[1]>y))&&(x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;}
+const rotZ=(p,a,pv)=>{if(!a)return p;const c=Math.cos(a),s=Math.sin(a),x=p[0]-pv[0],y=p[1]-pv[1];return [pv[0]+x*c-y*s,pv[1]+x*s+y*c,p[2]];};
 const rotX=(p,a,pv)=>{const c=Math.cos(a),s=Math.sin(a),y=p[1]-pv[0],z=p[2]-pv[1];return [p[0],pv[0]+y*c-z*s,pv[1]+y*s+z*c];};
 function mkBox(cx,cy,z0,w,d,h,col,part,o){o=o||{};
   const x0=cx-w/2,x1=cx+w/2,y0=cy-d/2,y1=cy+d/2,z1=z0+h;
@@ -627,15 +628,23 @@ function machine(S,o){
     S.mid.push(mkBox(0,349.5,538+dB,360,181,222+(dH-dB),C['m-body'],'body'));
   }
   const L0=[mkBox(0,0,Z.stage+dS,360,360,61,C['m-stage'],'stage',{after:(v,b)=>{const z=246+dS,cl=C['text-primary'];if(b.vis.includes(2))v.arrow3([-120,-180.6,z],[120,-180.6,z],cl,3.6,11,true);else if(b.vis.includes(4))v.arrow3([180.6,-120,z],[180.6,120,z],cl,3.6,11,true);else if(b.vis.includes(5))v.arrow3([-180.6,-120,z],[-180.6,120,z],cl,3.6,11,true);}})];
+  /* XY Scanner after the official structure slide: fixed frame (outer walls) + moving stage (plate, carries the
+     chuck and wafer) joined by flexure hinges in the four corners; 2 pairs of stacked piezos with force levers
+     (Y pair front/back, X pair left/right, preloaded by screw + compression spring); 4 detectors (PSPD over an LED)
+     in the middle of each side of the moving stage: Y1 left, Y2 right, X1 back, X2 front. */
   const L1=[],zs=Z.scan+dSc;
   const wall=(x,y,w,d,aft)=>L1.push(mkBox(x,y,zs,w,d,54,C['m-scan'],'scanner',{after:aft}));
-  wall(-96,-161,148,18);wall(96,-161,148,18,(v,b)=>{if(b.vis.includes(2))v.arrow3([38,-170.6,304+dSc],[152,-170.6,304+dSc],C['text-secondary'],2,8,true,[5,4]);});
-  wall(0,161,340,18);wall(-161,0,18,304);wall(161,-87,18,130);wall(161,87,18,130);
-  L1.push(mkBox(0,0,281+dP,260,260,50,C['m-plate'],'scanner'));
-  [[-141,80],[-141,-80],[141,80],[141,-80]].forEach(q=>L1.push(mkBox(q[0],q[1],zs+10,22,10,32,C['m-hinge'],'flexure')));
-  L1.push(mkBox(0,-150,zs+14,40,40,26,C['m-pzt'],'ypzt'));
-  L1.push(mkBox(150,0,zs+14,40,40,26,C['m-pzt'],'xpzt'));
-  [['X1',90,161,24,14],['Y1',-60,161,24,14],['Y2',161,45,14,24],['X2',-90,-161,24,14]].forEach(q=>L1.push(mkBox(q[1],q[2],zs+54,q[3],q[4],12,C.accent,'detector',{after:o.detTags?(v=>v.tag3([q[1]+(q[2]>150?0:q[1]>150?20:0),q[2]+(q[2]>150?20:q[2]<-150?-20:0),zs+66],q[0],{size:11.5,w:800,col:C.accent,align:'center'})):null})));
+  wall(-110,-161,120,18);wall(110,-161,120,18,(v,b)=>{if(b.vis.includes(2))v.arrow3([58,-170.6,304+dSc],[162,-170.6,304+dSc],C['text-secondary'],2,8,true,[5,4]);});
+  wall(-110,161,120,18);wall(110,161,120,18);
+  wall(-161,-101,18,102);wall(-161,101,18,102);wall(161,-101,18,102);wall(161,101,18,102);
+  L1.push(mkBox(0,0,281+dP,220,220,50,C['m-plate'],'scanner'));
+  [[1,1],[-1,1],[1,-1],[-1,-1]].forEach(q=>{const ax=q[0]*110,ay=q[1]*110,bx=q[0]*152,by=q[1]*152,cx=(ax+bx)/2,cy=(ay+by)/2,an=Math.atan2(by-ay,bx-ax);
+    L1.push(mkBox(cx,cy,zs+12,Math.hypot(bx-ax,by-ay),9,30,C['m-hinge'],'flexure',{tf:p=>rotZ(p,an,[cx,cy])}));});
+  const pz=C['m-piezo'],lv=C['m-hinge'];
+  [-1,1].forEach(k=>{L1.push(mkBox(0,k*160,zs+16,84,16,24,pz,'ypzt'));L1.push(mkBox(0,k*131,zs+20,12,42,14,lv,'ypzt'));     // Y pair: front/back
+    L1.push(mkBox(k*160,0,zs+16,16,84,24,pz,'xpzt'));L1.push(mkBox(k*131,0,zs+20,42,12,14,lv,'xpzt'));});                      // X pair: left/right
+  [['Y1',-95,0],['Y2',95,0],['X1',0,95],['X2',0,-95]].forEach(q=>{L1.push(mkBox(q[1],q[2],327+dP,18,18,8,C.accent,'detector'));
+    if(o.detTags)S.post.push(v=>v.tag3([q[1],q[2],346+dP],q[0],{size:11.5,w:800,col:C.accent,align:'center'}));});
   const L2=[mkCyl(0,0,Z.chuck+dC,152,20,C['m-chuck'],'chuck',{n:44})];
   const L3=[mkCyl(0,0,Z.wafer+dW,150,4,C['m-wafer'],'wafer',{n:56,after:v=>waferDecal(v,o,WT)})];
   S.stack=[L0,L1,L2,L3];S.stackC=[0,0,300+dSc];
@@ -677,20 +686,22 @@ const PDEF={
  anti_vibration:{n:'Anti-Vibration Table (방진 테이블)',s:'방진 테이블',what:'장비 맨 아래의 진동 차단 받침입니다. 스프링과 댐퍼가 본체를 떠받쳐 바닥 진동이 올라오지 않게 합니다.'},
  body:{n:'Body (본체)',s:'본체 (Body)',what:'ㄴ자 모양의 뼈대입니다. 두꺼운 아랫부분 위에 스테이지들이 놓이고, 뒤(+Y) 기둥이 위로 올라가 헤드(Z Stage)를 붙잡습니다.'},
  xy_stage:{n:'XY Stage (장거리 XY 스테이지)',s:'XY Stage',what:'본체 위에서 300 mm 범위로 크게 움직여, 잴 Die를 Tip 아래로 가져옵니다.'},
- xy_scanner_x:{n:'XY Scanner — X 구동 (X PZT)',s:'XY Scanner X 구동',what:'시료 XY 스캐너 안에서 상판을 X 방향으로 미는 압전 소자(PZT)입니다. Y 라인을 잴 때 스캐너를 주로 X로 옮겨 둡니다.'},
- xy_scanner_y:{n:'XY Scanner — Y 구동 (Y PZT)',s:'XY Scanner Y 구동',what:'상판을 Y 방향으로 미는 압전 소자입니다. X 라인을 잴 때 스캐너를 주로 Y로 옮겨 둡니다. Y로 밀 때 상판이 돌면 X 오차가 Die의 Y 위치에 비례해 커집니다(θx).'},
- chuck:{n:'척 / θ (시료 고정)',s:'척 / θ',what:'웨이퍼를 붙잡는 판(척)과 방향을 맞추는 회전축(θ)입니다. XY Scanner 상판 위에 체결되어 있습니다.'},
+ xy_scanner_x:{n:'XY Scanner — X 구동 (X PZT 쌍, 좌·우)',s:'XY Scanner X 구동',what:'좌·우 두 변의 적층 압전 소자(Stacked Piezo) 한 쌍이 Force lever(지렛대)로 이동부를 X 방향으로 움직입니다. 스크류와 압축 스프링으로 예압을 줍니다. Y 라인을 잴 때 스캐너를 주로 X로 옮겨 둡니다.'},
+ xy_scanner_y:{n:'XY Scanner — Y 구동 (Y PZT 쌍, 앞·뒤)',s:'XY Scanner Y 구동',what:'앞·뒤 두 변의 Stacked Piezo 한 쌍이 Force lever로 이동부를 Y 방향으로 움직입니다. 스크류와 압축 스프링으로 예압을 줍니다. X 라인을 잴 때 스캐너를 주로 Y로 옮겨 둡니다. Y로 밀 때 이동부가 돌면 X 오차가 Die의 Y 위치에 비례해 커집니다(θx) — 의심 ① 앞·뒤 PZT의 미는 힘 불균형·정렬·예압.'},
+ chuck:{n:'척 / θ (시료 고정)',s:'척 / θ',what:'웨이퍼를 붙잡는 판(척)과 방향을 맞추는 회전축(θ)입니다. XY Scanner 이동부(상판) 위에 체결되어 있습니다 — 의심 ③ 상판 ↔ 척/θ 체결.'},
  sample:{n:'Sample (시료 / 웨이퍼)',s:'시료 (웨이퍼)',what:'측정하는 기준 웨이퍼입니다. Die가 20 mm 간격으로 놓여 있습니다.'},
  z_stage:{n:'Z Stage (Z 스테이지)',s:'Z Stage',what:'본체 기둥 앞면에 붙은 큰 상하 이동축입니다. F Stage(비전)와 Z Scanner(Tip)를 함께 싣고 움직입니다.'},
  f_stage:{n:'F Stage (초점 스테이지)',s:'F Stage',what:'비전 카메라를 위아래로 움직여 초점을 맞춥니다.'},
  vision:{n:'Vision (비전 카메라)',s:'Vision (비전)',what:'패턴을 보고 측정 위치를 Tip 아래로 맞추는(비전 정렬) 카메라입니다. 아래로 뻗은 원뿔이 광학 경로입니다.'},
  z_scanner_tip:{n:'Z Scanner / Tip (Z 스캐너 · 탐침)',s:'Z Scanner',what:'헤드 아래 끝의 미세 상하 구동부와, 그 끝 캔틸레버에 달린 Tip(탐침)입니다. Tip이 내려앉아 표면을 더듬습니다.'},
  efem:{n:'EFEM (웨이퍼 로더)',s:'EFEM (웨이퍼 로더)',what:'장비 정면에서 볼 때 왼쪽(−X), 인클로저 밖의 웨이퍼 반송 장치입니다. 웨이퍼를 왼쪽에서 넣어 척 위에 올립니다.'},
- xy_scanner:{n:'XY Scanner (시료 XY 스캐너)',s:'XY Scanner (몸체)',what:'XY Stage 위에서 시료를 약 100 µm 범위로 아주 정밀하게 옮깁니다. 플렉셔 + X PZT + Y PZT + 위치 디텍터 4개(X1·X2·Y1·Y2)로 되어 있고, 측정 라인 위치(스캐너 오프셋)를 잡아 둡니다. 색은 X·Y 구동 판정 중 나쁜 쪽입니다.'},
+ xy_scanner:{n:'XY Scanner (시료 XY 스캐너)',s:'XY Scanner (몸체)',what:'XY Stage 위에서 시료를 약 100 µm 범위로 아주 정밀하게 옮기고, 측정 라인 위치(스캐너 오프셋)를 잡아 둡니다. <b>고정부</b>(바깥 틀)와 <b>이동부</b>(Sample Chuck과 시료가 올라감)로 되어 있고, 네 모서리의 <b>Flexure hinge</b>가 둘을 잇습니다. 구동은 <b>Stacked Piezo 2쌍 + Force lever</b>(각 4개) — 앞·뒤 쌍이 Y, 좌·우 쌍이 X이고, 스크류와 압축 스프링으로 예압을 줍니다. 위치 디텍터 4개는 이동부 네 변 가운데에 있습니다(<b>Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞</b>) — 이동부의 PSPD가 아래 LED 빛의 위치로 이동량을 읽습니다. 색은 X·Y 구동 판정 중 나쁜 쪽입니다.'},
  encl:{n:'Acoustic Enclosure (방음 인클로저)',s:'방음 인클로저',what:'장비 전체를 감싸는 방음 덮개입니다. 바깥 소음과 공기 흐름을 막습니다.'}
 };
 const KEY2ID={avt:'anti_vibration',body:'body',stage:'xy_stage',xpzt:'xy_scanner_x',ypzt:'xy_scanner_y',scanner:'xy_scanner',flexure:'xy_scanner',detector:'xy_scanner',chuck:'chuck',wafer:'sample',zstage:'z_stage',fstage:'f_stage',vision:'vision',zscan:'z_scanner_tip',tip:'z_scanner_tip',efem:'efem',encl:'encl'};
-const KEYLAB={tip:'Tip (캔틸레버)',flexure:'플렉셔',detector:'디텍터 X1·X2·Y1·Y2'};
+const KEYLAB={tip:'Tip (캔틸레버)',flexure:'플렉셔 힌지 (네 모서리)',detector:'디텍터 Y1·Y2·X1·X2'};
+// XY Scanner 의심 부위 (진단 데이터가 아니라 구조에서 나오는 후보 — 카드에 참고로 보인다)
+const SCANNER_SUSPECTS=['① Y PZT 쌍(앞·뒤) — 미는 힘 불균형·정렬·예압(스크류·압축 스프링)','② 플렉셔 힌지 강성 차 (네 모서리)','③ 이동부(상판) ↔ 척/θ 체결','④ Y1(왼쪽)/Y2(오른쪽) 디텍터 상대 보정 — 가설'];
 const PV={};
 arr(g(D,'parts')).map(obj).filter(Boolean).forEach(p=>{if(typeof p.id==='string')PV[p.id]={v:VK(p.verdict),r:p.reason,raw:p.verdict};});
 function pver(id){if(id==='xy_scanner')return worst(pver('xy_scanner_x'),pver('xy_scanner_y'));return PV[id]?PV[id].v:'na';}
@@ -708,9 +719,9 @@ function tintScene(S){const f=o=>{if(!o||!o.part)return;const id=KEY2ID[o.part];
 const HW={e:0,eT:0,sel:null,labels:true,encl:false};
 function hwLabels(e){
   const dB=60*e,dS=110*e,dSc=170*e,dC=250*e,dW=300*e,dH=360*e;
-  const L=[['avt',[300,-370,48]],['body',[-260,-287,170+dB]],['stage',[150,-180,250+dS]],['scanner',[-150,-170,300+dSc]],['ypzt',[0,-170,306+dSc]],['xpzt',[170,0,306+dSc]],['chuck',[125,-85,341+dC]],['wafer',[-90,-110,355+dW]],
+  const L=[['avt',[300,-370,48]],['body',[-260,-287,170+dB]],['stage',[150,-180,250+dS]],['scanner',[-150,-170,300+dSc]],['ypzt',[0,-160,317+dSc]],['xpzt',[160,0,317+dSc]],['chuck',[125,-85,341+dC]],['wafer',[-90,-110,355+dW]],
     ['zstage',[60,140,790+dH]],['fstage',[-55,80,700+dH]],['vision',[-55,-113,700+dH]],['zscan',[40,49,520+dH]],['tip',[0,0,375+dH]],['efem',[-600,-200,430]]];
-  if(e>0.5)L.push(['flexure',[141,-80,330+dSc]],['detector',[-90,-161,343+dSc]]);
+  if(e>0.5)L.push(['flexure',[131,-131,322+dSc]],['detector',[0,-95,335+200*e]]);
   if(HW.encl)L.push(['encl',[-430,-410,860]]);
   const SIDE={body:'L',efem:'L',scanner:'L',wafer:'L',vision:'L',fstage:'L',detector:'L',encl:'L',zstage:'R',zscan:'R',tip:'R',chuck:'R',ypzt:'R',xpzt:'R',stage:'R',avt:'R',flexure:'R'};
   return L.map(q=>{const id=KEY2ID[q[0]];return {a:q[1],t:KEYLAB[q[0]]||PDEF[id].s,v:id==='encl'?'na':pver(id),part:q[0],side:SIDE[q[0]]};});
@@ -727,13 +738,14 @@ function renderPartCard(){
   const id=HW.sel,el=$('partCard');
   if(!id){
     const bad=Object.keys(PDEF).filter(k=>k!=='xy_scanner'&&k!=='encl'&&PV[k]&&(PV[k].v==='fail'||PV[k].v==='warn')).sort((a,b)=>RANK[PV[b].v]-RANK[PV[a].v]);
-    el.innerHTML='<h3>부품을 눌러 보세요</h3><div class="row">3D 그림이나 오른쪽 목록에서 부품을 누르면 <b>무엇을 하는 부품인지</b>와 <b>이번 진단의 판정 이유</b>가 여기에 나옵니다. 분해 보기를 누르면 스캐너 안의 PZT·플렉셔·디텍터가 보입니다.</div>'+
+    el.innerHTML='<h3>부품을 눌러 보세요</h3><div class="row">3D 그림이나 오른쪽 목록에서 부품을 누르면 <b>무엇을 하는 부품인지</b>와 <b>이번 진단의 판정 이유</b>가 여기에 나옵니다. 분해 보기를 누르면 스캐너 안의 Stacked Piezo 2쌍(앞·뒤 = Y, 좌·우 = X)·Force lever·모서리 플렉셔 힌지·디텍터 4개(Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞)가 보입니다.</div>'+
       `<div class="row"><span class="lab">주의·이상 판정 부품</span>${bad.length?bad.map(k=>`<div style="margin:3px 0">${chip(PV[k].v,esc(PDEF[k].s))} ${tx(PV[k].r)}</div>`).join(''):(Object.keys(PV).length?'없음 — 모든 부품이 정상 또는 판정 없음':NAH)}</div>`;return;}
   const P=PDEF[id];
   let h=`<h3>${esc(P.n)}</h3>`;
   if(id==='xy_scanner'){
     h+=`<div>${chip(pver(id),'X·Y 구동 중 나쁜 쪽: '+VT[pver(id)])}</div><div class="row"><span class="lab">하는 일</span>${P.what}</div><div class="row"><span class="lab">이번 진단 판정 — 이유</span>`+
-      ['xy_scanner_x','xy_scanner_y'].map(k=>`<div style="margin:4px 0">${chip(pver(k),esc(PDEF[k].s)+' — '+esc(pvText(k)))} ${PV[k]?tx(PV[k].r):NAH}</div>`).join('')+'</div>';
+      ['xy_scanner_x','xy_scanner_y'].map(k=>`<div style="margin:4px 0">${chip(pver(k),esc(PDEF[k].s)+' — '+esc(pvText(k)))} ${PV[k]?tx(PV[k].r):NAH}</div>`).join('')+'</div>'+
+      `<div class="row"><span class="lab">의심 부위 (구조상 후보, 참고)</span><ul class="rs" style="margin-top:2px">${SCANNER_SUSPECTS.map(x=>`<li>${x}</li>`).join('')}</ul></div>`;
   }else if(id==='encl'){
     h+=`<div>${chip('na','판정 대상 아님')}</div><div class="row"><span class="lab">하는 일</span>${P.what}</div><div class="row"><span class="lab">이번 진단 판정</span>진단 스키마의 부품 목록에 없는 덮개입니다.</div>`;
   }else{
@@ -841,13 +853,20 @@ function renderWhere(){
 function closeUp(svg,lines,o){
   o=o||{};const W=330,H=250;
   let ext=40;lines.forEach(l=>{if(isNum(l.x))ext=Math.max(ext,Math.abs(l.x)+16);if(isNum(l.y))ext=Math.max(ext,Math.abs(l.y)+16);});
-  const s=Math.min((W-40)/(2*ext),(H-56)/(2*ext)),ox=W/2,oy=H/2+6,X=u=>ox+u*s,Y=v=>oy-v*s,P=ext*2;
-  const T=(x,y,t,a)=>`<text x="${x}" y="${y}" font-size="${(a&&a.size)||11.5}" fill="${(a&&a.fill)||C['text-primary']}" font-weight="${(a&&a.w)||600}" text-anchor="${(a&&a.anchor)||'middle'}" dominant-baseline="middle" stroke="${C['surface-1']}" stroke-width="3.5" paint-order="stroke">${t}</text>`;
-  let h=`<rect x="0" y="0" width="${W}" height="${H}" rx="8" fill="${C['surface-1']}" stroke="${C.border}"/>`;
-  h+=`<rect x="${X(-P)}" y="${Y(0)}" width="${P*s}" height="${P*s}" fill="${C['m-pattern']}" fill-opacity="0.45"/><rect x="${X(0)}" y="${Y(P)}" width="${P*s}" height="${P*s}" fill="${C['m-pattern']}" fill-opacity="0.45"/>`;
+  /* Vision pattern (camera picture): a ~200 µm square frame with two dark inner squares (top-right, bottom-left,
+     inset ~20 µm). Vision matching finds the whole frame; the Tip reference point (Tip 기준점) is the frame's
+     top-left corner = (0,0). X right, Y up. The X line (20 µm, horizontal) crosses the left edge below the corner,
+     the Y line (vertical) crosses the top edge right of the corner. X line at Y ≥ 0 (or Y line at X ≤ 0) has no edge. */
+  const PB='#cfcdc7',PF='#f7f6f3',PS='#9a9891',INK='#0b0b0b',FR=200;   // fixed image grays, same in both themes
+  const s=Math.min((W-40)/(2*ext),(H-56)/(2*ext)),ox=W/2,oy=H/2+6,X=u=>ox+u*s,Y=v=>oy-v*s;
+  const T=(x,y,t,a)=>`<text x="${x}" y="${y}" font-size="${(a&&a.size)||11.5}" fill="${(a&&a.fill)||INK}" font-weight="${(a&&a.w)||600}" text-anchor="${(a&&a.anchor)||'middle'}" dominant-baseline="middle" stroke="${PF}" stroke-width="3.5" paint-order="stroke">${t}</text>`;
+  const invalid=l=>l.kind==='x'?l.y>=0:l.x<=0;
+  let h=`<rect x="0" y="0" width="${W}" height="${H}" rx="8" fill="${PB}"/>`;
+  h+=`<rect x="${X(0)}" y="${Y(0)}" width="${FR*s}" height="${FR*s}" fill="${PF}"/>`;
+  [[100,-20],[20,-100]].forEach(q=>{h+=`<rect x="${X(q[0])}" y="${Y(q[1])}" width="${80*s}" height="${80*s}" fill="${PS}"/>`;});
   h+=`<rect x="1" y="1" width="${W-2}" height="${H-2}" rx="8" fill="none" stroke="${C.border}"/>`;
-  lines.forEach(l=>{if(!isNum(l.x)||!isNum(l.y))return;const hx=l.kind==='x'?10:0,hy=l.kind==='y'?10:0;
-    h+=`<line x1="${X(l.x-hx)}" y1="${Y(l.y-hy)}" x2="${X(l.x+hx)}" y2="${Y(l.y+hy)}" stroke="${l.col}" stroke-width="${l.dash?2:4}" stroke-linecap="round"${l.dash?' stroke-dasharray="4 3"':''}/>`;
+  lines.forEach(l=>{if(!isNum(l.x)||!isNum(l.y))return;const hx=l.kind==='x'?10:0,hy=l.kind==='y'?10:0,bad=!l.dash&&invalid(l);
+    h+=`<line x1="${X(l.x-hx)}" y1="${Y(l.y-hy)}" x2="${X(l.x+hx)}" y2="${Y(l.y+hy)}" stroke="${bad?C.critical:l.col}" stroke-width="${l.dash?2:4}" stroke-linecap="round"${l.dash||bad?' stroke-dasharray="4 3"':''}/>`;
     if(!l.lab)return;
     const pos=l.pos||(l.kind==='x'?'below':'above');let lx,ly,anchor='middle';
     if(pos==='below'){lx=X(l.x);ly=Y(l.y-hy)+15;}
@@ -855,11 +874,14 @@ function closeUp(svg,lines,o){
     else if(pos==='right'){lx=X(l.x+hx)+7;ly=Y(l.y);anchor='start';}
     else{lx=X(l.x-hx)-7;ly=Y(l.y);anchor='end';}
     if(anchor==='middle'){const w=[...l.lab].reduce((a,ch)=>a+(ch.charCodeAt(0)>0x1100?11.5:6.6),0)/2;lx=clamp(lx,w+4,W-w-4);}
-    h+=T(lx,ly,l.lab,{anchor,fill:l.dash?C['text-secondary']:C['text-primary'],w:l.dash?600:700});});
-  h+=`<circle cx="${X(0)}" cy="${Y(0)}" r="4.5" fill="${C['text-primary']}" stroke="${C['surface-1']}" stroke-width="1.5"/>`+T(X(0)-8,Y(0)-11,'정렬점 (꼭짓점)',{anchor:'end'});
-  const sb=10;h+=`<line x1="12" y1="${H-14}" x2="${12+sb*s}" y2="${H-14}" stroke="${C['text-primary']}" stroke-width="2"/>`+T(16+sb*s,H-14,'10 µm',{anchor:'start',size:11,fill:C['text-secondary']});
-  h+=T(W-6,12,'↑ 뒤(기둥) · ← EFEM · ↓ 정면',{anchor:'end',size:10.5,fill:C['text-secondary']});
-  if(o.warn)h+=T(W/2,28,o.warn,{fill:C.critical,w:800,size:12});
+    h+=T(lx,ly,l.lab,{anchor,fill:l.dash?'#52514e':INK,w:l.dash?600:700});});
+  h+=`<line x1="${X(0)-9}" y1="${Y(0)}" x2="${X(0)+9}" y2="${Y(0)}" stroke="${C.accent}" stroke-width="2.2"/><line x1="${X(0)}" y1="${Y(0)-9}" x2="${X(0)}" y2="${Y(0)+9}" stroke="${C.accent}" stroke-width="2.2"/>`+
+     T(8,Y(0)-18,'Tip 기준점 (패턴 좌상단 꼭짓점)',{anchor:'start',fill:'#1c5cab',w:700,size:11});
+  const sb=10;h+=`<line x1="12" y1="${H-14}" x2="${12+sb*s}" y2="${H-14}" stroke="${INK}" stroke-width="2"/>`+T(16+sb*s,H-14,'10 µm',{anchor:'start',size:11,fill:'#52514e'});
+  h+=T(W-6,12,'↑ 뒤(기둥) · ← EFEM · ↓ 정면',{anchor:'end',size:10.5,fill:'#52514e'});
+  const bad=lines.find(l=>!l.dash&&isNum(l.x)&&isNum(l.y)&&invalid(l));
+  const warn=o.warn||(bad?(bad.kind==='x'?(bad.y===0?'꼭짓점 — 사용 불가':'패턴 밖 — 엣지 없음, 측정 불가'):(bad.x===0?'꼭짓점 — 사용 불가':'패턴 밖 — 엣지 없음, 측정 불가')):null);
+  if(warn)h+=T(W/2,32,warn,{fill:C.critical,w:800,size:12});
   svg.innerHTML=h;
 }
 function renderOffsets(){
@@ -893,7 +915,7 @@ function renderOffsets(){
   $('offTables').innerHTML=h;
   closeUp($('offFig'),figL);
   $('offFigNote').textContent=!figL.length?'개념도 — 오프셋 데이터 없음':
-    `개념도(체커보드 패턴, 크기 비율은 대략) — 선 위치는 정렬점(꼭짓점) 기준 ${drawn.join(' / ')} 값입니다.`+
+    `개념도(비전 패턴: 약 200 µm 사각 틀 안 어두운 사각형 2개, 비율 대략) — 선 위치는 Tip 기준점(패턴 좌상단 꼭짓점) 기준 ${drawn.join(' / ')} 값입니다. X 라인은 왼쪽 세로 엣지, Y 라인은 위쪽 가로 엣지를 가로지릅니다.`+
     (drawn.includes('레시피 오프셋')&&drawn.length===1?' 실제 스캐너 위치는 여기에 기준·미세 보정이 더해진 "적용" 값입니다.':drawn.includes('레시피 + 기준 보정')?' 기준 보정이 들어 있어 패턴 기준 위치와 조금 다를 수 있습니다. 실제 스캐너 위치는 미세 보정까지 더한 "적용" 값입니다.':'');
 }
 const nfsT=v=>isNum(v)?sgn(v,1):'?';
@@ -902,7 +924,7 @@ const nfsT=v=>isNum(v)?sgn(v,1):'?';
    What-if — recipe Y offset of the X line
    ===================================================================== */
 const WI={rows:[],i:0,cur:-1,rec:-1,keep:false,flag:false,key:'recipe_y',explicit:false};
-const WI_MIN_ABS=5;   // 꼭짓점 여유: X 라인을 체커보드 꼭짓점에서 5 µm 이상 떨어뜨린다 (엣지 품질)
+const WI_MIN_ABS=5;   // 꼭짓점 여유: X 라인을 Tip 기준점(패턴 좌상단 꼭짓점)에서 5 µm 이상 아래로 (엣지 품질). 0은 꼭짓점, + 값은 패턴 밖
 const allPass=r=>isNum(r.pass_lots)&&isNum(r.lots)&&r.lots>0&&r.pass_lots>=r.lots;
 const hasKey=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 function initWI(){
@@ -916,7 +938,7 @@ function initWI(){
   let best=rows.findIndex(r=>r.recommended===true);WI.flag=best>=0;
   if(!WI.explicit&&key==='recipe_y'){     // 스캐너 Y 기준 표는 스스로 고르지 않는다
     if(WI.cur>=0&&allPass(rows[WI.cur]))best=WI.cur;                 // 지금 레시피로 모든 Lot PASS면 현재 유지
-    if(best<0)rows.forEach((r,i)=>{if(Math.abs(r.recipe_y)<WI_MIN_ABS||!allPass(r))return;if(best<0||Math.abs(r.recipe_y)<Math.abs(rows[best].recipe_y))best=i;});
+    if(best<0)rows.forEach((r,i)=>{if(r.recipe_y>0||Math.abs(r.recipe_y)<WI_MIN_ABS||!allPass(r))return;if(best<0||Math.abs(r.recipe_y)<Math.abs(rows[best].recipe_y))best=i;});
   }
   WI.rec=best;WI.keep=best>=0&&best===WI.cur;WI.i=best>=0?best:(WI.cur>=0?WI.cur:0);
   if(HS.off!=null){const j=rows.findIndex(r=>r[key]===+HS.off);if(j>=0)WI.i=j;}
@@ -940,7 +962,7 @@ function renderWI(){
   const pl=r=>isNum(r.pass_lots)&&isNum(r.lots)?`${num(r.pass_lots,0)}/${num(r.lots,0)}`:NAT;
   const xl=obj(g(D,'scanner_offsets','X_line')),xs=byScan?pair(g(xl,'applied')):(pair(g(xl,'recipe'))||pair(g(xl,'recipe_plus_ref'))),lx=xs&&isNum(xs[0])?xs[0]:0;
   const rule=WI.explicit?'<b>권장</b> = 진단이 지정한 행.':byScan?'스캐너 Y 적용값 기준 표에서는 권장을 따로 계산하지 않습니다 (레시피 값을 모름).':
-    `<b>권장</b> = 지금 레시피가 모든 Lot PASS일 때 <b>현재 유지</b>, 아니면 모든 Lot이 PASS인 행 중 |레시피 Y| ≥ ${WI_MIN_ABS} µm에서 가장 작은 행 (<b>꼭짓점 여유 ${WI_MIN_ABS} µm</b> — X 라인을 체커보드 꼭짓점에서 떨어뜨려 엣지 품질 확보).`;
+    `<b>권장</b> = 지금 레시피가 모든 Lot PASS일 때 <b>현재 유지</b>, 아니면 모든 Lot이 PASS인 행 중 |레시피 Y| ≥ ${WI_MIN_ABS} µm(음수)에서 가장 작은 행 (<b>꼭짓점 여유 ${WI_MIN_ABS} µm</b> — X 라인을 Tip 기준점(패턴 좌상단 꼭짓점)에서 떨어뜨려 왼쪽 엣지의 품질 확보. 쓸 수 있는 값은 −5 ~ −190 µm, 0은 꼭짓점 자체, + 값은 꼭짓점 위쪽 = 패턴 밖이라 엣지가 없어 측정 불가).`;
   const recChip=WI.rec>=0?(WI.keep?chip('ok','현재 유지 (권장) '+kv(WI.rows[WI.rec])+' µm'):chip('ok','권장 '+kv(WI.rows[WI.rec])+' µm'+(WI.flag?' (진단 지정)':''))):
     WI.explicit?chip('na','권장 없음 (진단)'):byScan?chip('na','권장 계산 안 함 (스캐너 Y 기준)'):chip('warn',`권장 없음 — |레시피 Y| ≥ ${WI_MIN_ABS} µm에서 모든 Lot PASS인 행이 없음`);
   let h=`<p class="sub" style="margin-top:-4px">X 라인을 잴 때 스캐너를 Y로 덜 밀면 회전이 줄어 X 오차가 작아집니다. 가정: ${tx(wi&&wi.assumption)}. Spec: ${isNum(SPEC.range)||isNum(SPEC.stddev)?`Range ≤ ${specTxt(SPEC.range)} µm, StdDev ≤ ${specTxt(SPEC.stddev)} µm`:NAT}. ${rule}</p>`+noteBox;
@@ -949,14 +971,14 @@ function renderWI(){
      (byScan?'':`<div class="note">꼭짓점 여유 ${WI_MIN_ABS} µm</div>`)+
      `<div class="read"><div><span>${keyLab}</span><b>${sgn(R[key],byScan?2:1)} µm</b></div>${showOther?`<div><span>${otherLab}</span><b>${nfs(R[other],1)} µm</b></div>`:''}<div><span>예측 θ</span><b>${nf(R.theta,2)} µrad</b></div><div><span>PASS Lot</span><b>${pl(R)}</b></div></div>`+
      `<div class="h">예측 (막대 = 평균, 검은 선 = 최대, 빨간 점선 = Spec)</div>${bl('Range 평균 / 최대',R.range_mean,R.range_max,SPEC.range,2)}${bl('StdDev 평균 / 최대',R.std_mean,R.std_max,SPEC.stddev,3)}</div>`+
-     `<div><svg id="wiFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="${keyLab}별 X 라인 위치"></svg><div class="note">${byScan?'개념도 — 선 위치 = 스캐너 Y 적용값 목표(기준·미세 보정 포함)라 패턴 기준 위치와 다를 수 있습니다. 실선 = 고른 행, 점선 = 현재.':'개념도 — 선 위치 = 정렬점 기준 레시피 Y 오프셋. 실선 = 고른 행, 점선 = 현재 레시피.'}</div></div></div>`;
+     `<div><svg id="wiFig" viewBox="0 0 330 250" width="100%" style="max-width:420px;display:block" role="img" aria-label="${keyLab}별 X 라인 위치"></svg><div class="note">${byScan?'개념도 — 선 위치 = 스캐너 Y 적용값 목표(기준·미세 보정 포함)라 패턴 기준 위치와 다를 수 있습니다. 실선 = 고른 행, 점선 = 현재.':'개념도 — 선 위치 = Tip 기준점(패턴 좌상단 꼭짓점) 기준 레시피 Y 오프셋, X 라인은 왼쪽 세로 엣지를 가로지름. 실선 = 고른 행, 점선 = 현재 레시피.'}</div></div></div>`;
   h+=`<table style="margin-top:12px"><tr><th class="r">${keyLab} (µm)</th>${showOther?`<th class="r">${otherLab} (µm)</th>`:''}<th class="r">예측 θ (µrad)</th><th class="r">Range 평균 / 최대 (µm)</th><th class="r">Std 평균 / 최대 (µm)</th><th class="r">PASS Lot</th></tr>`+
-    WI.rows.map((r,i)=>`<tr data-i="${i}" class="${i===WI.i?'hl':''} ${i===WI.cur?'cur':''}" style="cursor:pointer"><td class="r">${sgn(r[key],byScan?2:1)}${i===WI.rec&&WI.keep?' '+chip('ok','현재 유지 (권장)'):(i===WI.cur?' '+chip('info','현재'):'')+(i===WI.rec?' '+chip('ok','권장'):'')}</td>${showOther?`<td class="r">${nfs(r[other],1)}</td>`:''}<td class="r">${nf(r.theta,2)}</td><td class="r">${nf(r.range_mean,2)} / ${nf(r.range_max,2)}</td><td class="r">${nf(r.std_mean,3)} / ${nf(r.std_max,3)}</td><td class="r">${pl(r)}</td></tr>`).join('')+'</table>';
+    WI.rows.map((r,i)=>`<tr data-i="${i}" class="${i===WI.i?'hl':''} ${i===WI.cur?'cur':''}" style="cursor:pointer"><td class="r">${sgn(r[key],byScan?2:1)}${i===WI.rec&&WI.keep?' '+chip('ok','현재 유지 (권장)'):(i===WI.cur?' '+chip('info','현재'):'')+(i===WI.rec?' '+chip('ok','권장'):'')}${!byScan&&r.recipe_y>=0?' '+chip('na',r.recipe_y===0?'꼭짓점 — 사용 불가':'패턴 밖 — 측정 불가'):''}</td>${showOther?`<td class="r">${nfs(r[other],1)}</td>`:''}<td class="r">${nf(r.theta,2)}</td><td class="r">${nf(r.range_mean,2)} / ${nf(r.range_max,2)}</td><td class="r">${nf(r.std_mean,3)} / ${nf(r.std_max,3)}</td><td class="r">${pl(r)}</td></tr>`).join('')+'</table>';
   el.innerHTML=h;
   const cur=WI.cur>=0?WI.rows[WI.cur]:null,lines=[];
   if(cur&&WI.cur!==WI.i)lines.push({kind:'x',x:lx,y:cur[key],col:C['text-muted'],dash:true,lab:'현재 ('+kv(cur)+')',pos:'left'});
   lines.push({kind:'x',x:lx,y:R[key],col:C['series-1'],lab:'X 라인 ('+kv(R)+')',pos:'right'});
-  closeUp($('wiFig'),lines,{warn:byScan?null:R.recipe_y===0?'꼭짓점 위 → 사용 불가':Math.abs(R.recipe_y)<WI_MIN_ABS?`꼭짓점 여유 ${WI_MIN_ABS} µm 미만`:null});
+  closeUp($('wiFig'),lines,{warn:byScan?null:R.recipe_y>0?'패턴 밖 — 엣지 없음, 측정 불가':R.recipe_y===0?'꼭짓점 — 사용 불가':Math.abs(R.recipe_y)<WI_MIN_ABS?`꼭짓점 여유 ${WI_MIN_ABS} µm 미만`:null});
   $('wiS').oninput=e=>{WI.i=+e.target.value;renderWI();};
   el.querySelectorAll('tr[data-i]').forEach(tr=>tr.onclick=()=>{WI.i=+tr.dataset.i;renderWI();});
 }

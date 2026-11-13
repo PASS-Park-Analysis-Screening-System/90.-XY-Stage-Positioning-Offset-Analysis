@@ -353,13 +353,14 @@ def _between(text, start, end):
     return text.split(start, 1)[1].split(end, 1)[0]
 
 
-def _dump_dom(diag, tmp_path):
+def _dump_dom(diag, tmp_path, hash_=''):
     """헤드리스 Edge로 그린 뒤의 DOM. 스크립트 오류 배너가 뜨면 실패."""
     page = tmp_path / 'report.html'
     page.write_text(tr.build_report_html(diag), encoding='utf-8')
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile:
         out = subprocess.run([str(EDGE), '--headless=new', '--disable-gpu', '--dump-dom',
-                              '--virtual-time-budget=3000', f'--user-data-dir={profile}', page.as_uri()],
+                              '--virtual-time-budget=3000', f'--user-data-dir={profile}',
+                              page.as_uri() + (f'#{hash_}' if hash_ else '')],
                              capture_output=True, timeout=90)
     dom = out.stdout.decode('utf-8', 'replace')
     assert 'id="tree"' in dom, out.stderr[-500:]
@@ -393,16 +394,16 @@ def _new_with_flag():
 @pytest.mark.parametrize('case', [
     # (진단, What-if 칩 → 행, X 라인 칩, Y 라인 참고 칩)
     pytest.param((lambda: _fixture('diag_ref_old_m25.json'),
-                  {'현재': ['−25.0'], '권장': ['−5.0']},      # −3도 모든 Lot PASS지만 꼭짓점 여유 5 µm 미만
+                  {'현재': ['−25.0'], '권장': ['−5.0'], '꼭짓점 — 사용 불가': ['0.0']},   # −3도 PASS지만 꼭짓점 여유 5 µm 미만
                   'warn">|Y| 28.0 &gt; 10.0', '참고 |X| 30.8 &gt; 10.0'), id='old'),
     pytest.param((lambda: _fixture('diag_ref_new_m5.json'),
-                  {'현재 유지 (권장)': ['−5.0']},              # 지금 레시피가 모든 Lot PASS
+                  {'현재 유지 (권장)': ['−5.0'], '꼭짓점 — 사용 불가': ['0.0']},   # 지금 레시피가 모든 Lot PASS
                   'ok">|Y| 8.2 ≤ 10.0', '참고 |X| 26.4 &gt; 10.0'), id='new'),
     pytest.param((_new_with_flag,
-                  {'현재': ['−5.0'], '권장': ['−10.0']},       # 진단의 recommended 표시가 이긴다
+                  {'현재': ['−5.0'], '권장': ['−10.0'], '꼭짓점 — 사용 불가': ['0.0']},   # 진단의 recommended 표시가 이긴다
                   'ok">|Y| 8.2 ≤ 10.0', '참고 |X| 26.4 &gt; 10.0'), id='flag'),
     pytest.param((_old_not_provisional,
-                  {'현재': ['−25.0'], '권장': ['−5.0']},
+                  {'현재': ['−25.0'], '권장': ['−5.0'], '꼭짓점 — 사용 불가': ['0.0']},
                   'fail">|Y| 28.0 &gt; 10.0', '참고 |X| 30.8 &gt; 10.0'), id='old-final-spec'),
 ])
 def test_whatif_recommendation_and_offset_rule(tmp_path, case):
@@ -431,6 +432,46 @@ def test_real_a_fixture_has_no_private_paths():
     assert diag['whatif']['basis'] == 'scanner_y' and diag['positioning_log'] is None
     assert diag['scanner_offsets']['X_line']['recipe'] is None
     assert diag['scanner_offsets']['X_line']['recipe_plus_ref'] is not None
+
+
+# ── 측정 위치·스캐너 구조 (2026-11-13 사용자 정정) ────────────────────────────
+# 패턴은 약 200 µm 사각 틀 안에 어두운 사각형 2개. Tip 기준점 = 틀의 좌상단 꼭짓점 (체커보드의 맞닿은 점이
+# 아님). X 라인은 왼쪽 세로 엣지, Y 라인은 위쪽 가로 엣지. + 오프셋은 꼭짓점 위쪽 = 패턴 밖이라 측정 불가.
+# 스캐너: 고정부 + 이동부, 네 모서리 힌지, Y PZT 쌍 앞·뒤, X PZT 쌍 좌·우, 디텍터 Y1 왼쪽·Y2 오른쪽·X1 뒤·X2 앞.
+_OLD_GEOMETRY = ('체커보드 꼭짓점', '맞닿은', '극성', '정렬점')
+
+
+def test_no_old_geometry_wording_in_app_sources():
+    files = [RESOURCES / 'troubleshoot' / 'report_template.html',
+             PROJECT / 'src' / 'core' / 'xy_diagnosis.py', PROJECT / 'src' / 'ui' / 'dialogs' / 'expert_guide.py']
+    hits = [f'{f.name}: {w}' for f in files for w in _OLD_GEOMETRY if w in f.read_text(encoding='utf-8')]
+    assert hits == []
+
+
+@needs_edge
+def test_closeup_uses_frame_corner_and_scanner_card_layout(tmp_path):
+    dom = _dump_dom(_fixture('diag_ref_old_m25.json'), tmp_path, 'part=xy_scanner')
+    fig = _between(dom, 'id="offFig"', '</svg>')
+    assert 'Tip 기준점 (패턴 좌상단 꼭짓점)' in fig
+    assert '측정 불가' not in fig and '사용 불가' not in fig          # −25 µm / +30 µm는 유효
+    assert 'Tip 기준점(패턴 좌상단 꼭짓점) 기준' in _between(dom, 'id="offFigNote"', '</div>')
+    card = _between(dom, 'id="partCard"', 'id="partList"')
+    assert 'Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞' in card
+    assert 'Flexure hinge' in card and 'Stacked Piezo 2쌍' in card
+    assert '① Y PZT 쌍(앞·뒤)' in card and '④ Y1(왼쪽)/Y2(오른쪽) 디텍터 상대 보정' in card
+
+
+@needs_edge
+def test_offsets_at_or_above_the_corner_are_invalid(tmp_path):
+    diag = _fixture('diag_ref_old_m25.json')
+    diag['scanner_offsets']['X_line']['recipe'] = [0.0, 5.0]       # 꼭짓점 위쪽 = 패턴 밖
+    rows = diag['whatif']['rows']
+    rows.append(dict(rows[-1], recipe_y=5.0, scanner_y=2.0, current=False))   # +5: 모든 Lot PASS로 꾸며도
+    dom = _dump_dom(diag, tmp_path)
+    assert '패턴 밖 — 엣지 없음, 측정 불가' in _between(dom, 'id="offFig"', '</svg>')
+    marks = _whatif_marks(dom)
+    assert marks['권장'] == ['−5.0']                                  # + 값은 권장하지 않는다
+    assert marks['패턴 밖 — 측정 불가'] == ['+5.0'] and marks['꼭짓점 — 사용 불가'] == ['0.0']
 
 
 @needs_edge
