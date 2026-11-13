@@ -1,3 +1,5 @@
+from functools import partial
+
 from PySide6.QtCore import QTimer
 import charts as viz
 import charts as viz_pg
@@ -61,14 +63,6 @@ class ChartMixin:
         import matplotlib.pyplot as plt
         short = recipe.get('short_name', '')
 
-        # ─── Pareto Chart (이상치 분석) ───
-        try:
-            pareto = compute_pareto_data(data, group_by='die')
-            self.chart_widgets['Pareto'].set_widget(
-                viz_pg.create_pareto_widget(pareto, title=f'{short} — Pareto'))
-        except Exception as e:
-            self.logger.error(f"Pareto 차트 오류: {e}")
-
         # 아래 차트들은 값이 없으면 갱신을 건너뛰므로 여기서 비운다 (이전 Step이 남지 않게)
         has_x = bool(self._dev_x.get('die_stats'))
         has_y = bool(self._dev_y.get('die_stats'))
@@ -79,47 +73,14 @@ class ChartMixin:
             if not has_data:
                 self.chart_widgets[name].clear()
 
-        # ─── Correlation Chart (X/Y 상관관계) ───
-        try:
-            if self._dev_x.get('die_stats') and self._dev_y.get('die_stats'):
-                corr = compute_correlation(
-                    self._dev_x['die_stats'], self._dev_y['die_stats'])
-                self.chart_widgets['Correlation'].set_widget(
-                    viz_pg.create_correlation_widget(
-                        corr, title=f'{short} — X/Y Correlation'))
-        except Exception as e:
-            self.logger.error(f"Correlation 차트 오류: {e}")
-
-        # ─── 3D Surface (OpenGL) ─ X/Y 분리 및 X+Y 합성 ───
-        for axis_key, dev in [('X', self._dev_x), ('Y', self._dev_y)]:
-            try:
-                ds = dev.get('die_stats')
-                if ds:
-                    self.chart_widgets[f'3D {axis_key}'].set_widget(
-                        viz_pg.create_3d_surface_widget(
-                            ds, title=f'{short} — 3D {axis_key} Surface'))
-            except Exception as e:
-                self.logger.error(f"3D {axis_key} Surface 오류: {e}")
-                
-        # 3D X+Y (Magnitude) 생성
-        try:
-            if self._dev_x.get('die_stats') and self._dev_y.get('die_stats'):
-                import math
-                mag_stats = []
-                # die 번호를 기준으로 X와 Y 값을 매칭
-                x_dict = {d['die']: d['avg'] for d in self._dev_x['die_stats']}
-                y_dict = {d['die']: d['avg'] for d in self._dev_y['die_stats']}
-                
-                for die_num in set(x_dict.keys()).intersection(y_dict.keys()):
-                    mag = math.sqrt(x_dict[die_num]**2 + y_dict[die_num]**2)
-                    mag_stats.append({'die': die_num, 'avg': mag})
-                
-                if mag_stats:
-                    self.chart_widgets['3D X+Y'].set_widget(
-                        viz_pg.create_3d_surface_widget(
-                            mag_stats, title=f'{short} — 3D X+Y Magnitude Surface'))
-        except Exception as e:
-            self.logger.error(f"3D X+Y Surface 오류: {e}")
+        # ─── 전문 분석 창(Advanced) 차트: Pareto · Correlation · 3D ───
+        # 창이 닫혀 있으면 그리지 않고 미뤄 둔다 (창이 보이게 되면 _flush_advanced_charts가 마지막 것만 그린다)
+        draw = partial(self._draw_advanced_charts, data, short, self._dev_x, self._dev_y)
+        if self._expert_window_open():
+            self._advanced_charts_pending = None
+            draw()
+        else:
+            self._advanced_charts_pending = draw
 
         # ─── matplotlib 차트 (Contour/Vector — scipy 보간) ───
         wr = self._get_wafer_radius_um()
@@ -181,6 +142,58 @@ class ChartMixin:
                                        wafer_radius_um=self._get_wafer_radius_um()))
         self._die_position_key = key
 
+
+    def _draw_advanced_charts(self, data, short, dev_x, dev_y):
+        """Pareto·Correlation·3D Surface (전문 분석 창). 오류는 전문 분석 기록에 남긴다 (작업자 System Log가 아님)."""
+        log = self.expert_logger
+        # ─── Pareto Chart (이상치 분석) ───
+        try:
+            pareto = compute_pareto_data(data, group_by='die')
+            self.chart_widgets['Pareto'].set_widget(
+                viz_pg.create_pareto_widget(pareto, title=f'{short} — Pareto'))
+        except Exception as e:
+            log.error(f"Pareto 차트 오류: {e}")
+
+        # ─── Correlation Chart (X/Y 상관관계) ───
+        try:
+            if dev_x.get('die_stats') and dev_y.get('die_stats'):
+                corr = compute_correlation(dev_x['die_stats'], dev_y['die_stats'])
+                self.chart_widgets['Correlation'].set_widget(
+                    viz_pg.create_correlation_widget(
+                        corr, title=f'{short} — X/Y Correlation'))
+        except Exception as e:
+            log.error(f"Correlation 차트 오류: {e}")
+
+        # ─── 3D Surface (OpenGL) ─ X/Y 분리 및 X+Y 합성 ───
+        for axis_key, dev in [('X', dev_x), ('Y', dev_y)]:
+            try:
+                ds = dev.get('die_stats')
+                if ds:
+                    self.chart_widgets[f'3D {axis_key}'].set_widget(
+                        viz_pg.create_3d_surface_widget(
+                            ds, title=f'{short} — 3D {axis_key} Surface'))
+            except Exception as e:
+                log.error(f"3D {axis_key} Surface 오류: {e}")
+
+        # 3D X+Y (Magnitude) 생성
+        try:
+            if dev_x.get('die_stats') and dev_y.get('die_stats'):
+                import math
+                mag_stats = []
+                # die 번호를 기준으로 X와 Y 값을 매칭
+                x_dict = {d['die']: d['avg'] for d in dev_x['die_stats']}
+                y_dict = {d['die']: d['avg'] for d in dev_y['die_stats']}
+
+                for die_num in set(x_dict.keys()).intersection(y_dict.keys()):
+                    mag = math.sqrt(x_dict[die_num]**2 + y_dict[die_num]**2)
+                    mag_stats.append({'die': die_num, 'avg': mag})
+
+                if mag_stats:
+                    self.chart_widgets['3D X+Y'].set_widget(
+                        viz_pg.create_3d_surface_widget(
+                            mag_stats, title=f'{short} — 3D X+Y Magnitude Surface'))
+        except Exception as e:
+            log.error(f"3D X+Y Surface 오류: {e}")
 
     def _get_wafer_radius_um(self) -> float:
         """현재 선택된 웨이퍼 반경 (µm)."""

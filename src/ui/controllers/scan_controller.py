@@ -155,6 +155,9 @@ class ScanMixin:
         if bar is not None:
             bar.setRange(0, 0)
             bar.show()
+        set_expert_busy = getattr(self, '_set_expert_busy', None)
+        if set_expert_busy is not None:     # 전문 분석 창: 안내 띠, 도구·진단 저장 버튼 끄기
+            set_expert_busy(True)
 
     def _busy_count(self, done, total):
         """n/m — 전체를 모르면(0) 바쁨 표시."""
@@ -191,6 +194,9 @@ class ScanMixin:
         bar = getattr(self, 'status_progress', None)
         if bar is not None:
             bar.hide()
+        set_expert_busy = getattr(self, '_set_expert_busy', None)
+        if set_expert_busy is not None:
+            set_expert_busy(False)
 
     def _show_render_phase(self):
         """화면 그리기 전에 '화면 그리는 중…'을 실제로 그려 둔다 (그리기 동안은 이벤트를 못 돈다)."""
@@ -547,9 +553,10 @@ class ScanMixin:
         cancel = getattr(self, 'btn_cancel_scan', None)
         if cancel is not None:
             cancel.setVisible(not enabled)
-        shortcut = getattr(self, '_cancel_shortcut', None)
-        if shortcut is not None:
-            shortcut.setEnabled(not enabled)    # Esc는 진행 중일 때만 (대화상자 등의 Esc를 빼앗지 않게)
+        for name in ('_cancel_shortcut', '_expert_cancel_shortcut'):    # 전문 분석 창에서도 Esc
+            shortcut = getattr(self, name, None)
+            if shortcut is not None:
+                shortcut.setEnabled(not enabled)    # Esc는 진행 중일 때만 (대화상자 등의 Esc를 빼앗지 않게)
 
     def _on_load_cancelled(self):
         """로드 스레드 cancelled 슬롯 — 로드 전 화면(이전 결과)으로 되돌린다."""

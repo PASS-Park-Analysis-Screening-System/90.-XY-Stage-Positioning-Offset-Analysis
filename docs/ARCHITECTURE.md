@@ -162,7 +162,8 @@ DataAnalyzerApp (QMainWindow)
 
     상태 표시줄: 진행 막대 + 버전 글자(version_status_label — 전문 분석 창의 숨은 입구, 7.3)
 
-ExpertWindow "XY 전문 분석 (QC 엔지니어)" (QMainWindow, 메인 창 소유·비모달, 평소에는 숨김)
+ExpertWindow "XY 전문 분석 (QC 엔지니어)" (QMainWindow, 부모 없는 비모달 창, 평소에는 숨김)
+├─ busy_banner (메인 창이 데이터를 읽는 동안)
 └─ tabs (QTabWidget)
     ├─ "Advanced"  = 메인 창 _inner_tabs['Advanced'] (같은 mixin이 만든 위젯을 옮겨 담음)
     │   ├─ "Pareto"
@@ -174,6 +175,7 @@ ExpertWindow "XY 전문 분석 (QC 엔지니어)" (QMainWindow, 메인 창 소�
     ├─ "도구" — AI 분석용 Markdown, 이미지 2장 이동량 분석, 3D 트러블슈팅 보고서, 사례 라이브러리,
     │           스캐너 회전 시험 분석 (Export와 같은 큰 버튼, 예전과 같은 함수, 창은 이 창 위에)
     └─ "도움말" — GuideBrowser(expert_guide.EXPERT_GUIDE): 작업자 가이드에서 뺀 심화 기능 설명
+└─ 전문 분석 기록 (QTextEdit + SystemLogger = expert_logger, 탭 아래 분할)
 ```
 
 ---
@@ -304,26 +306,39 @@ Optical Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면
   넣지 않고(`_add_chart`가 `EXPERT_CATEGORY`를 건너뜀) `_build_expert_window`가 전문 분석 창에 옮겨 담는다.
   `self._inner_tabs['Advanced']`와 `chart_widgets`는 그대로 그 위젯을 가리켜 Step·회차·Die 필터 변경은 예전 경로
   (`_display_result` → `_update_charts`·`_update_positioning_log`·`_update_diagnosis`)로 이 창을 갱신한다.
-- **보임 판단 (한 곳)**: `_advanced_tab_visible(name)` = 전문 분석 창이 보이고 최소화되지 않았고, 그 창에서 Advanced가
-  앞이고, 그 안에서 name 탭이 앞이다. `_positioning_tab_visible`·`_diagnosis_tab_visible`이 이것만 부르고, 그 둘을
-  Log 읽기 시작(`_start_positioning_read`·`_start_diagnosis_read`), 진단이 시작하는 Positioning Log 읽기
-  (`_positioning_wanted`), 진단 계산(`_refresh_diagnosis`), 미뤄 둔 차트(`_flush_positioning_chart`·`_flush_diagnosis_chart`)가
-  쓴다. 창이 닫혀 있거나 최소화돼 있으면 안쪽 탭이 '앞'이어도 새 읽기·계산·차트를 시작하지 않는다.
-- **flush 연결**: 전문 분석 창의 `became_visible`(showEvent, 최소화에서 돌아옴, 활성화)과 바깥·안쪽 탭 `currentChanged`가
-  `_flush_advanced_tabs` → 기존 `_flush_positioning_chart`·`_flush_diagnosis`를 부른다 (세대 번호·한 세대 한 읽기 그대로).
+- **보임 판단 (한 곳)**: `_expert_window_open()` = 전문 분석 창이 보이고 최소화되지 않았고 메인 창도 최소화되지 않았다.
+  `_advanced_tab_visible(name)` = 창이 열려 있고 그 창에서 Advanced가 앞이고 그 안에서 name 탭이 앞이다.
+  `_positioning_tab_visible`·`_diagnosis_tab_visible`이 이것만 부르고, 그 둘을 Log 읽기 시작(`_start_positioning_read`·
+  `_start_diagnosis_read`), 진단이 시작하는 Positioning Log 읽기(`_positioning_wanted`), 진단 계산(`_refresh_diagnosis`),
+  미뤄 둔 차트(`_flush_positioning_chart`·`_flush_diagnosis_chart`)가 쓴다. Pareto·Correlation·3D Surface(`_draw_advanced_charts`)는
+  창이 열려 있을 때만 그리고, 닫혀 있으면 마지막 것을 `_advanced_charts_pending`에 미뤘다가 연다. 창이 닫혀 있거나 최소화돼
+  있으면 안쪽 탭이 '앞'이어도 새 읽기·계산·차트를 시작하지 않는다 (이미 시작한 읽기는 끝까지 돌고 결과를 담는다).
+- **flush 연결**: 전문 분석 창의 `became_visible`(숨김·최소화에서 보이게 되는 전환에서만 — 활성화만으로는 내지 않음)과 바깥·안쪽 탭
+  `currentChanged`가 `_retry_advanced_reads` → `_flush_advanced_tabs`(미룬 차트, 기존 `_flush_positioning_chart`·`_flush_diagnosis`)를
+  부른다 (세대 번호·한 세대 한 읽기 그대로). 메인 창이 최소화에서 돌아오면(`main.changeEvent`) `_flush_advanced_tabs`만.
+- **읽기 오류**: 오류가 섞인 Log·분석은 담지 않고 `_diag_failed`·`_poslog_failed`(회차 키, 결과 세대 → 결과)에 둔다. 그 회차는 그 결과로
+  진단·표를 보이고 Step·Die 필터 갱신이나 창 전환으로는 다시 읽지 않는다. 탭을 바꾸거나 창을 다시 열 때(`_retry_advanced_reads`)만
+  비우고 다시 읽는다.
 - **입구**: 메인 창 `eventFilter`가 상태 표시줄 버전 글자의 마우스 이벤트를 `_on_version_label_event`로 넘긴다. 왼쪽
   Press·DblClick(빠른 두 번째 클릭)을 세어 3초 안에 5번이면 `_open_expert_window`. 툴팁·커서·메뉴·System Log 표시는 없다.
-- **한 창·닫기**: `_open_expert_window`는 있는 창을 (최소화였으면 되살려) show·raise·activate. 창을 닫으면 숨기기만 한다
-  (Log·진단·도구 창 그대로). 메인 창 `closeEvent`가 먼저 `_close_expert_window`(위치 기억) 후 `_save_settings`, 그 뒤 스레드 중지·
-  `os._exit` 판단(`threads_alive`)은 예전 그대로다.
+- **창**: 부모가 없는 보통 창(자기 작업 표시줄 단추, 메인 창 위에 붙지 않음, `WA_QuitOnClose` 끔 — 열려 있어도 메인 창을 닫으면
+  앱이 끝난다). `_open_expert_window`는 있는 창을 (최소화였으면 되살려) show·raise·activate하고 숨길 때 함께 감춘 도구 창을 다시
+  보인다. 창을 닫으면 숨기기만 한다 (Log·진단 그대로, 떠 있던 도구 창도 숨김). 메인 창 `closeEvent`가 먼저 `_close_expert_window`
+  (위치 기억) 후 `_save_settings`, 그 뒤 스레드 중지·`os._exit` 판단(`threads_alive`)은 예전 그대로다. 메인 창이 지워지면
+  (`destroyed`) 전문 분석 창도 `deleteLater`. F11(왼쪽 칸)·Esc(진행 중 중지)는 이 창에서도 메인 창의 처리로 간다.
 - **대화상자 부모**: 도구 탭과 Diagnosis 탭 버튼은 같은 메서드(`_export_llm_markdown(parent=…)`, `open_image_shift_dialog`,
-  `_open_diagnosis_report`·`_open_rotation_test_dialog`·`_open_case_library`)를 부르고 부모는 `_expert_dialog_host()` = 전문 분석 창이다
-  (진단 JSON 저장의 파일 대화상자·메시지도)
-  (창 하나 캐시도 그 창에). 대화상자가 부모에서 찾는 `settings`·`logger`·`_xy_diagnosis`·`_rotation_test_result`·`set_rotation_test`는
-  ExpertWindow가 메인 창의 것을 넘긴다.
-- **위치**: `expert_window_geometry`("WxH+X+Y")를 `window_geometry`처럼 사용자 설정(`_USER_SETTING_KEYS`: 소스 실행은
-  settings.local.json, 빌드본은 레지스트리)에 둔다. 번들 settings.json에는 없다. 처음 열 때 `_restore_geometry(창, 키)`로 화면에
-  맞춰 복원한다.
+  `_open_diagnosis_report`·`_open_rotation_test_dialog`·`_open_case_library`)를 부르고, 부모는 `_expert_dialog_host()` = 전문 분석
+  창이다 (진단 JSON 저장의 파일 대화상자·메시지, 창 하나 캐시도 그 창에). 대화상자가 부모에서 찾는 `settings`·`_xy_diagnosis`·
+  `_rotation_test_result`·`set_rotation_test`는 ExpertWindow가 메인 창의 것을 넘기고, `logger`는 전문 분석 기록이다.
+- **기록**: 전문 기능의 메시지(진단·Positioning Log·3D 보고서·진단 JSON·AI 분석용 Markdown·Pareto/Correlation/3D 차트 오류)는 창
+  아래쪽 '전문 분석 기록'(`self.expert_logger`)에 남긴다. 작업자 System Log는 Excel·Quality Report의 로그 시트로 나가므로 데이터
+  로드 오류 같은 작업자 메시지만 둔다.
+- **읽는 중**: `_busy_begin`~`_busy_end`(폴더 확인·데이터 로드·화면 그리기, 메인 창 진행 막과 같은 구간) 동안 창 위쪽에 '메인 창에서
+  데이터를 읽는 중 — 끝나면 갱신됩니다' 띠를 보이고 도구 버튼과 진단 JSON 저장·3D 보고서 버튼을 끈다 (`_set_expert_busy`).
+- **위치**: `expert_window_geometry`에 `saveGeometry()`의 base64를 사용자 설정(`_USER_SETTING_KEYS`: 소스 실행은 settings.local.json,
+  빌드본은 레지스트리)에 둔다. 번들 settings.json에는 없다. 처음 열 때 `restoreGeometry`(최대화·화면 밖 위치는 Qt가 맞춤),
+  예전 "WxH+X+Y"면 `_restore_geometry(창, 키)`로 클램프, 저장값이 없으면 메인 창이 있는 화면에서 메인 창 옆(자리가 없으면 48 px
+  비켜 겹침, `_place_expert_beside_main`).
 
 ## 8. 성능 및 비동기 처리
 

@@ -230,14 +230,16 @@ def test_export_writes_utf8_file_and_logs(tmp_path, monkeypatch):
         assert _front(text)['report_schema'] == REPORT_SCHEMA
         assert b'\r\n' not in out.read_bytes()
         deadline = 50
-        while 'AI 분석용 Markdown 저장' not in str(win.logger.export_rows()) and deadline:
+        while 'AI 분석용 Markdown 저장' not in str(win.expert_logger.export_rows()) and deadline:
             app.processEvents()
             import time
             time.sleep(0.05)
             deadline -= 1
-        messages = [row['message'] for row in win.logger.export_rows()]
+        messages = [row['message'] for row in win.expert_logger.export_rows()]
         assert any(m.startswith(f'AI 분석용 Markdown 저장: {out} (') and m.endswith(' KB)')
                    for m in messages)
+        # 전문 분석 창 도구의 메시지는 작업자 System Log(Excel 로그 시트)에 남기지 않는다
+        assert 'AI 분석용 Markdown' not in str(win.logger.export_rows())
     finally:
         win.deleteLater()
         app.processEvents()
@@ -328,7 +330,7 @@ def test_export_writes_md_and_bom_csv_and_survives_csv_failure(tmp_path, monkeyp
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 app.processEvents()
-                if any(str(out) in row['message'] for row in win.logger.export_rows()):
+                if any(str(out) in row['message'] for row in win.expert_logger.export_rows()):
                     break
                 time.sleep(0.01)
             return out
@@ -338,7 +340,7 @@ def test_export_writes_md_and_bom_csv_and_survives_csv_failure(tmp_path, monkeyp
         assert csv_path.read_bytes().startswith(b'\xef\xbb\xbf')
         assert 'raw_csv: "ok_raw.csv"' in out.read_text(encoding='utf-8')
         assert '`ok_raw.csv`에 있다' in out.read_text(encoding='utf-8')
-        messages = [row['message'] for row in win.logger.export_rows()]
+        messages = [row['message'] for row in win.expert_logger.export_rows()]
         assert any(m.startswith(f'셀 값 CSV 저장: {csv_path} (') for m in messages)
 
         def boom(_results):
@@ -348,7 +350,7 @@ def test_export_writes_md_and_bom_csv_and_survives_csv_failure(tmp_path, monkeyp
         text = out.read_text(encoding='utf-8')
         assert 'raw_csv: ""' in text and '쓰지 못했다 (OSError: disk full)' in text
         assert not (tmp_path / 'bad_raw.csv').exists()
-        messages = [row['message'] for row in win.logger.export_rows()]
+        messages = [row['message'] for row in win.expert_logger.export_rows()]
         assert any('셀 값 CSV 저장 실패 (Markdown은 저장됨): OSError: disk full' in m for m in messages)
     finally:
         win.deleteLater()

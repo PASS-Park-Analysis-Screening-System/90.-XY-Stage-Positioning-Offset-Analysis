@@ -17,3 +17,4 @@ def show_expert_tab(window, name):
     """
     window._open_expert_window()
     window._select_chart(name)
+    assert window._advanced_tab_visible(name), name

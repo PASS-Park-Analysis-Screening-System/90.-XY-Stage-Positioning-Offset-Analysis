@@ -6,6 +6,7 @@
 | 작성 | 2026-11-12 |
 | 관련 문서 | WI-XY Scanner-01 "XY Non-linearity error" (servo OFF) |
 | 분석 도구 | PASS · XY Stage Positioning Offset Analysis → 전문 분석 창(QC 엔지니어) → 도구 탭 → **스캐너 회전 시험 분석** |
+| 적용 대상 | QC 엔지니어 (전문 분석 창 사용 권한자) |
 
 ---
 

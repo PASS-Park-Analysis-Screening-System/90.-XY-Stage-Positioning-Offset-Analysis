@@ -32,13 +32,24 @@
 
 - **데이터**: 늘 메인 창에서 고른 Step·회차·Die 필터의 결과를 보인다. 메인 창에서 Step·회차·Die 필터를 바꾸면 이 창도 같은
   경로로 바로 바뀐다. 스캔도 메인 창에서 한다.
-- **Log 읽기**: Positioning Log·Diagnosis 탭의 Lot Log(네트워크 폴더)는 **이 창이 열려 있고(최소화 아님) 그 탭이 앞에 있을 때만**
-  읽는다. 창을 닫거나 최소화해 두면 메인 창에서 Step을 바꿔도 새 읽기·진단 계산·차트 그리기를 시작하지 않고, 다시 열면 이어서 한다.
-- **닫기**: 창의 닫기(X)는 숨기기만 한다. 읽은 Log·진단·도구 창의 입력값은 그대로 남아 다시 열면 이어서 볼 수 있다.
-  메인 창을 닫으면 함께 닫힌다.
+- **Log 읽기**: Positioning Log·Diagnosis 탭의 Lot Log(네트워크 폴더)는 **이 창이 열려 있고(최소화 아님, 메인 창도 최소화 아님)
+  그 탭이 앞에 있을 때만** 읽는다. 창을 닫거나 최소화해 두면 메인 창에서 Step을 바꿔도 새 읽기·진단 계산·차트(Pareto·Correlation·3D
+  포함) 그리기를 시작하지 않고, 다시 열면 이어서 한다. **이미 시작한 읽기는 창을 닫아도 끝까지 돌고** 결과를 담는다(새 읽기는 시작하지
+  않는다).
+- **읽기 오류**: 네트워크·잠김으로 읽지 못한 회차는 그 결과(일부 Lot 빠짐)로 보이고, 창을 오가거나 Die 필터를 바꿔도 다시 읽지 않는다.
+  **탭을 바꾸거나 창을 닫았다 다시 열면** 다시 읽는다.
+- **읽는 중**: 메인 창이 폴더 확인·데이터 로드·화면 그리기를 하는 동안 창 위쪽에 '메인 창에서 데이터를 읽는 중 — 끝나면 갱신됩니다'가
+  보이고 도구 버튼과 Diagnosis의 진단 JSON 저장·3D 보고서 버튼이 꺼진다. 끝나면 다시 켜진다.
+- **기록**: 진단·Positioning Log·보고서·JSON·AI 분석용 Markdown·차트 오류 메시지는 이 창 아래쪽 '전문 분석 기록'에 남는다.
+  작업자 System Log(Excel·Quality Report의 로그 시트로 나감)에는 남기지 않는다.
+- **창**: 보통 창이라 작업 표시줄에 따로 보이고, 메인 창과 앞뒤를 자유롭게 바꿀 수 있다. 처음 열면 메인 창이 있는 화면에서 메인 창
+  옆에(자리가 없으면 조금 비켜 겹쳐) 뜬다. 이 창에서도 F11(메인 창 왼쪽 칸 접기)과 Esc(진행 중인 스캔 중지)가 된다.
+- **닫기**: 창의 닫기(X)는 숨기기만 한다. 읽은 Log·진단·도구 창의 입력값은 그대로 남아 다시 열면 이어서 볼 수 있다. 떠 있던 도구 창
+  (회전 시험·이미지 이동량)도 함께 숨었다가 다시 열 때 함께 보인다. 메인 창을 닫으면 함께 닫힌다.
 - **도구**: 결과 창·파일 대화상자·메시지는 이 창 위에 뜬다. Diagnosis 탭 위쪽의 '3D 보고서 열기·스캐너 회전 시험·사례 라이브러리'
   버튼과 도구 탭의 같은 이름 버튼은 같은 창을 연다.
-- **위치·크기**: 닫을 때(또는 앱을 끝낼 때) 사용자 설정 `expert_window_geometry`에 기억하고, 다음에 처음 열 때 화면에 맞춰 복원한다.
+- **위치·크기**: 닫을 때(또는 앱을 끝낼 때) 사용자 설정 `expert_window_geometry`에 기억하고(Qt `saveGeometry`, 최대화 포함), 다음에
+  처음 열 때 화면에 맞춰 복원한다 (다른 모니터를 뗐으면 화면 안으로).
   소스 실행은 `src/core/settings.local.json`, 빌드본은 레지스트리 `HKCU\Software\XYStageOffset`. 번들 `settings.json`에는 넣지 않는다.
 
 ## 4. 구현 (개발자용)
@@ -48,7 +59,7 @@
 | 위치 | 역할 |
 |------|------|
 | `src/ui/controllers/expert_controller.py` (`ExpertMixin`) | 창 만들기, 클릭 세기(`UNLOCK_CLICKS` 5, `UNLOCK_SECONDS` 3.0), 한 창 열기, 보임 판단 `_advanced_tab_visible`, flush 연결, 위치 기억 |
-| `src/ui/dialogs/expert_window.py` (`ExpertWindow`) | 창(QMainWindow, 메인 창 소유). `became_visible` 시그널, 닫으면 숨김, 도구가 부모에서 찾는 값을 메인 창에서 넘김 |
+| `src/ui/dialogs/expert_window.py` (`ExpertWindow`) | 창(QMainWindow, 부모 없음). `became_visible`(보이게 되는 전환만), 닫으면 숨김(도구 창도), 읽는 중 띠, 전문 분석 기록, 도구가 부모에서 찾는 값을 메인 창에서 넘김 |
 | `src/ui/dialogs/expert_guide.py` | '도움말' 탭 내용 (`EXPERT_GUIDE`) |
 | `src/ui/controllers/ui_builder_mixin.py` | Advanced 탭을 `chart_category_tabs`에 넣지 않고 전문 분석 창에 담음, Export 4개, 버전 글자 이벤트 필터 |
 | `src/main.py` | `eventFilter` → `_on_version_label_event`, `closeEvent`가 먼저 전문 분석 창을 닫음, `_restore_geometry(창, 키)` |

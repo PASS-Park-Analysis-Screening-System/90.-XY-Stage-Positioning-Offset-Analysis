@@ -140,6 +140,8 @@ class ExportMixin:
 
         parent: 파일 대화상자·메시지의 부모 (전문 분석 창 '도구' 탭은 그 창). 기본은 이 창."""
         parent = self if parent is None else parent
+        # 전문 분석 창의 도구라 메시지는 그 창의 기록에 남긴다 (작업자 System Log는 Excel 로그 시트로 나간다)
+        log = getattr(self, 'expert_logger', None) or self.logger
         # 내보내는 동안 회차를 바꿔도 섞이지 않게 메인 스레드에서 목록을 복사한다
         results = list(getattr(self, 'recipe_results', None) or [])
         if not results:
@@ -156,7 +158,7 @@ class ExportMixin:
             "Markdown (*.md)")
         if not path:
             return
-        self.logger.info("AI 분석용 Markdown 생성 중...")
+        log.info("AI 분석용 Markdown 생성 중...")
         outcome = []
         spec_limits = self.settings.get('spec_limits', {})
         spec_deviation = self.settings.get('spec_deviation', {})
@@ -225,15 +227,15 @@ class ExportMixin:
             error = state['error']
             if state['csv_written']:
                 if state['csv_replaced']:
-                    self.logger.warn(f"같은 이름의 셀 값 CSV를 덮어썼습니다: {csv_path}")
-                self.logger.ok(f"셀 값 CSV 저장: {csv_path} ({size_text(csv_path)})")
+                    log.warn(f"같은 이름의 셀 값 CSV를 덮어썼습니다: {csv_path}")
+                log.ok(f"셀 값 CSV 저장: {csv_path} ({size_text(csv_path)})")
             if error is None:
-                self.logger.ok(f"AI 분석용 Markdown 저장: {path} ({size_text(path)})")
+                log.ok(f"AI 분석용 Markdown 저장: {path} ({size_text(path)})")
                 if state['csv_error']:
-                    self.logger.error(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {state['csv_error']}")
+                    log.error(f"셀 값 CSV 저장 실패 (Markdown은 저장됨): {state['csv_error']}")
             else:
                 written = (f"\n셀 값 CSV는 저장됐습니다: {csv_path}" if state['csv_written'] else '')
-                self.logger.error(f"AI 분석용 Markdown 오류: {error}"
+                log.error(f"AI 분석용 Markdown 오류: {error}"
                                   + (f" (셀 값 CSV는 저장됨: {csv_path})" if state['csv_written'] else ''))
                 QMessageBox.critical(parent, "오류", f"AI 분석용 Markdown 생성 실패\n{error}{written}")
 

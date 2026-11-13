@@ -73,6 +73,7 @@ class PositioningMixin:
     _poslog_analysis = None     # 지금 그려 둔 분석 (같은 분석이면 다시 그리지 않는다)
     _poslog_chart_pending = False
     _poslog_reading = None      # 읽는 중인 (회차 키, 결과 세대, 읽기 번호) — 한 세대에 하나
+    _poslog_failed = None       # 읽기 오류가 난 {(회차 키, 결과 세대): 분석} — 탭 변경·창 다시 열기 때만 다시 읽는다
     _poslog_bridge = None
     _poslog_tokens = itertools.count(1)
 
@@ -130,6 +131,9 @@ class PositioningMixin:
             self._show_positioning(NO_DATA)
             return
         analysis = result.get('positioning_log')
+        if analysis is None and result.get('round_path'):
+            # 읽기 오류가 난 회차는 그 결과로 보인다 (다시 읽기는 탭을 바꾸거나 창을 다시 열 때)
+            analysis = (self._poslog_failed or {}).get(self._poslog_read_key(result))
         if analysis is not None or not result.get('round_path'):
             self._show_positioning(analysis if analysis is not None else NO_PATH)
             return
@@ -141,7 +145,8 @@ class PositioningMixin:
         result = self._poslog_result
         if (not result or not result.get('raw_data') or not result.get('round_path')
                 or result.get('positioning_log') is not None
-                or not self._positioning_wanted()):
+                or not self._positioning_wanted()
+                or self._poslog_read_key(result) in (self._poslog_failed or {})):
             return
         generation = getattr(self, '_data_generation', 0)
         reading = self._poslog_reading
@@ -155,6 +160,9 @@ class PositioningMixin:
         self.poslog_label.setText(READING_TEXT)
         threading.Thread(target=read_positioning, name='poslog-read', daemon=True,
                          args=(result, self._poslog_bridge, (generation, token))).start()
+
+    def _poslog_read_key(self, result):
+        return (run_key(result), getattr(self, '_data_generation', 0))
 
     def _on_positioning_done(self, result, analysis, meta):
         generation, token = meta
@@ -172,6 +180,10 @@ class PositioningMixin:
                 for item in [recipe_result] + list(recipe_result.get('run_results') or []):
                     if run_key(item) == key:
                         item['positioning_log'] = analysis
+        else:
+            # 읽기 오류: 담지 않고 이 세대의 실패로 둔다 (탭을 바꾸거나 창을 다시 열 때 다시 읽는다)
+            self._poslog_failed = {k: v for k, v in (self._poslog_failed or {}).items() if k[1] == generation}
+            self._poslog_failed[(key, generation)] = analysis
         current = self._poslog_result
         if current is not None and run_key(current) == key:
             if stored:
@@ -287,4 +299,4 @@ class PositioningMixin:
             self.chart_widgets['Positioning Stages'].set_figure(
                 plot_positioning_stages(self._poslog_analysis, 'X'))
         except Exception as e:
-            self.logger.error(f"Positioning Log 차트 오류: {type(e).__name__}: {e}")
+            self.expert_logger.error(f"Positioning Log 차트 오류: {type(e).__name__}: {e}")

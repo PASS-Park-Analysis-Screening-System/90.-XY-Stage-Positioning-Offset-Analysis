@@ -124,6 +124,7 @@ class DiagnosisMixin:
     _xy_diagnosis = None        # 지금 탭에 보이는 진단 dict (pass.xy.diagnosis/1) — 모듈 설명 참고
     _diag_chart_pending = False
     _diag_reading = None        # 읽는 중인 (회차 키, 결과 세대, 읽기 번호) — 한 세대에 하나
+    _diag_failed = None         # 읽기 오류가 난 {(회차 키, 결과 세대): Log} — 탭 변경·창 다시 열기 때만 다시 읽는다
     _diag_bridge = None
     _diag_tokens = itertools.count(1)
 
@@ -225,9 +226,13 @@ class DiagnosisMixin:
             return
         logs = result.get('xy_logs')
         if logs is None and result.get('round_path'):
-            self._show_diag_message(READING_TEXT if self._diagnosis_tab_visible() else WAITING_TEXT)
-            self._start_diagnosis_read()
-            return
+            # 읽기 오류가 난 회차는 그 결과로 보인다 (Step·Die 필터 갱신·창 전환으로는 다시 읽지 않는다.
+            # 다시 읽기는 탭을 바꾸거나 창을 다시 열 때 — expert_controller._retry_advanced_reads)
+            logs = (self._diag_failed or {}).get(self._diag_read_key(result))
+            if logs is None:
+                self._show_diag_message(READING_TEXT if self._diagnosis_tab_visible() else WAITING_TEXT)
+                self._start_diagnosis_read()
+                return
         logs = logs if logs is not None else NO_PATH_LOGS
         key = self._diagnosis_key(result, logs)
         if key == self._diag_key:
@@ -236,6 +241,9 @@ class DiagnosisMixin:
             self._show_diag_message(PENDING_TEXT)
             return
         self._compute_diagnosis(result, logs, key)
+
+    def _diag_read_key(self, result):
+        return (run_key(result), getattr(self, '_data_generation', 0))
 
     def _diagnosis_key(self, result, logs):
         name = result.get('short_name') or result.get('recipe', '')
@@ -260,7 +268,7 @@ class DiagnosisMixin:
                                    rotation_test_tool=self._rotation_test_tool,
                                    tool_root=self._tool_root())
         except Exception as e:
-            self.logger.error(f"트러블슈팅 진단 오류: {type(e).__name__}: {e}")
+            self.expert_logger.error(f"트러블슈팅 진단 오류: {type(e).__name__}: {e}")
             self._show_diag_message(f'진단 실패 ({type(e).__name__}: {e})')
             return
         self._diag_key = key
@@ -284,7 +292,8 @@ class DiagnosisMixin:
         """보이는 회차의 Log를 작업 스레드로 읽는다. 탭이 보일 때만, 한 세대에 하나만."""
         result = self._diag_result
         if (not result or not result.get('raw_data') or not result.get('round_path')
-                or result.get('xy_logs') is not None or not self._diagnosis_tab_visible()):
+                or result.get('xy_logs') is not None or not self._diagnosis_tab_visible()
+                or self._diag_read_key(result) in (self._diag_failed or {})):
             return
         generation = getattr(self, '_data_generation', 0)
         reading = self._diag_reading
@@ -327,13 +336,17 @@ class DiagnosisMixin:
             current = self._diag_result
             if current is not None and run_key(current) == key:
                 current['xy_logs'] = logs
+        else:
+            # 읽기 오류: 담지 않고 이 세대의 실패로 둔다 (탭을 바꾸거나 창을 다시 열 때 다시 읽는다)
+            self._diag_failed = {k: v for k, v in (self._diag_failed or {}).items() if k[1] == generation}
+            self._diag_failed[(key, generation)] = logs
         current = self._diag_result
         if current is None or run_key(current) != key:
             self._start_diagnosis_read()        # 그사이 다른 회차로 바꿨다
             return
         if logs.get('status') == 'error':
-            self.logger.warn(f"트러블슈팅 진단: {logs.get('message', '')} — 다음에 탭을 열 때 다시 읽습니다")
-        # 읽기 오류가 섞였으면 담지 않았다. 이번 결과로 진단하되 다음에 탭을 열 때 다시 읽는다
+            self.expert_logger.warn(f"트러블슈팅 진단: {logs.get('message', '')} — 탭을 바꾸거나 창을 다시 열 때 다시 읽습니다")
+        # 읽기 오류가 섞였으면 담지 않았다. 이번 결과로 진단하되 탭을 바꾸거나 창을 다시 열 때 다시 읽는다
         # (여기서 _refresh_diagnosis를 부르면 오류가 계속되는 동안 읽기를 되풀이한다)
         self._compute_diagnosis(current, logs, self._diagnosis_key(current, logs))
 
@@ -345,8 +358,7 @@ class DiagnosisMixin:
         self._diag_logs = None
         self._xy_diagnosis = None
         self._diag_chart_pending = False
-        self.diag_save_btn.setEnabled(False)
-        self.diag_report_btn.setEnabled(False)
+        self._sync_diag_buttons()
         self.diag_label.setText(text)
         self.diag_label.setToolTip('')
         for chip in self._diag_chips.values():
@@ -355,6 +367,12 @@ class DiagnosisMixin:
             table.setRowCount(0)
         self.diag_actions_label.setText('')
         self.chart_widgets['Diagnosis Drift'].clear()
+
+    def _sync_diag_buttons(self):
+        """진단 JSON 저장·3D 보고서: 진단이 있고 메인 창이 데이터를 읽는 중이 아닐 때만 (_set_expert_busy)."""
+        enabled = self._diag_obj is not None and not getattr(self, '_expert_busy', False)
+        self.diag_save_btn.setEnabled(enabled)
+        self.diag_report_btn.setEnabled(enabled)
 
     def _set_chip(self, chip, text, verdict, tooltip):
         color = VERDICT_COLOR.get(verdict, BG3)
@@ -377,8 +395,7 @@ class DiagnosisMixin:
         self.diag_label.setText(head + ('\n⚠ ' + '\n⚠ '.join(warnings[:4]) if warnings else '')
                                 + (f' 외 {len(warnings) - 4}개' if len(warnings) > 4 else ''))
         self.diag_label.setToolTip('\n'.join(warnings))
-        self.diag_save_btn.setEnabled(True)
-        self.diag_report_btn.setEnabled(True)
+        self._sync_diag_buttons()
 
         for axis in ('X', 'Y'):
             v = (d.get('verdict') or {}).get(axis) or {}
@@ -514,7 +531,7 @@ class DiagnosisMixin:
             from charts.diagnosis import plot_drift
             self.chart_widgets['Diagnosis Drift'].set_figure(plot_drift(self._xy_diagnosis))
         except Exception as e:
-            self.logger.error(f"Diagnosis drift 차트 오류: {type(e).__name__}: {e}")
+            self.expert_logger.error(f"Diagnosis drift 차트 오류: {type(e).__name__}: {e}")
 
     # 이 버튼들과 전문 분석 창 '도구' 탭이 같은 메서드를 부른다. 창·메시지는 전문 분석 창 위에 연다
     # (_expert_dialog_host — 진단·회전 시험 결과는 그 창이 메인 창의 것을 넘긴다)
@@ -551,9 +568,9 @@ class DiagnosisMixin:
             with open(temp, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(diag.to_json())
             os.replace(temp, path)
-            self.logger.ok(f"진단 JSON 저장: {path}")
+            self.expert_logger.ok(f"진단 JSON 저장: {path}")
         except Exception as e:
-            self.logger.error(f"진단 JSON 저장 실패: {type(e).__name__}: {e}")
+            self.expert_logger.error(f"진단 JSON 저장 실패: {type(e).__name__}: {e}")
             QMessageBox.critical(host, "오류", f"진단 JSON 저장 실패\n{e}")
         finally:
             if os.path.exists(temp):

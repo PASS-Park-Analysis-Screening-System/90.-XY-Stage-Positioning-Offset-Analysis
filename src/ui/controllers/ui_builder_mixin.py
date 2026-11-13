@@ -6,7 +6,7 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 import math
 from functools import partial
 from core.statistics import spec_anomaly_enabled
-from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE, PURPLE
+from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED, ORANGE
 from ui.widgets.stat_card import StatCard
 from ui.widgets.system_logger import SystemLogger
 from ui.widgets.copyable_table import CopyableTable
@@ -892,8 +892,9 @@ class UIBuilderMixin:
         # 트러블슈팅 진단 (스캐너 오프셋·회전·what-if·drift, pass.xy.diagnosis/1)
         from ui.controllers.diagnosis_controller import DIAGNOSIS_TAB
         _add_chart(EXPERT_CATEGORY, DIAGNOSIS_TAB, self._build_diagnosis_widget(), register=False)
-        # 탭을 바꾸면 보이게 된 탭의 Log 읽기·차트를 시작한다 (창이 보일 때만 — _advanced_tab_visible)
-        self._inner_tabs[EXPERT_CATEGORY].currentChanged.connect(self._flush_advanced_tabs)
+        # 탭을 바꾸면 보이게 된 탭의 Log 읽기·차트를 시작한다 (창이 보일 때만 — _advanced_tab_visible).
+        # 탭 변경은 명시적 동작이라 읽기 오류가 난 회차도 다시 읽는다
+        self._inner_tabs[EXPERT_CATEGORY].currentChanged.connect(self._retry_advanced_reads)
 
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:

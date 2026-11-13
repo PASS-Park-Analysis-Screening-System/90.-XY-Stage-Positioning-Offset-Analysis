@@ -866,7 +866,8 @@ def test_main_window_button_opens_single_dialog(qapp, monkeypatch):
     try:
         # 전문 분석 창의 '도구' 탭에만 있다 (작업자 화면 Remark → Export에는 없다)
         expert = win._expert_window
-        buttons = [b for b in win.findChildren(QPushButton) if b.text() == '스캐너 회전 시험 분석']
+        assert not [b for b in win.findChildren(QPushButton) if b.text() == '스캐너 회전 시험 분석']
+        buttons = [b for b in expert.findChildren(QPushButton) if b.text() == '스캐너 회전 시험 분석']
         assert len(buttons) == 1 and buttons[0].window() is expert
         buttons[0].click()
         dlg = expert._scanner_rotation_dialog

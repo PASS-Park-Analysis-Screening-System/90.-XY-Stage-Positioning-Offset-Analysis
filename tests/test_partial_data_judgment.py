@@ -141,6 +141,7 @@ def window(monkeypatch):
     monkeypatch.setattr(main, 'save_settings', lambda _: None)
     win = main.DataAnalyzerApp()
     yield win
+    win._expert_window.close()
     win.deleteLater()
     app.processEvents()
 
@@ -357,6 +358,7 @@ def _two_steps(window, second=None):
 
 
 def test_step_without_data_leaves_no_chart_from_previous_step(window):
+    window._open_expert_window()        # Correlation·3D는 전문 분석 창이 열려 있을 때 그린다
     _two_steps(window, dict(recipe='B', short_name='R', round='1st', raw_data=[],
                             error='No data loaded'))
     window._select_step(0)
@@ -370,6 +372,7 @@ def test_step_without_data_leaves_no_chart_from_previous_step(window):
 
 
 def test_axis_without_data_clears_only_charts_that_need_it(window):
+    window._open_expert_window()        # Correlation·3D는 전문 분석 창이 열려 있을 때 그린다
     _show(window, _table())
     _show(window, _table(axes=('X',)))
     assert not _chart_is_empty(window.chart_widgets['Contour X'])

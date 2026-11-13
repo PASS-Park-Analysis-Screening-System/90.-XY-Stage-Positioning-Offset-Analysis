@@ -138,6 +138,15 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
             return True
         return super().eventFilter(obj, event)
 
+    def changeEvent(self, event):
+        """메인 창이 최소화에서 돌아오면 그동안 미룬 전문 분석 창의 차트·Log 읽기를 이어 한다
+        (메인 창이 최소화돼 있으면 전문 분석 창도 닫힌 것으로 본다 — _expert_window_open)."""
+        super().changeEvent(event)
+        from PySide6.QtCore import QEvent
+        if (event.type() == QEvent.WindowStateChange and hasattr(event, 'oldState')
+                and event.oldState() & Qt.WindowMinimized and not self.isMinimized()):
+            self._flush_advanced_tabs()
+
     # ──────────────────────────────────────────────
     # Lifecycle
     # ──────────────────────────────────────────────
