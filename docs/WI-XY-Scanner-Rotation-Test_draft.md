@@ -5,7 +5,7 @@
 | 문서 상태 | **초안** — 규격은 잠정값, 장비 데이터로 확정 예정 |
 | 작성 | 2026-11-12 |
 | 관련 문서 | WI-XY Scanner-01 "XY Non-linearity error" (servo OFF) |
-| 분석 도구 | PASS · XY Stage Positioning Offset Analysis → Export 탭 → **스캐너 회전 시험 분석** |
+| 분석 도구 | PASS · XY Stage Positioning Offset Analysis → 전문 분석 창(QC 엔지니어) → 도구 탭 → **스캐너 회전 시험 분석** |
 
 ---
 
@@ -104,7 +104,8 @@ Non-linearity 시험과 다른 점은 두 가지다.
 ## 6. PASS 분석 창 입력
 
 1. XY Stage Positioning Offset Analysis를 실행한다.
-2. **Export** 탭에서 **스캐너 회전 시험 분석**을 연다. 별도 창이며, 메인 창과 함께 쓸 수 있다.
+2. 전문 분석 창(QC 엔지니어, 여는 방법은 내부 문서 `docs/EXPERT_MODE.md`)의 **도구** 탭에서 **스캐너 회전 시험 분석**을 연다.
+   별도 창이며, 메인 창과 함께 쓸 수 있다. Diagnosis 탭의 '스캐너 회전 시험' 버튼도 같은 창을 연다.
 3. 다음을 입력한다.
    - **시험 단계**: 출하 검사 / 스캐너 교체·선형화 후 / 기타
    - **구동 축**: Y (본 시험)

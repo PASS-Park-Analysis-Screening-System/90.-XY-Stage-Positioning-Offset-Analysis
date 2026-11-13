@@ -1,7 +1,7 @@
 # 🏗️ 아키텍처 참조 문서
 
 > XY Stage Positioning Offset Analysis Tool — v10.0 (Mixin 기반 모듈 아키텍처)  
-> 최종 업데이트: 2026-03-09
+> 최종 업데이트: 2026-11-13 (전문 분석 창)
 
 ---
 
@@ -33,9 +33,9 @@
 │   │   └── surface3d.py      # 3D 표면 차트
 │   ├── resources/            # 번들 리소스: troubleshoot/report_template.html, cases/(사례 라이브러리)
 │   └── ui/                   # UI 컴포넌트 관리
-│       ├── controllers/      # 기능 단위 Mixin (10종 결합하여 App 구성)
+│       ├── controllers/      # 기능 단위 Mixin (결합하여 App 구성, expert_controller = 전문 분석 창 입구·보임 판단)
 │       ├── widgets/          # 공통 사용 위젯 (StatCard, SystemLogger 등)
-│       ├── dialogs/          # 팝업 대화상자 선언
+│       ├── dialogs/          # 팝업 대화상자 선언 (expert_window.py = 전문 분석 창, expert_guide.py = 그 도움말)
 │       └── theme.py          # CSS 및 색상 상수
 ├── docs/                     # 문서 폴더 (가이드 및 설계)
 ```
@@ -141,7 +141,7 @@ DataAnalyzerApp (QMainWindow)
     │       ├─ 전체 선택 / 안정화 Die 제외
     │       └─ Die 체크박스 목록 (Die 1~22)
     │
-    └─ RIGHT PANEL (QTabWidget — chart_category_tabs)
+    └─ RIGHT PANEL (QTabWidget — chart_category_tabs, 작업자 화면)
         ├─ "Basic Analysis"
         │   ├─ "Contour X / Y"  (Repeat별 Contour 버튼 포함)
         │   ├─ "Die Position Map"
@@ -151,22 +151,29 @@ DataAnalyzerApp (QMainWindow)
         │   ├─ "Lot Trend"  + Lot 필터 체크박스
         │   ├─ "Distribution X / Y" (서브탭)
         │   └─ "TIFF"
-        ├─ "Advanced"
-        │   ├─ "Pareto"
-        │   ├─ "Correlation"
-        │   ├─ "3D Surface X / Y" (서브탭)
-        │   ├─ "Positioning Log"  (비전 보정 로그 대조)
-        │   └─ "Diagnosis (트러블슈팅)" (요약 칩, 스캐너 오프셋·what-if 표, drift 차트, 부품 판정, 다음 조치, 진단 JSON 저장)
         ├─ "Comparison"
         │   ├─ "Boxplot"
         │   ├─ "Trend"
-        │   └─ "Heatmap"
-        └─ "Export"
-            └─ "Export"
-                ├─ Analysis Guide 버튼 → GuideDialog
-                ├─ Excel Export
-                ├─ CSV Export
-                └─ PDF Report
+        │   ├─ "Heatmap"
+        │   └─ "Run Comparison"
+        └─ "Remark"
+            ├─ "Export" — Excel Export, Quality Report, CSV Export, PDF Report (작업자용 4개만)
+            └─ "Help"   — 프로그램 정보, Analysis Guide 버튼 → GuideDialog, 체크리스트 기입 방법
+
+    상태 표시줄: 진행 막대 + 버전 글자(version_status_label — 전문 분석 창의 숨은 입구, 7.3)
+
+ExpertWindow "XY 전문 분석 (QC 엔지니어)" (QMainWindow, 메인 창 소유·비모달, 평소에는 숨김)
+└─ tabs (QTabWidget)
+    ├─ "Advanced"  = 메인 창 _inner_tabs['Advanced'] (같은 mixin이 만든 위젯을 옮겨 담음)
+    │   ├─ "Pareto"
+    │   ├─ "Correlation"
+    │   ├─ "3D Surface X / Y / X+Y" (서브탭)
+    │   ├─ "Positioning Log"  (비전 보정 로그 대조)
+    │   └─ "Diagnosis (트러블슈팅)" (요약 칩, 스캐너 오프셋·what-if 표, drift 차트, 부품 판정, 다음 조치,
+    │                               진단 JSON 저장, 3D 보고서·회전 시험·사례 라이브러리 버튼)
+    ├─ "도구" — AI 분석용 Markdown, 이미지 2장 이동량 분석, 3D 트러블슈팅 보고서, 사례 라이브러리,
+    │           스캐너 회전 시험 분석 (Export와 같은 큰 버튼, 예전과 같은 함수, 창은 이 창 위에)
+    └─ "도움말" — GuideBrowser(expert_guide.EXPERT_GUIDE): 작업자 가이드에서 뺀 심화 기능 설명
 ```
 
 ---
@@ -175,15 +182,18 @@ DataAnalyzerApp (QMainWindow)
 
 | 클래스/컴포넌트 | 위치 | 역할 |
 |----------------|------|------|
-| `DataAnalyzerApp` | `main.py` | 앱 메인 창 (QMainWindow + 10개 Mixin 상속) |
-| `GuideDialog` | `ui/dialogs/guide_dialog.py` | 분석 가이드 도움말 팝업 (QDialog) |
+| `DataAnalyzerApp` | `main.py` | 앱 메인 창 (QMainWindow + Mixin 상속, 작업자 화면) |
+| `GuideDialog` | `ui/dialogs/guide_dialog.py` | 분석 가이드 도움말 팝업 (QDialog, 작업자용 — 전문 분석 기능은 적지 않음) |
+| `GuideBrowser` | `ui/dialogs/guide_dialog.py` | 제목 목록 + 본문 위젯 (GuideDialog·전문 분석 창 '도움말'이 같이 씀) |
+| `ExpertWindow` | `ui/dialogs/expert_window.py` | 전문 분석 창 (Advanced·도구·도움말, 닫으면 숨김) |
+| `ExpertMixin` | `ui/controllers/expert_controller.py` | 전문 분석 창 입구(버전 글자 5번/3초)·한 창·보임 판단·위치 기억 |
 | `SpecConfigDialog` | `ui/dialogs/spec_config_dialog.py` | Spec 설정 확인 팝업 |
 | `RepeatContourDialog` | `ui/dialogs/repeat_contour_dialog.py` | Repeat별 Contour 비교 팝업 |
 | `StatCard` | `ui/widgets/stat_card.py` | X/Y 통계 카드 위젯 (QFrame) |
 | `CopyableTable` | `ui/widgets/copyable_table.py` | Ctrl+C 복사 지원 테이블 |
 | `ScanWorker` | `ui/workers/data_loader_thread.py` | 비동기 스캔 스레드 (QThread) |
 | `ChartWidget` | `ui/widgets/chart_widget.py` | Matplotlib/pyqtgraph 임베드 컨테이너 |
-| Controllers | `ui/controllers/` | 10개 Mixin (UiBuilder, Chart, Step, Scan, Table, Card, DieFiler, LotFilter, XyLegend, Tiff, Export) |
+| Controllers | `ui/controllers/` | Mixin (UiBuilder, Chart, Step, Scan, Table, Card, DieFiler, LotFilter, XyLegend, Tiff, Export, RunCompare, Positioning, Diagnosis, Expert) |
 
 ---
 
@@ -255,7 +265,7 @@ Optical Shift, Tip 위치, 최종 착지 = HZ1_O 편차)마다 Die 좌표 평면
 계산한다. 최종 착지의 유의한 성분(|t| ≥ 3, Die 8개 이상)을, 같은 계수가 |t| ≥ 3, 크기 ≥ 0.5배, 부분 잔차
 |r| ≥ 0.5이고 부호(단계)·부호(최종) = 부호(r)인 단계(Die 8개 이상) 중 가장 앞 단계에 돌린다(같은·반대 부호를
 적는다). 어느 단계에도 없으면 '비전 정렬 이후(카메라→Tip 착지)'. 데이터 로드는 로그를 읽지 않는다.
-Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결과의 `positioning_log`에 담고, AI 분석용 리포트의
+전문 분석 창 Advanced → Positioning Log 탭이 보일 때(7.3) 그 회차를 읽어 회차 결과의 `positioning_log`에 담고, AI 분석용 리포트의
 '비전 보정 로그 대조' 절은 담긴 분석을 쓰거나 내보내기 스레드에서 읽는다.
 
 ### 7.2 트러블슈팅 진단 (`core/xy_diagnosis.py`)
@@ -275,7 +285,7 @@ Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결�
   구동 ≥ 5 µm + Positioning Log가 비전 정렬 이후로 볼 때만이다(분석 전이면 많아야 '주의'). what-if 후보는 지금 레시피와
   같은 쪽, 권장은 '지금 행이 모든 Lot PASS면 현재 유지, 아니면 꼭짓점 여유 5 µm 이상 PASS 후보 중 |값| 최소'. 회전 잠정 규격은
   `settings.rotation_spec` (코드 기본값 `DEFAULT_ROTATION_SPEC`을 번들 값이 항목마다 덮고, 숫자로 바꾸며 warn ≤ max).
-- **화면** (`ui/controllers/diagnosis_controller.py`): Diagnosis 탭이 보일 때만 그 회차의 Log를 읽고(세대 번호로 늦은 결과를
+- **화면** (`ui/controllers/diagnosis_controller.py`): 전문 분석 창의 Diagnosis 탭이 보일 때만(7.3) 그 회차의 Log를 읽고(세대 번호로 늦은 결과를
   버림, 시그널로 화면 스레드에 넘김, 창을 닫으면 ScanSession 중지), 같은 때 positioning_controller의 Positioning Log 읽기도
   시작한다(끝나면 `_refresh_diagnosis`). 진단은 탭이 보일 때 화면 스레드에서 계산한다. 지금 보이는 진단 dict는 창의
   `_xy_diagnosis`에 둔다 (3D 보고서·스캐너 회전 시험 분석이 붙는 자리, 없으면 None). 회전 시험 대화상자는
@@ -284,6 +294,36 @@ Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결�
   장비(`source.tool_id`: Log의 Tool ID, 없으면 연 폴더)에 묶여 다른 장비의 진단·JSON·LLM에는 붙지 않는다.
 - **내보내기**: AI 분석용 리포트 '트러블슈팅 진단 (Diagnosis)' 절은 담긴 Log를 쓰거나 내보내기 스레드에서 읽는다
   (Workflow별 예외 격리). 회차 비교 표·Excel Run Comparison의 θx·θy는 `axis_shape`로 CSV 값만 쓴다.
+
+### 7.3 전문 분석 창 (`ui/controllers/expert_controller.py`, `ui/dialogs/expert_window.py`)
+
+작업자 화면(메인 창)에는 Basic Analysis·Interactive·Comparison·Remark만 둔다. Advanced 카테고리(Pareto, Correlation,
+3D Surface, Positioning Log, Diagnosis)와 원인 분석 도구 5개는 비모달 'XY 전문 분석 (QC 엔지니어)' 창에 있다
+(사용자 결정 2026-11-13, 사용법은 `docs/EXPERT_MODE.md`).
+- **위젯·코드 재사용**: `_build_ui`가 Advanced QTabWidget을 지금처럼 같은 mixin으로 만들되 `chart_category_tabs`에
+  넣지 않고(`_add_chart`가 `EXPERT_CATEGORY`를 건너뜀) `_build_expert_window`가 전문 분석 창에 옮겨 담는다.
+  `self._inner_tabs['Advanced']`와 `chart_widgets`는 그대로 그 위젯을 가리켜 Step·회차·Die 필터 변경은 예전 경로
+  (`_display_result` → `_update_charts`·`_update_positioning_log`·`_update_diagnosis`)로 이 창을 갱신한다.
+- **보임 판단 (한 곳)**: `_advanced_tab_visible(name)` = 전문 분석 창이 보이고 최소화되지 않았고, 그 창에서 Advanced가
+  앞이고, 그 안에서 name 탭이 앞이다. `_positioning_tab_visible`·`_diagnosis_tab_visible`이 이것만 부르고, 그 둘을
+  Log 읽기 시작(`_start_positioning_read`·`_start_diagnosis_read`), 진단이 시작하는 Positioning Log 읽기
+  (`_positioning_wanted`), 진단 계산(`_refresh_diagnosis`), 미뤄 둔 차트(`_flush_positioning_chart`·`_flush_diagnosis_chart`)가
+  쓴다. 창이 닫혀 있거나 최소화돼 있으면 안쪽 탭이 '앞'이어도 새 읽기·계산·차트를 시작하지 않는다.
+- **flush 연결**: 전문 분석 창의 `became_visible`(showEvent, 최소화에서 돌아옴, 활성화)과 바깥·안쪽 탭 `currentChanged`가
+  `_flush_advanced_tabs` → 기존 `_flush_positioning_chart`·`_flush_diagnosis`를 부른다 (세대 번호·한 세대 한 읽기 그대로).
+- **입구**: 메인 창 `eventFilter`가 상태 표시줄 버전 글자의 마우스 이벤트를 `_on_version_label_event`로 넘긴다. 왼쪽
+  Press·DblClick(빠른 두 번째 클릭)을 세어 3초 안에 5번이면 `_open_expert_window`. 툴팁·커서·메뉴·System Log 표시는 없다.
+- **한 창·닫기**: `_open_expert_window`는 있는 창을 (최소화였으면 되살려) show·raise·activate. 창을 닫으면 숨기기만 한다
+  (Log·진단·도구 창 그대로). 메인 창 `closeEvent`가 먼저 `_close_expert_window`(위치 기억) 후 `_save_settings`, 그 뒤 스레드 중지·
+  `os._exit` 판단(`threads_alive`)은 예전 그대로다.
+- **대화상자 부모**: 도구 탭과 Diagnosis 탭 버튼은 같은 메서드(`_export_llm_markdown(parent=…)`, `open_image_shift_dialog`,
+  `_open_diagnosis_report`·`_open_rotation_test_dialog`·`_open_case_library`)를 부르고 부모는 `_expert_dialog_host()` = 전문 분석 창이다
+  (진단 JSON 저장의 파일 대화상자·메시지도)
+  (창 하나 캐시도 그 창에). 대화상자가 부모에서 찾는 `settings`·`logger`·`_xy_diagnosis`·`_rotation_test_result`·`set_rotation_test`는
+  ExpertWindow가 메인 창의 것을 넘긴다.
+- **위치**: `expert_window_geometry`("WxH+X+Y")를 `window_geometry`처럼 사용자 설정(`_USER_SETTING_KEYS`: 소스 실행은
+  settings.local.json, 빌드본은 레지스트리)에 둔다. 번들 settings.json에는 없다. 처음 열 때 `_restore_geometry(창, 키)`로 화면에
+  맞춰 복원한다.
 
 ## 8. 성능 및 비동기 처리
 
@@ -296,8 +336,8 @@ Advanced → Positioning Log 탭이 보일 때 그 회차를 읽어 회차 결�
 | TIFF 찾기·읽기 | `QThread (TiffLoadThread)` | 더블클릭 때 폴더 목록·TIFF 읽기 |
 | 진행 표시 | `BusyOverlay` + 상태 표시줄 `QProgressBar` | 폴더 확인 n/m, Lot n/m(전체는 폴더 확인 결과로 미리 앎), 초당 10번까지 |
 | 회차 요약 (`summarize_runs`) | `DataLoaderThread` | 화면 갱신 시간을 줄인다. Spec이 바뀌었으면 화면 스레드가 다시 계산 |
-| 비전 보정 로그 대조 (`positioning_log`) | Positioning Log 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 내보내기는 그 스레드에서 순서대로 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2~3개라 데이터 로드에서는 읽지 않는다 |
-| 트러블슈팅 진단 Log (`xy_diagnosis`) | Diagnosis 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 진단 계산은 탭이 보일 때 화면 스레드, 내보내기는 그 스레드에서 순서대로 | Lot마다 Log 폴더 목록 1번·Log 1개·CSV 앞부분이라 데이터 로드에서는 읽지 않는다 |
+| 비전 보정 로그 대조 (`positioning_log`) | 전문 분석 창의 Positioning Log 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 내보내기는 그 스레드에서 순서대로 | Lot마다 Debug 폴더 목록 2~3번·작은 파일 2~3개라 데이터 로드에서는 읽지 않는다 |
+| 트러블슈팅 진단 Log (`xy_diagnosis`) | 전문 분석 창의 Diagnosis 탭이 보일 때 파이썬 스레드 1개(+ Lot 스레드 8개), 진단 계산은 탭이 보일 때 화면 스레드, 내보내기는 그 스레드에서 순서대로 | Lot마다 Log 폴더 목록 1번·Log 1개·CSV 앞부분이라 데이터 로드에서는 읽지 않는다 |
 | Comparison 탭 차트 | 처음 보일 때 그림 | 가려진 탭은 미뤘다가 보일 때 한 번 (같은 결과면 다시 안 그림) |
 | PDF 생성 | `threading.Thread` | Matplotlib PDF 생성 시간 소요 |
 | 차트 렌더링 | 메인 스레드 | Qt 위젯은 메인 스레드에서만 접근 가능 |
