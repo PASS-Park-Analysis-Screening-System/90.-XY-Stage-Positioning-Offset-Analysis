@@ -13,7 +13,7 @@
   --accent:#2a78d6; --mid:#b9b7b0;
   --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
   --good-bg:#e7f5e7; --crit-bg:#fbeaea; --warn-bg:#fdf3dc; --info-bg:#e9f1fb;
-  --metal:#d9d7d0; --metal2:#c9c6be; --wafer:#9ec5f4; --frame:#e9e7e1;
+  --metal:#d9d7d0; --metal2:#c9c6be; --wafer:#9ec5f4; --frame:#e9e7e1; --piezo:#79c27d;
 }
 @media (prefers-color-scheme: dark){
   :root:where(:not([data-theme="light"])) .viz-root{
@@ -23,7 +23,7 @@
     --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8d86;
     --accent:#3987e5; --mid:#5c5b57;
     --good-bg:#16301a; --crit-bg:#3a1c1c; --warn-bg:#3a3018; --info-bg:#172a40;
-    --metal:#3a3a37; --metal2:#4a4a46; --wafer:#256abf; --frame:#2c2c2a;
+    --metal:#3a3a37; --metal2:#4a4a46; --wafer:#256abf; --frame:#2c2c2a; --piezo:#3f8a4a;
   }
 }
 :root[data-theme="dark"] .viz-root{
@@ -33,7 +33,7 @@
   --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8d86;
   --accent:#3987e5; --mid:#5c5b57;
   --good-bg:#16301a; --crit-bg:#3a1c1c; --warn-bg:#3a3018; --info-bg:#172a40;
-  --metal:#3a3a37; --metal2:#4a4a46; --wafer:#256abf; --frame:#2c2c2a;
+  --metal:#3a3a37; --metal2:#4a4a46; --wafer:#256abf; --frame:#2c2c2a; --piezo:#3f8a4a;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--surface-0)}
@@ -43,6 +43,7 @@ h1{font-size:24px;margin:0 0 4px} h2{font-size:19px;margin:0 0 10px} h3{font-siz
 .sub{color:var(--text-secondary);font-size:13px}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin:18px 0}
 .qa{border-left:6px solid var(--critical)}
+.field{border-left:6px solid var(--good)}
 .qa .q{font-weight:700;color:var(--text-secondary);font-size:14px}
 .qa .a{font-size:17px;line-height:1.65;margin-top:6px}
 .qa .a b{color:var(--critical)}
@@ -73,13 +74,25 @@ a{color:var(--accent)}
 <div class="sub">근거: 149 Lot · 2,800 Die의 착지 순간 카메라 영상 + 원본 AFM TIFF 헤더(스캐너 위치) · 2026-11-12 ·
 관련: <a href="xy-root-cause-troubleshooting.html">원인과 트러블슈팅(v2)</a> · <a href="xy-root-cause-final.html">상세 보고서</a></div>
 
+<div class="card field">
+  <h2 style="margin:0 0 6px">현장 결과 — 레시피 X 라인 Y Offset −25 → −5 µm <span class="tag ok">X PASS</span></h2>
+  <table>
+    <tr><th>항목</th><th>이전 (−25 µm, 14회차)</th><th>실제 (−5 µm, 10 Lot · 2026-11-12)</th></tr>
+    <tr><td>앱 판정 X Range / StdDev</td><td>1.458 / 0.326 µm · 0/14 PASS</td><td><b>0.439 / 0.080 µm · PASS</b></td></tr>
+    <tr><td>θx</td><td>5.18 µrad</td><td><b>0.95 µrad</b> (예측 1.53)</td></tr>
+    <tr><td>앱 판정 Y Range / StdDev</td><td>0.429 / 0.081 µm · 14/14 PASS</td><td>0.732 / 0.143 µm · PASS (여유 감소)</td></tr>
+  </table>
+  <p class="note" style="margin:6px 0 0">X 라인에 실제 적용된 스캐너 Y는 −28.0 → −8.2 µm. Y 여유 감소는 오프셋 변경과 무관한 워밍업 흐름(3시간 동안 Lot 평균 Y −3.80 → −3.49 µm) — 측정 전 워밍업 또는 더미 Lot을 권합니다.
+  레시피 변경은 우회책이고 잔여 회전이 남아 있어, 도는 부품은 아래 시험으로 찾습니다. 이 분석들은 PASS XY 앱의 전문가 창(Diagnosis 탭, 3D 리포트, 사례 라이브러리, 회전 시험 분석기)에 들어가 있습니다.</p>
+</div>
+
 <div class="card qa">
   <div class="q">Q. "Y 스캐너 문제"가 스캐너 모듈의 PZT 정렬이 안 됐다는 뜻인가? 샘플도 카메라도 안 돌아가 있는데?</div>
   <div class="a">
-    여기서 말하는 것은 <b>웨이퍼를 받치고 움직이는 시료 XY 스캐너 모듈(PZT + 플렉셔)의 Y 방향 구동부</b>입니다.<br>
+    여기서 말하는 것은 <b>웨이퍼를 받치고 움직이는 시료 XY 스캐너 모듈의 Y 방향 구동부</b>입니다. 이 스캐너는 고정부와 이동부를 네 모서리의 플렉셔 힌지가 잇고, 적층 PZT 2쌍(<b>Y PZT 쌍은 앞·뒤</b>, X PZT 쌍은 좌·우)이 Force lever로 이동부를 밉니다.<br>
     데이터가 확정하는 것은 하나입니다: <b>이 Y 구동부로 시료를 −28 µm 밀어 둔 동안에만 웨이퍼 전체가 반시계로 5.6 µrad 돕니다.</b>
     밀기 전(비전 정렬 때)에는 안 돌아 있으므로 <b>샘플·카메라 정렬이 정상이라는 말씀이 맞습니다</b>. 고정된 틀어짐이 아니라 <b>"밀 때만 생기는 비틀림"</b>입니다.<br>
-    PZT가 미는 선의 정렬(예압)은 <b>1순위 후보</b>입니다. 다만 플렉셔 힌지, 척 체결과는 데이터만으로 구분이 안 되어 아래 <b>시험 B(게이지 2개)</b>로 가립니다.
+    후보는 <b>① Y PZT 쌍(앞·뒤) 힘 불균형·정렬·예압</b>, ② 플렉셔 힌지 강성 차, ③ 상판↔척/θ 체결, <b>④ Y1/Y2 디텍터 상대 보정(가설)</b>입니다. 데이터만으로는 구분이 안 되어 아래 <b>시험 D(폐루프 2지점 스윕)</b>와 <b>시험 B(게이지 2개)</b>로 가립니다.
   </div>
 </div>
 
@@ -127,23 +140,26 @@ a{color:var(--accent)}
 
 <!-- D. 스캐너 상면도 -->
 <div class="card">
-  <h2>그림 D. 스캐너 안에서 무엇이 틀어질 수 있나 (위에서 본 개념도, 회전 과장)</h2>
+  <h2>그림 D. XY Scanner 구조와 의심 부위 ①–④ (위에서 본 개념도 · 정면이 아래 · 회전 과장)</h2>
   <svg id="top" viewBox="0 0 1060 400" width="100%" role="img" aria-label="플렉셔 스캐너 정상과 비정상 비교"></svg>
   <table style="margin-top:8px">
     <tr><th style="width:5%">#</th><th style="width:30%">의심 부위</th><th>이렇게 되면</th><th style="width:26%">구분 방법</th></tr>
-    <tr><td>①</td><td>Y PZT가 미는 점·선의 정렬 (예압, 볼 팁/접촉면, 접착)</td><td>미는 힘이 상판 중심을 비껴가 → 밀 때마다 상판이 비틀림</td><td>시험 B에서 <b>상판이 돎</b></td></tr>
-    <tr><td>②</td><td>Y 방향 플렉셔 힌지의 좌우 강성 차 (체결 볼트 토크, 힌지 손상)</td><td>한쪽이 덜 휘어 → 같은 힘에도 상판이 비틀림</td><td>시험 B에서 <b>상판이 돎</b> (①과는 분해 점검으로 구분)</td></tr>
-    <tr><td>③</td><td>스캐너 상판과 척/θ축 사이 체결</td><td>상판은 곧게 가는데 Y 구동 반력으로 척만 비틀림</td><td>시험 B에서 <b>상판은 안 돌고 척만 돎</b></td></tr>
+    <tr><td>①</td><td>Y PZT 쌍(앞·뒤) 힘 불균형·정렬·예압 (스크류·압축 스프링, Force lever 접촉점)</td><td>두 힘이 같지 않거나 미는 선이 이동부의 강성 중심(⊕)을 비껴가 → 밀 때마다 이동부가 비틀림</td><td>시험 B에서 <b>상판도 돎</b> (②와는 분해 점검으로 구분)</td></tr>
+    <tr><td>②</td><td>플렉셔 힌지 강성 차 (네 모서리 힌지, 체결 볼트 토크, 힌지 손상)</td><td>한쪽이 덜 휘어 → 같은 힘에도 이동부가 비틀림</td><td>시험 B에서 <b>상판도 돎</b> + 분해 점검</td></tr>
+    <tr><td>③</td><td>상판(이동부) ↔ 척/θ 체결</td><td>이동부는 곧게 가는데 Y 구동 반력으로 척만 비틀림</td><td>시험 B에서 <b>상판은 안 돌고 척만 돎</b></td></tr>
+    <tr><td>④</td><td>Y1/Y2 디텍터 상대 보정(선형화) 불일치 <span class="tag warn">가설</span></td><td>듀얼 서보가 Y1·Y2를 같은 값으로 맞추는데 보정이 δ만큼 달라, 실제로는 δ × Y 이동 ÷ (Y1–Y2 거리)만큼 회전이 남음</td><td>시험 D(폐루프 2지점 스윕) → DB 확인 → 재보정 (기계 작업 없음)</td></tr>
   </table>
+  <p class="note" style="margin:6px 0 0">디텍터 = 이동부의 PSPD가 아래(고정부) LED 빛의 위치를 읽어 이동량만 잽니다. 위치: 이동부 각 변 가운데 — Y1 왼쪽, Y2 오른쪽, X1 뒤, X2 앞. PQC Non-linearity 시험(WI-XY Scanner-01, 2026-09-14)에서 서보 OFF로 밀면 Y2 쪽이 Y1 쪽보다 약 11 % 더 움직였습니다(지령 1 µm당 1.19 대 1.31–1.33) — 평소에는 듀얼 서보가 Y1·Y2로 이 비틀림을 잡습니다.</p>
 </div>
 
 <!-- E. 무엇을 바꿔 볼까 -->
 <div class="card">
   <h2>무엇을 해 보면 되나</h2>
   <div class="act"><div class="n">A</div><div class="b">
-    <h3>바로 효과 — 하드웨어를 건드리지 않고 (레시피)</h3>
-    X 라인을 <b>스캐너 Y ≈ 0</b>에서 재도록 바꿉니다. 패턴까지의 −25 µm는 스테이지로 이동합니다.
-    → 비틀림이 생기지 않으므로 θx ≈ 0. 149 Lot 기준 예측 X Range 1.32 → 약 0.36 µm, X PASS 0/149 → 149/149.
+    <h3>레시피 X 라인 Y Offset −25 → −5 µm — <span class="tag ok">적용 완료, X PASS</span></h3>
+    X 라인이 같은 왼쪽 엣지를 Tip 기준점(패턴 바깥 틀의 좌상단 꼭짓점)에서 5 µm 아래에서 가로지르도록 바꿨습니다. 실제 스캐너 Y −28.0 → −8.2 µm.
+    2026-11-12 10 Lot: 앱 판정 X Range <b>1.458 → 0.439 µm</b>, StdDev <b>0.326 → 0.080 µm</b> → PASS, θx 5.18 → 0.95 µrad(예측 1.53).
+    <p class="note" style="margin:6px 0 0">쓸 수 있는 오프셋은 −5 ~ −190 µm(왼쪽 엣지 약 200 µm). 0은 꼭짓점 자체, + 값은 꼭짓점 위쪽 = 패턴 밖이라 측정할 수 없습니다. 레시피 변경은 우회책 — 잔여 회전이 남아 있습니다.</p>
   </div></div>
   <div class="act"><div class="n">B</div><div class="b">
     <h3>부위 특정 — 게이지 2개 (약 30분)</h3>
@@ -151,7 +167,7 @@ a{color:var(--accent)}
       <li>정전용량 센서 또는 0.1 µm 전자 다이얼 게이지 2개를 <b>척 가장자리 좌·우 끝</b>(X 방향으로 약 300 mm 떨어진 두 점)에 Y 방향으로 댑니다.</li>
       <li>시료 스캐너 Y를 <b>−30 → +30 µm</b>로 구동하며 두 게이지 값을 기록합니다.</li>
       <li>좌·우 이동량이 같으면 평행 이동(정상). <b>차이가 약 3 µm</b>(= 300 mm × 0.19 µrad/µm × 60 µm) 나면 회전 확정.</li>
-      <li>같은 일을 <b>스캐너 상판</b>에서 반복 → 상판도 돌면 ①·②(스캐너 모듈), 상판은 안 돌고 척만 돌면 ③(척/θ축 체결).</li>
+      <li>같은 일을 <b>스캐너 상판(이동부)</b>에서 반복 → 상판도 돌면 ①·②·④(스캐너 쪽), 상판은 안 돌고 척만 돌면 ③(척/θ 체결).</li>
       <li>X로 −30 → +30 µm도 한 번 → 좌·우 차이가 거의 없어야 정상(데이터 예측).</li>
     </ol>
     <p class="note" style="margin:6px 0 0">게이지 대신 척 위 거울 + 오토콜리메이터로 각도를 직접 재도 됩니다(약 11 µrad 변화 예상).
@@ -161,6 +177,16 @@ a{color:var(--accent)}
     <h3>개체 문제인지 설계 특성인지 — 다른 장비와 비교</h3>
     다른 장비에서 같은 레시피(X 라인 스캐너 Y −25 µm)로 1 Lot을 재서 PASS 앱 Positioning Log 탭의 θx를 봅니다.
     이 장비만 크면 <b>이 스캐너 개체의 조립·손상 문제</b>(수리 대상), 다 비슷하면 <b>스캐너 설계 특성</b>(레시피 A로 대응, 제조사에 사양 문의).
+  </div></div>
+  <div class="act"><div class="n">D</div><div class="b">
+    <h3>회전 시험 — 폐루프 2지점 스윕 (새 WI)</h3>
+    서보 ON(평소 운전)에서 스캐너 Y를 <b>−70 → +70 µm</b>로 스윕하며, X −120 mm와 X +120 mm Die 두 곳을 비전으로 재서 두 기울기를 비교합니다(XEPi 오프셋 스텝 + GRAB and RUN).
+    원인이 맞다면 차이 약 6.4 µm(스트로크의 4.6 %). <b>잠정 Spec κ ≤ 0.10 µrad/µm</b> — Final Test 때와 스캐너 교체·선형화 뒤에 실시합니다.
+    넘으면 PQC/Park과 DB(Y/YAux MicrometerPerAdc, bUseDualServo, Rotation feedback gain)를 확인하고 Y1/Y2 상대 보정을 조정합니다(가설 ④).
+  </div></div>
+  <div class="act"><div class="n">E</div><div class="b">
+    <h3>Y 여유 확보 — 워밍업 또는 더미 Lot</h3>
+    −5 µm 적용 Lot에서 Y는 PASS(0.732 / 0.143 µm)지만 워밍업 흐름(3시간 동안 Lot 평균 Y −3.80 → −3.49 µm)으로 여유가 줄었습니다. 측정 전 워밍업 또는 더미 Lot을 둡니다.
   </div></div>
 </div>
 
@@ -220,7 +246,7 @@ function side(){
     [[423,214],'ok','Tip · Z 스캐너','착지 순간 이동 0.3 µrad, 전체의 5% (그림 B ④)'],
     [[590,234],'ok','웨이퍼 정렬 (정지 상태)','비전 정렬 직후 회전 ≈ 0 → 샘플은 안 돌아 있음'],
     [[570,259],'warn','척 / θ축 체결','후보 ③ — 시험 B로 스캐너 상판과 구분'],
-    [[540,306],'no','시료 스캐너 — Y 구동','Y −28 µm 밀어 둔 동안만 웨이퍼 5.6 µrad 회전'],
+    [[540,306],'no','시료 스캐너 — Y 구동 (Y PZT 쌍)','Y −28 µm 밀어 둔 동안만 웨이퍼 5.6 µrad 회전'],
     [[550,340],'ok','시료 스캐너 — X 구동','X +31 µm 밀어도 회전 1.2 µrad 이하 (그림 C)'],
     [[590,373],'ok','장거리 스테이지','Stage Cal ON/OFF 무관, 이동 중 회전 영향 ≤ 10 nm']
   ];
@@ -243,11 +269,12 @@ function side(){
   box(90,230,500,9,css('--wafer'),css('--accent'));T(s,96,226,'웨이퍼',{'font-size':11.5,fill:css('--text-secondary')});
   box(110,239,460,40,css('--metal'));T(s,340,264,'척 / θ축',{'text-anchor':'middle','font-weight':700});
   box(130,279,420,70,css('--crit-bg'),css('--critical'),3);
-  box(140,290,46,48,css('--metal2'));T(s,163,318,'X PZT',{'text-anchor':'middle','font-size':11});
-  T(s,325,309,'시료 XY 스캐너 (PZT + 플렉셔)',{'text-anchor':'middle','font-weight':700});
-  T(s,325,329,'위치 센서: 이동량만 측정 (회전은 못 봄)',{'text-anchor':'middle','font-size':11,fill:css('--text-secondary')});
-  box(470,288,70,52,css('--critical'),css('--critical'));
-  T(s,505,311,'Y PZT',{'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#fff'});T(s,505,328,'⊗ 안쪽',{'text-anchor':'middle','font-size':10.5,fill:'#fff'});
+  box(140,288,62,52,css('--critical'),css('--critical'));
+  T(s,171,311,'Y PZT',{'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'#fff'});T(s,171,328,'앞',{'text-anchor':'middle','font-size':10.5,fill:'#fff'});
+  box(478,288,62,52,css('--critical'),css('--critical'));
+  T(s,509,311,'Y PZT',{'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'#fff'});T(s,509,328,'뒤',{'text-anchor':'middle','font-size':10.5,fill:'#fff'});
+  T(s,340,309,'시료 XY 스캐너 — Y PZT 쌍 (앞·뒤)',{'text-anchor':'middle','font-weight':700});
+  T(s,340,329,'디텍터 4개: 이동량만 측정 (회전은 못 봄)',{'text-anchor':'middle','font-size':11,fill:css('--text-secondary')});
   box(90,349,500,48,css('--metal'));T(s,340,378,'장거리 XY 스테이지 (300 mm 이동)',{'text-anchor':'middle','font-weight':700});
   box(60,397,560,34,css('--metal2'));T(s,340,419,'베이스',{'text-anchor':'middle','font-size':12});
   T(s,448,276,'★ 여기',{'font-weight':800,'font-size':15,fill:css('--critical')});
@@ -287,44 +314,52 @@ function pos(){
 
 function topv(){
   const s=document.getElementById('top');s.innerHTML='';
-  function scanner(ox,title,bad){
-    T(s,ox+250,24,title,{'text-anchor':'middle','font-weight':700,'font-size':14,fill:bad?css('--critical'):css('--text-primary')});
-    el('rect',{x:ox+40,y:40,width:420,height:330,rx:10,fill:css('--frame'),stroke:css('--text-muted'),'stroke-width':2},s);
-    T(s,ox+52,58,'고정 프레임',{'font-size':11,fill:css('--text-muted')});
-    const cx=ox+250,cy=200,ang=bad?-4:0;
-    // hinges
-    const hl=[[ox+110,cy-60],[ox+110,cy+60],[ox+390,cy-60],[ox+390,cy+60]];
-    hl.forEach((h,i)=>{const thick=bad&&i>=2;el('rect',{x:h[0]-(i<2?40:0),y:h[1]-4,width:40,height:thick?10:6,rx:2,fill:thick?css('--critical'):css('--text-muted')},s);});
+  function panel(ox,title,bad){
+    const cx=ox+260,cy=215,F=130,B=18,ST=82,ang=bad?-4:0,lo=bad?18:0;
+    const red=css('--critical'),mut=css('--text-muted'),sec=css('--text-secondary');
+    T(s,cx,24,title,{'text-anchor':'middle','font-weight':700,'font-size':14,fill:bad?red:css('--text-primary')});
+    T(s,ox+510,48,'↑ 뒤(기둥) · ↓ 정면 · ← EFEM',{'text-anchor':'end','font-size':11,fill:mut});
+    T(s,cx,cy-F-8,'뒤 (기둥)',{'text-anchor':'middle','font-size':11,fill:mut});
+    T(s,cx,cy+F+18,'앞 (정면)',{'text-anchor':'middle','font-size':11,fill:mut});
+    T(s,cx-F,cy-F-8,'고정부',{'font-size':11,fill:mut});
+    el('rect',{x:cx-F,y:cy-F,width:2*F,height:2*F,rx:6,fill:css('--frame'),stroke:mut,'stroke-width':2},s);
+    el('rect',{x:cx-F+B,y:cy-F+B,width:2*(F-B),height:2*(F-B),fill:css('--surface-1'),stroke:css('--border')},s);
+    // corner flexure hinges
+    [[1,1],[-1,1],[1,-1],[-1,-1]].forEach(q=>{const hot=bad&&q[0]<0;el('line',{x1:cx+q[0]*(F-B),y1:cy+q[1]*(F-B),x2:cx+q[0]*ST,y2:cy+q[1]*ST,stroke:hot?red:mut,'stroke-width':hot?8:5,'stroke-linecap':'round'},s);});
+    // stacked piezos: Y pair front/back, X pair left/right
+    const pz=(x,y,w,h,hot)=>el('rect',{x,y,width:w,height:h,rx:3,fill:css('--piezo'),stroke:hot?red:sec,'stroke-width':hot?3:1},s);
+    pz(cx-34,cy+F-B,68,B,bad);pz(cx-34,cy-F,68,B,bad);pz(cx-F,cy-34,B,68,false);pz(cx+F-B,cy-34,B,68,false);
+    // force levers into the moving stage
+    const lev=(x1,y1,x2,y2,hot)=>el('line',{x1,y1,x2,y2,stroke:hot?red:sec,'stroke-width':4,'stroke-linecap':'round'},s);
+    lev(cx,cy+F-B,cx+lo,cy+ST+2,bad);lev(cx,cy-F+B,cx,cy-ST-2,false);lev(cx-F+B,cy,cx-ST-2,cy,false);lev(cx+F-B,cy,cx+ST+2,cy,false);
+    // moving stage + chuck (rotates in the suspect case)
+    if(bad)el('rect',{x:cx-ST,y:cy-ST,width:2*ST,height:2*ST,rx:6,fill:'none',stroke:mut,'stroke-dasharray':'4 4'},s);
     const g=el('g',{transform:`rotate(${ang} ${cx} ${cy})`},s);
-    if(bad) el('rect',{x:cx-140,y:cy-110,width:280,height:220,rx:8,fill:'none',stroke:css('--text-muted'),'stroke-dasharray':'4 4'},s);
-    el('rect',{x:cx-140,y:cy-110,width:280,height:220,rx:8,fill:css('--metal'),stroke:css('--text-secondary'),'stroke-width':2},g);
-    el('circle',{cx,cy,r:88,fill:css('--wafer'),'fill-opacity':0.55,stroke:css('--accent')},g);
-    T(g,cx,cy+4,'상판 + 척 + 웨이퍼',{'text-anchor':'middle','font-size':12,'font-weight':700});
-    el('circle',{cx,cy,r:3,fill:css('--text-primary')},s);
-    // PZT
-    const px=bad?cx+55:cx;
-    el('rect',{x:px-22,y:330,width:44,height:34,rx:3,fill:bad?css('--critical'):css('--metal2'),stroke:css('--text-secondary')},s);
-    T(s,px,352,'Y PZT',{'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:bad?'#fff':css('--text-primary')});
-    arrow(s,px,328,px,300,bad?css('--critical'):css('--text-primary'),3);
-    el('line',{x1:px,x2:px,y1:300,y2:90,stroke:bad?css('--critical'):css('--text-muted'),'stroke-dasharray':'6 5','stroke-width':1.5},s);
-    T(s,px+(bad?8:8),84,'미는 선',{'font-size':11,fill:bad?css('--critical'):css('--text-muted')});
-    // sensor
-    el('rect',{x:cx-90,y:46,width:36,height:18,rx:3,fill:css('--accent')},s);T(s,cx-50,60,'위치 센서: 이동량만',{'font-size':11,fill:css('--text-secondary')});
+    el('rect',{x:cx-ST,y:cy-ST,width:2*ST,height:2*ST,rx:6,fill:css('--metal'),stroke:sec,'stroke-width':2},g);
+    el('circle',{cx,cy,r:68,fill:css('--wafer'),'fill-opacity':0.3,stroke:bad?red:css('--accent'),'stroke-dasharray':'5 4','stroke-width':bad?2:1.2},g);
+    T(g,cx,cy+44,'이동부 + 척/θ',{'text-anchor':'middle','font-size':11.5,'font-weight':700});
+    [['Y1',-66,0],['Y2',66,0],['X1',0,-66],['X2',0,66]].forEach(d=>{const hot=bad&&d[0][0]==='Y',col=hot?red:css('--accent');
+      el('rect',{x:cx+d[1]-7,y:cy+d[2]-7,width:14,height:14,rx:2,fill:col},g);
+      T(g,cx+d[1]+(d[1]<0?10:d[1]>0?-10:11),cy+d[2]+4,d[0],{'text-anchor':d[1]>0?'end':'start','font-size':11,'font-weight':700,fill:col});});
+    // stiffness centre and push lines
+    el('circle',{cx,cy,r:6,fill:'none',stroke:css('--text-primary'),'stroke-width':1.6},s);
+    el('line',{x1:cx-6,y1:cy,x2:cx+6,y2:cy,stroke:css('--text-primary')},s);el('line',{x1:cx,y1:cy-6,x2:cx,y2:cy+6,stroke:css('--text-primary')},s);
+    el('line',{x1:cx+lo,y1:cy+ST,x2:cx+lo,y2:cy,stroke:bad?red:mut,'stroke-dasharray':'6 5','stroke-width':1.5},s);
+    el('line',{x1:cx,y1:cy-ST,x2:cx,y2:cy,stroke:mut,'stroke-dasharray':'6 5','stroke-width':1.5},s);
+    arrow(s,cx+lo,cy+F-B-2,cx+lo,cy+ST+6,bad?red:css('--text-primary'),3);arrow(s,cx,cy-F+B+2,cx,cy-ST-6,css('--text-primary'),2.5);
     if(bad){
-      el('line',{x1:cx,x2:px,y1:322,y2:322,stroke:css('--critical'),'stroke-width':1.5},s);
-      T(s,(cx+px)/2,318,'어긋남',{'text-anchor':'middle','font-size':11,fill:css('--critical')});
-      el('path',{d:`M${cx+120},${cy-150+50} A 130 130 0 0 0 ${cx-40},${cy-128}`,fill:'none',stroke:css('--critical'),'stroke-width':2},s);
-      el('path',{d:`M${cx-40},${cy-128} l9,-6 l0,11 z`,fill:css('--critical')},s);
-      T(s,cx+150,cy-95,'이동 + 비틀림',{'font-size':12.5,'font-weight':700,fill:css('--critical')});
-      // callouts
-      const co=(x,y,n)=>{el('circle',{cx:x,cy:y,r:11,fill:css('--critical')},s);T(s,x,y+4,n,{'text-anchor':'middle','font-size':12,'font-weight':800,fill:'#fff'});};
-      co(px+36,346,'①');co(ox+430,cy+44,'②');co(cx-110,cy+70,'③');
+      el('path',{d:`M${cx+F+14},${cy-40} A 150 150 0 0 0 ${cx+40},${cy-F-14}`,fill:'none',stroke:red,'stroke-width':2},s);
+      el('path',{d:`M${cx+40},${cy-F-14} l9,-5 l0,11 z`,fill:red},s);
+      T(s,cx+F+12,cy-F+4,'이동 + 비틀림',{'font-size':12.5,'font-weight':700,fill:red});
+      const co=(x,y,n)=>{el('circle',{cx:x,cy:y,r:11,fill:red},s);T(s,x,y+4,n,{'text-anchor':'middle','font-size':12,'font-weight':800,fill:'#fff'});};
+      co(cx+52,cy+F-B/2,'①');co(cx+52,cy-F+B/2,'①');co(cx-F-14,cy+F-12,'②');co(cx+56,cy-52,'③');co(cx-66,cy+24,'④');co(cx+66,cy+24,'④');
     } else {
-      T(s,cx+150,cy-95,'평행 이동만',{'font-size':12.5,'font-weight':700,fill:css('--good')});
+      T(s,cx+F+12,cy-F+4,'평행 이동만',{'font-size':12.5,'font-weight':700,fill:css('--good')});
+      T(s,cx+F+12,cy-F+22,'⊕ 강성 중심',{'font-size':11,fill:sec});
     }
   }
-  scanner(0,'정상: 미는 선이 중심을 지남 → 평행 이동',false);
-  scanner(540,'의심: 미는 선이 비껴가거나 힌지 강성 차 → 비틀림',true);
+  panel(0,'정상: Y PZT 쌍(앞·뒤) 힘이 같고 ⊕를 지남 → 평행 이동',false);
+  panel(540,'의심: 밀 때 이동부가 비틀림 — ①~④ 중 어디?',true);
 }
 
 function draw(){

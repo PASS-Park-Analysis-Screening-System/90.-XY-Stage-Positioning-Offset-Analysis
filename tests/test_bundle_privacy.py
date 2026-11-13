@@ -191,9 +191,9 @@ def test_verify_build_reads_onedir_internal_folder(tmp_path):
     exe = tmp_path / 'app.exe'
     exe.write_bytes(b'')
     internal = tmp_path / '_internal'
-    (internal / 'assets').mkdir(parents=True)
-    (internal / 'assets' / 'checklist_guide.png').write_bytes(b'png')
-    (internal / 'core').mkdir()
+    for required in _tool('build_config').REQUIRED_IN_BUNDLE:     # assets, settings, resources/...
+        (internal / required).parent.mkdir(parents=True, exist_ok=True)
+        (internal / required).write_bytes(b'x')
     settings_file = internal / 'core' / 'settings.json'
 
     settings_file.write_text(json.dumps({'last_folder': ''}), encoding='utf-8')

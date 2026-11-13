@@ -187,6 +187,7 @@ svg text{font-family:inherit}
   <p><b>왜</b> — 장비는 X를 잴 때만, 웨이퍼를 받친 <b>시료 스캐너</b>(웨이퍼를 µm 단위로 미세하게 옮기는 장치)를 Y 방향으로 <b>28 µm</b> 밀어 둔 채 잽니다. 이때 <b>웨이퍼 전체가 아주 조금(약 0.0003°) 돌아갑니다</b>. 그래서 웨이퍼 중심에서 120 mm 떨어진 위·아래 끝 Die의 X가 <b>±0.64 µm</b> 틀어지고 X가 Spec을 넘습니다.</p>
   <p><b>무엇이 정상인가</b> — AFM(바늘로 표면을 더듬어 재는 측정기)의 계산, 카메라, Tip(바늘), 장거리 스테이지, 각종 보정 설정은 정상으로 확인했습니다.</p>
   <p><b>현장 확인</b> — X 라인 레시피의 Y 오프셋을 −25 → −5 µm로 바꿔 10 Lot을 잰 결과(2026-11-12), 앱 판정 X Range <b>1.458 → 0.439 µm</b>, X StdDev <b>0.326 → 0.080 µm</b>로 <b>X PASS</b>. θx는 5.18 → 0.95 µrad로 예측(1.53)보다도 좋았습니다. 원인과 조치가 맞다는 직접 증거입니다.</p>
+  <p><b>앱</b> — 이 분석들은 PASS XY 앱의 전문가 창(Diagnosis 탭, 3D 리포트, 사례 라이브러리, 회전 시험 분석기)에 들어가 있습니다. 다른 분석 페이지는 <a href="../index.html">사례 라이브러리 목록</a>에서 볼 수 있습니다.</p>
   <div class="tiles">
     <div class="tile"><div class="k">문제 위치</div><span class="chip no">XY Scanner(시료 XY 스캐너)의 Y 구동</span></div>
     <div class="tile"><div class="k">확신도</div>"Y로 밀 때 돈다" 85–90 % · 정확히 어느 부품인지 약 60 %</div>
@@ -399,7 +400,7 @@ svg text{font-family:inherit}
         <li>스캐너 Y를 <b>−70 → +70 µm</b>로 스윕합니다.</li>
         <li>비전으로 X 방향으로 멀리 떨어진 두 지점 — 예: <b>X −120 mm Die와 X +120 mm Die</b> — 에서 Y 이동량을 재고, 두 기울기를 비교합니다.</li>
       </ol>
-      <div class="box info"><b>원인이 맞다면:</b> 두 지점의 차이 ≈ 0.19 µrad/µm × 240 mm × 140 µm ≈ <b>6.4 µm</b>, 스트로크의 약 <b>4.6 %</b>. 비전 0.34 µm/px로 쉽게 보입니다.<br>
+      <div class="box info"><b>원인이 맞다면:</b> 두 지점의 차이 ≈ 0.19 µrad/µm × 240 mm × 140 µm ≈ <b>6.4 µm</b>, 스트로크의 약 <b>4.6 %</b>. 비전 0.34 µm/px로 쉽게 보입니다.<br><b>새 WI(회전 시험):</b> 잠정 Spec <b>κ ≤ 0.10 µrad/µm</b> — Final Test 때와 스캐너 교체·선형화 뒤에 실시합니다.<br>
       <b>대조:</b> X 스윕을 Y −120 / +120 mm Die에서 하면 차이가 거의 없어야 합니다.</div>
       <div class="box warn"><b>Y 차이가 확인되면:</b> PQC/Park과 현재 DB를 확인합니다 — Y/YAux <span class="kbd">MicrometerPerAdc</span>, <span class="kbd">bUseDualServo</span>, Rotation feedback gain. 그다음 Y1/Y2 상대 보정을 조정하고, 두 기울기가 같아질 때까지 이 시험을 반복합니다(가설 ④ 대응).</div>
     </div>
@@ -824,7 +825,7 @@ const TL=[
   r:['<b>X PASS</b> — 앱 판정 X Range 1.458 → <b>0.439 µm</b>, X StdDev 0.326 → <b>0.080 µm</b>','<table style="max-width:680px"><tr><th>항목</th><th class="r">이전 (−25 µm, 14회차)</th><th class="r">예측 (−5 µm)</th><th class="r">실제 (−5 µm, 10 Lot)</th></tr><tr><td>앱 판정 X Range (21 Die × 10 Repeat)</td><td class="r">1.458 µm (1.367–1.553), 0/14 PASS</td><td class="r">—</td><td class="r"><b>0.439 µm, PASS</b></td></tr><tr><td>앱 판정 X StdDev</td><td class="r">0.326 µm</td><td class="r">—</td><td class="r"><b>0.080 µm, PASS</b></td></tr><tr><td>Lot당 X Range 평균 (최대)</td><td class="r">1.32 (1.42)</td><td class="r">0.46 (0.57)</td><td class="r"><b>0.30 (0.41)</b></td></tr><tr><td>Lot당 X StdDev 평균 (최대)</td><td class="r">0.330 (0.346)</td><td class="r">0.113 (0.130)</td><td class="r"><b>0.079 (0.099)</b></td></tr><tr><td>θx (µrad)</td><td class="r">5.18</td><td class="r">1.53</td><td class="r"><b>0.95 ± 0.14</b></td></tr><tr><td>앱 판정 Y Range / StdDev</td><td class="r">0.429 / 0.081 (14/14 PASS)</td><td class="r">—</td><td class="r">0.732 / 0.143 (PASS)</td></tr></table><div class="note">단위 µm(θx는 µrad). 이전 = Vision Pattern 14회차, 실제 = 2026-11-12 현장 10 Lot</div>','<b>예측보다 더 좋았던 이유:</b> 오프셋이 작을 때는 1 µm당 회전도 작습니다 — 여기서는 0.95 ÷ 8.2 ≈ <b>0.12 µrad/µm</b>, −28 µm에서는 0.19. 앞선 데이터에 있던 비선형 흔적과 같은 방향입니다.','<b>Y는 여전히 PASS지만 여유가 줄었습니다.</b> 원인은 오프셋 변경과 상관없는 <b>워밍업 흐름</b>입니다: 3시간 동안 Lot 평균 Y가 −3.80 → −3.49 µm로 흘렀고, Lot 안의 흐름은 첫 Lot에서 가장 컸다가(Die당 −0.018 µm) 뒤로 갈수록 줄었습니다(약 −0.003). → 측정 전 <b>워밍업 또는 더미 Lot</b>을 권합니다.','회전 원인(스캐너 Y 오프셋)과 조치가 맞다는 <b>직접 증거</b>'],
   m:'<b>이것은 우회책입니다.</b> 스캐너 자체의 잔여 회전(Y 1 µm당 0.19 µrad)은 그대로 남아 있으므로, 스캐너 Y 오프셋을 크게 쓰는 다른 측정에는 여전히 영향을 줍니다. 그래서 어느 부품이 도는지 찾는 다음 단계가 필요합니다.',mc:'info',link:['D','장면 D (레시피)']},
  {t:'다음 단계',v:'warn',vt:'진행 예정',h:'레시피는 우회책 — 도는 부품을 찾아 근본 조치',d:'계획',
-  r:['<b>Y 여유 확보</b>: 측정 전 워밍업 또는 더미 Lot — −5 µm 적용 Lot에서 Y가 워밍업 흐름으로 여유가 줄었음','<b>폐루프 2지점 스윕 시험</b>: 서보 ON에서 스캐너 Y −70 → +70 µm, X ±120 mm Die 두 곳의 기울기 비교 — 가설 ④ 확인','<b>Y1/Y2 보정 확인</b>: PQC/Park과 현재 DB의 Y/YAux MicrometerPerAdc, bUseDualServo, Rotation feedback gain 확인 → 필요하면 Y1/Y2 상대 보정을 조정하고 스윕 시험 반복','<b>게이지 시험</b>: 척·상판 좌·우 끝 게이지 2개로 어느 부품이 도는지 확인','<b>다른 장비와 비교</b>: 같은 레시피로 1 Lot — 이 장비만 크면 개체(조립·손상) 문제, 다 비슷하면 설계 특성'],link2:[['D','장면 D (레시피)'],['E','장면 E (시험)']]}
+  r:['<b>Y 여유 확보</b>: 측정 전 워밍업 또는 더미 Lot — −5 µm 적용 Lot에서 Y가 워밍업 흐름으로 여유가 줄었음','<b>폐루프 2지점 스윕 시험</b>(새 WI): 서보 ON에서 스캐너 Y −70 → +70 µm, X ±120 mm Die 두 곳의 기울기 비교 — 가설 ④ 확인. 잠정 Spec κ ≤ 0.10 µrad/µm, Final Test 때와 스캐너 교체·선형화 뒤에 실시','<b>Y1/Y2 보정 확인</b>: PQC/Park과 현재 DB의 Y/YAux MicrometerPerAdc, bUseDualServo, Rotation feedback gain 확인 → 필요하면 Y1/Y2 상대 보정을 조정하고 스윕 시험 반복','<b>게이지 시험</b>: 척·상판 좌·우 끝 게이지 2개로 어느 부품이 도는지 확인','<b>다른 장비와 비교</b>: 같은 레시피로 1 Lot — 이 장비만 크면 개체(조립·손상) 문제, 다 비슷하면 설계 특성'],link2:[['D','장면 D (레시피)'],['E','장면 E (시험)']]}
 ];
 let tlSel=0;
 function renderTL(){
@@ -1035,11 +1036,11 @@ function sideUpdate(){
     $('insetAnote').innerHTML=(st.k===0?'웨이퍼 로딩 중 — 아직 정렬 전. ':st.k===1?'스테이지 이동 중 — 아직 정렬 전. ':'패턴 이동은 ×20 확대, 점선 = 이동 전. ')+`파란 + = Tip 기준점(패턴 바깥 틀의 좌상단 꼭짓점). ${top?'위쪽 끝':'아래쪽 끝'} Die(X 0, Y ${top?'+120':'−120'} mm)의 실측 평균: X 라인 시작 때 패턴 X <b>${f2(row[4])} µm</b>, Y 라인 시작 때 <b>${f2(row[6])} µm</b>. Tip은 그대로인데 엣지가 옆으로 밀려 X 값이 틀어집니다.`;
     const SP=['— (웨이퍼 로딩)','— (스테이지 이동)','(0, 0)','(0, 0) → (0.8, −28.0)','(0.8, −28.0)','(0.8, −28.0) → (30.8, −1.0)','(30.8, −1.0)'];
     const RT=['—','—','≈ 0 (−0.4)','0 → +5.6','+5.6 (반시계)','+5.6 → +1.2','+1.2'];
-    $('aRead').innerHTML=`<div><span>스캐너 위치 (µm)</span><b>${SP[st.k]}</b></div><div><span>웨이퍼 회전 (µrad)</span><b style="color:${st.rot>3?C.critical:'inherit'}">${RT[st.k]}</b></div><div><span>미는 축</span><b>${st.hotY?'Y PZT (빨강)':st.hotX?'X PZT':'—'}</b></div>`+(st.k===0?`<div><span>Align Angle Offset</span><b>0.4° (EFEM에서 적용)</b></div>`:'');
+    $('aRead').innerHTML=`<div><span>스캐너 위치 (µm)</span><b>${SP[st.k]}</b></div><div><span>웨이퍼 회전 (µrad)</span><b style="color:${st.rot>3?C.critical:'inherit'}">${RT[st.k]}</b></div><div><span>미는 축</span><b>${st.hotY?'Y PZT 쌍 (빨강)':st.hotX?'X PZT 쌍':'—'}</b></div>`+(st.k===0?`<div><span>Align Angle Offset</span><b>0.4° (EFEM에서 적용)</b></div>`:'');
     const CAP=['<b>⓪ 웨이퍼 로딩</b> — 장비 <b>왼쪽</b>의 EFEM이 웨이퍼를 왼쪽에서 넣어 척 위에 올립니다. 넣기 전에 Align Angle Offset(0.4°)만큼 웨이퍼 방향을 돌려 맞춥니다.',
       '<b>① 스테이지 이동</b> — XY Stage가 웨이퍼를 옮겨, 잴 Die를 Tip 바로 아래로 가져옵니다.',
       '<b>② 비전 정렬</b> — 카메라가 패턴(바깥 틀)을 찾아, 그 좌상단 꼭짓점(Tip 기준점)을 Tip 바로 아래에 맞춥니다. 이때 시료 스캐너는 가운데(0, 0)에 있고, 웨이퍼는 돌아 있지 않습니다.',
-      '<b>③ X 라인 위치로 이동</b> — 시료 스캐너가 Y로 −28 µm 밀어 X 라인 자리를 Tip 아래로 가져옵니다. <b>이때 웨이퍼 전체가 반시계로 돕니다</b>(5.6 µrad, 그림은 과장). 빨간 Y PZT가 미는 축입니다.',
+      '<b>③ X 라인 위치로 이동</b> — 시료 스캐너가 Y로 −28 µm 밀어 X 라인 자리를 Tip 아래로 가져옵니다. <b>이때 웨이퍼 전체가 반시계로 돕니다</b>(5.6 µrad, 그림은 과장). 빨간 Y PZT 쌍(앞·뒤)이 미는 축입니다.',
       '<b>④ 착지 + X 스캔</b> — Tip이 내려와 닿고, 시료 스캐너가 X로 20 µm 움직이며 패턴의 왼쪽 세로 엣지를 가로질러 잽니다. 웨이퍼가 돌아간 만큼 엣지가 옆으로 밀려 있어 X 값이 틀어집니다.',
       '<b>⑤ Y 라인 위치로 이동</b> — 스캐너가 X +31, Y −1 µm로 옮겨 갑니다. Y로는 거의 밀지 않으므로 회전이 대부분 사라집니다(1.2 µrad).',
       '<b>⑥ Y 스캔</b> — Y 방향으로 패턴의 위쪽 가로 엣지를 가로질러 잽니다. 회전이 작아 Y는 PASS입니다.'];

@@ -48,6 +48,7 @@ h3{font-size:15px;margin:0 0 6px}
 .hero .big{font-size:20px;font-weight:700;line-height:1.55;margin:6px 0 14px}
 .hero .big b{color:var(--critical)}
 .change{border-left:6px solid var(--warning);background:var(--warn-bg)}
+.field{border-left:6px solid var(--good)}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:860px){.grid3,.grid2{grid-template-columns:1fr}}
@@ -99,6 +100,19 @@ a{color:var(--accent)}
 <div class="sub">데이터: 공유 폴더 전체 150 Lot · 32,169 파일(로그·CSV·정렬/착지 카메라 영상·AFM 원본 TIFF) · 2026-11-12 ·
 자세한 근거: <a href="xy-root-cause-final.html">xy-root-cause-final.html</a></div>
 
+<div class="card field">
+  <h2 style="margin:0 0 6px">현장 결과 (2026-11-12) — 레시피 X 라인 Y Offset −25 → −5 µm <span class="tag ok">X PASS</span></h2>
+  <table>
+    <tr><th>항목</th><th class="r">이전 (−25 µm, 14회차)</th><th class="r">예측 (−5 µm)</th><th class="r">실제 (−5 µm, 10 Lot)</th></tr>
+    <tr><td>앱 판정 X Range / StdDev</td><td class="r">1.458 / 0.326 µm · 0/14 PASS</td><td class="r">—</td><td class="r"><b>0.439 / 0.080 µm · PASS</b></td></tr>
+    <tr><td>Lot당 X Range 평균 (최대)</td><td class="r">1.32 (1.42)</td><td class="r">0.46 (0.57)</td><td class="r"><b>0.30 (0.41)</b></td></tr>
+    <tr><td>θx</td><td class="r">5.18 µrad</td><td class="r">1.53</td><td class="r"><b>0.95 ± 0.14</b></td></tr>
+    <tr><td>앱 판정 Y Range / StdDev</td><td class="r">0.429 / 0.081 µm · 14/14 PASS</td><td class="r">—</td><td class="r">0.732 / 0.143 µm · PASS (여유 감소)</td></tr>
+  </table>
+  <p class="note" style="margin:6px 0 0">Sample1902–1911 · 레시피 "1. Vision Pattern Recognize_1112" · X 라인에 실제 적용된 스캐너 오프셋 (1.4, −8.2) µm. 예측보다 좋았던 이유: 오프셋이 작을수록 1 µm당 회전도 작음(0.95 ÷ 8.2 ≈ 0.12 µrad/µm, −28 µm에서는 0.19).
+  레시피 변경은 우회책이고 잔여 회전이 남아 있어, 다음은 도는 부품을 찾는 일입니다. 이 분석들은 PASS XY 앱의 전문가 창(Diagnosis 탭, 3D 리포트, 사례 라이브러리, 회전 시험 분석기)에 들어가 있습니다. 전체 목록: <a href="../index.html">사례 라이브러리 목록</a></p>
+</div>
+
 <div class="card change">
   <h3>v1에서 바뀐 점</h3>
   v1은 "카메라–Tip 관계가 스테이지 Y에 따라 변한다"를 유력 원인으로 봤습니다. 전체 영상을 분석한 결과 <b>아닙니다</b>.
@@ -118,7 +132,7 @@ a{color:var(--accent)}
     <div class="q"><div class="k">무엇이 움직였나 <span class="tag ok">확정 (영상)</span></div>
       <div class="v">X 라인 시작 순간 카메라 영상: <b>패턴(웨이퍼)이 95%</b>, Tip(캔틸레버)은 5%. 영상 값과 AFM 값의 상관 |r| = 0.9993.</div></div>
     <div class="q"><div class="k">왜 <span class="tag warn">유력 85–90% — 시험 1·2로 확정</span></div>
-      <div class="v">스캐너가 Y로 움직이면 웨이퍼가 <b>1 µm당 0.19 µrad</b> 돌아감. 0.19 × 28 µm = 5.4 µrad → 실측 5.18과 4% 이내로 일치. 도는 부품(스캐너 플렉셔인지 척/θ축인지)은 아직 구분 못 함(~60%).</div></div>
+      <div class="v">스캐너가 Y로 움직이면 웨이퍼가 <b>1 µm당 0.19 µrad</b> 돌아감. 0.19 × 28 µm = 5.4 µrad → 실측 5.18과 4% 이내로 일치. 도는 부품은 아직 구분 못 함(~60%) — 후보 ① Y PZT 쌍(앞·뒤) 힘 불균형·정렬·예압, ② 플렉셔 힌지 강성 차, ③ 상판↔척/θ 체결, ④ Y1/Y2 디텍터 상대 보정(가설).</div></div>
   </div>
 </div>
 
@@ -231,7 +245,7 @@ a{color:var(--accent)}
         <ul style="margin:6px 0 0;padding-left:18px;font-size:13.5px">
           <li><b>단기 조치 (적용 완료):</b> X 라인 레시피 Y 오프셋 <b>−25 → −5 µm</b> (같은 왼쪽 엣지, 꼭짓점 여유 5 µm) — 현장 결과 앱 판정 X Range 0.439 / StdDev 0.080 µm PASS.</li>
           <li>레시피를 못 바꾸면 SW 보정: <span class="kbd">ΔX = 0.19 µrad/µm × (스캐너 Y µm) × (Die Y mm) / 1000</span> µm (부호는 시험 결과에 맞춤).</li>
-          <li><b>근본 조치:</b> 도는 부품 찾기 — 척 위에 오토콜리메이터를 두고 스캐너 Y를 움직이며 각도 측정. 스캐너 플렉셔의 기생 회전(yaw)이면 스캐너 교정/교체, 척·θ축이면 체결·강성 점검. 장비 제조사 문의 자료로 이 페이지와 상세 보고서를 사용.</li>
+          <li><b>근본 조치:</b> 도는 부품 찾기 — 폐루프 2지점 스윕(새 WI, 잠정 κ ≤ 0.10 µrad/µm, Final Test·스캐너 교체/선형화 뒤)과 Y1/Y2 보정 DB 확인(④), 게이지 2개 시험(상판도 돌면 ①②④ 스캐너 쪽, 척만 돌면 ③ 체결), 필요하면 척 위 오토콜리메이터로 각도 직접 측정. ①이면 Y PZT 쌍(앞·뒤)의 정렬·예압(스크류·압축 스프링) 점검, ②면 플렉셔 힌지 점검, ③이면 상판↔척/θ 체결 점검, ④면 Y1/Y2 재보정(기계 작업 없음). 장비 제조사 문의 자료로 이 페이지와 상세 보고서를 사용.</li>
         </ul></div>
       <div class="b bb"><h3>결과 B — θx가 오프셋과 무관</h3>
         (−5 µm 실측에서 θx가 5.18 → 0.95로 줄어 현재는 해당 없음.) 이런 결과가 나왔다면 회전 모델 기각 → 상세 보고서 §7의 정지 시험(T2·T3)으로 다시 추적. 이 경우 시험 1 결과와 함께 다시 분석합니다.</div>
@@ -240,13 +254,14 @@ a{color:var(--accent)}
   <div class="arrow-down"></div>
 
   <div class="step"><div class="snum">3</div><div class="body">
-    <h3>조치 후 검증 — 1 Lot(21 Die × 10 Repeat) 재측정</h3>
+    <h3>조치 후 검증 — <span class="tag ok">완료 (2026-11-12, −5 µm, 10 Lot)</span></h3>
     <table>
-      <tr><th>확인 항목</th><th class="r">지금</th><th class="r">목표</th></tr>
-      <tr><td>최종 착지 θx (PASS 앱 Positioning Log 탭)</td><td class="r">+5.18 µrad</td><td class="r">|t| &lt; 3 (≈ 0.5 이하)</td></tr>
-      <tr><td>X Range</td><td class="r">1.32 µm</td><td class="r">≈ 0.4 µm</td></tr>
-      <tr><td>X StdDev</td><td class="r">0.330 µm</td><td class="r">≈ 0.08 µm</td></tr>
+      <tr><th>확인 항목</th><th class="r">이전 (−25 µm)</th><th class="r">목표</th><th class="r">실측 (−5 µm)</th></tr>
+      <tr><td>최종 착지 θx (PASS 앱 Positioning Log 탭)</td><td class="r">+5.18 µrad</td><td class="r">|t| &lt; 3 (≈ 0.5 이하)</td><td class="r"><b>0.95 ± 0.14 µrad</b> <span class="tag warn">잔여 회전</span></td></tr>
+      <tr><td>X Range — 앱 판정 (Lot당 평균)</td><td class="r">1.458 (1.32) µm</td><td class="r">≈ 0.4 µm</td><td class="r"><b>0.439 (0.30) µm</b> <span class="tag ok">PASS</span></td></tr>
+      <tr><td>X StdDev — 앱 판정 (Lot당 평균)</td><td class="r">0.326 (0.330) µm</td><td class="r">≈ 0.08 µm</td><td class="r"><b>0.080 (0.079) µm</b> <span class="tag ok">PASS</span></td></tr>
     </table>
+    <p class="note" style="margin:6px 0 0">X는 목표 수준으로 PASS. θx는 1/5 수준으로 줄었지만 0.5 목표보다 커 잔여 회전이 남아 있습니다 — 레시피 변경은 우회책이므로 도는 부품을 찾는 시험을 이어 갑니다.</p>
   </div></div>
 </div>
 
@@ -256,7 +271,8 @@ a{color:var(--accent)}
     <tr><th style="width:26%">현상</th><th>내용</th><th style="width:30%">조치</th></tr>
     <tr><td>Lot 시작 직후 Tip 흔들림</td><td>Die1 +0.62, Die2 +0.25, Die3 +0.10 µm (Die4 이후 기준). 시간 상수 63초로 줄어듦. Tip Positioning과 Z 안전 이동(약 7 mm) 직후 생기고, 기준 스캔도 이 사이에 찍힘. Die2는 Spec 계산 21개에 포함됨</td><td>Tip Positioning 후 약 3분 대기 또는 안정화 Die를 2~3개로</td></tr>
     <tr><td>Y 평균 −2.7 µm</td><td>기준 스캔(ref Y −2.70)을 새로 적용한 Lot에서 항상 −2.7. 저장값을 쓴 View Panning Lot은 −0.64</td><td>기준 패턴 Y 정의·기준 스캔 위치 확인 (원인 미확정)</td></tr>
-    <tr><td>Lot 중 Y 흐름</td><td>Align 0° 2 Lot(+1.82, +0.81 µm), Reverse(+0.81) — 카메라 캔틸레버 Y 흐름과 r 0.98 → 헤드 쪽 드리프트. Y Fail 3/149가 정확히 이 Lot</td><td>측정 전 열 안정화 시간 확보</td></tr>
+    <tr><td>Lot 중 Y 흐름</td><td>Align 0° 2 Lot(+1.82, +0.81 µm), Reverse(+0.81) — 카메라 캔틸레버 Y 흐름과 r 0.98 → 헤드 쪽 드리프트. Y Fail 3/149가 정확히 이 Lot</td><td>측정 전 워밍업 또는 더미 Lot</td></tr>
+    <tr><td>워밍업 Y 흐름 (−5 µm 적용 Lot, 2026-11-12)</td><td>3시간 동안 Lot 평균 Y −3.80 → −3.49 µm. Lot 안 흐름은 첫 Lot Die당 −0.018 µm → 이후 약 −0.003 µm. Y는 0.732 / 0.143 µm로 PASS지만 여유 감소(이전 0.429 / 0.081). 오프셋 변경과는 무관</td><td>측정 전 워밍업 또는 더미 Lot</td></tr>
   </table>
 </div>
 
