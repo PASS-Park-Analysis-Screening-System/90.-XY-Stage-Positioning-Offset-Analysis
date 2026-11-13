@@ -13,7 +13,6 @@ from ui.widgets.copyable_table import CopyableTable
 from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 from ui.widgets.busy_overlay import BusyOverlay
-from ui.controllers.expert_controller import EXPERT_CATEGORY
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -59,14 +58,20 @@ class UIBuilderMixin:
         self.run_compare_charts.hide()
         return widget
 
-    def _build_action_page(self, title, description, buttons):
-        """큰 버튼 + 한 줄 설명 목록 (Remark → Export, 전문 분석 창 → 도구).
+    def _build_action_page(self, title, description, buttons, columns=1):
+        """큰 버튼 + 설명 (Remark → Export는 한 줄 목록, 전문 분석 창 → 도구는 columns개씩 카드 격자).
 
         buttons: [(이름, 설명, 슬롯, 색)]. 슬롯은 인자 없이 부른다."""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(16)
+        grid = QGridLayout() if columns > 1 else None
+        if grid is not None:
+            grid.setHorizontalSpacing(16)
+            grid.setVerticalSpacing(16)
+            for col in range(columns):
+                grid.setColumnStretch(col, 1)
 
         header = QLabel(title)
         header.setStyleSheet(f"color:{ACCENT}; font-size:16pt; font-weight:bold;")
@@ -79,7 +84,7 @@ class UIBuilderMixin:
         layout.addWidget(desc_text)
         layout.addSpacing(10)
 
-        for text, desc, slot, color in buttons:
+        for index, (text, desc, slot, color) in enumerate(buttons):
             btn = QPushButton(f"{text}")
             btn.setMinimumHeight(60)
             btn.setStyleSheet(f"""
@@ -93,12 +98,27 @@ class UIBuilderMixin:
             """)
             btn.setToolTip(desc)
             btn.clicked.connect(slot)
-            layout.addWidget(btn)
+            if grid is None:
+                layout.addWidget(btn)
+                desc_label = QLabel(f"    {desc.split(chr(10))[0]}")
+                desc_label.setStyleSheet(f"color:{FG2}; font-size:8pt; margin-bottom:4px;")
+                layout.addWidget(desc_label)
+                continue
+            # 카드: 버튼 + 설명 전체 (줄바꿈)
+            card = QWidget()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(6)
+            card_layout.addWidget(btn)
+            desc_label = QLabel(desc.replace(chr(10), ' '))
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet(f"color:{FG2}; font-size:9pt; padding: 0 6px;")
+            card_layout.addWidget(desc_label)
+            card_layout.addStretch(1)
+            grid.addWidget(card, index // columns, index % columns)
 
-            desc_label = QLabel(f"    {desc.split(chr(10))[0]}")
-            desc_label.setStyleSheet(f"color:{FG2}; font-size:8pt; margin-bottom:4px;")
-            layout.addWidget(desc_label)
-
+        if grid is not None:
+            layout.addLayout(grid)
         layout.addStretch()
         return page
 
@@ -515,9 +535,7 @@ class UIBuilderMixin:
                 inner = QTabWidget()
                 inner.setDocumentMode(True)
                 self._inner_tabs[category] = inner
-                # Advanced는 작업자 화면에 두지 않는다 — 전문 분석 창에 담는다 (_build_expert_window)
-                if category != EXPERT_CATEGORY:
-                    self.chart_category_tabs.addTab(inner, category)
+                self.chart_category_tabs.addTab(inner, category)
             self._inner_tabs[category].addTab(widget, name)
             if register:
                 self.chart_widgets[name] = widget
@@ -870,9 +888,11 @@ class UIBuilderMixin:
         _add_chart('Interactive', 'TIFF', tiff_cw)
         self._tiff_viewer = tiff_viewer
 
-        # 고급 분석 (pyqtgraph — Phase 2) — 전문 분석 창의 Advanced 탭
+        # 고급 분석 (pyqtgraph — Phase 2) — 작업자 화면이 아니라 전문 분석 창 '분석' 쪽 (_build_expert_window)
+        self._expert_chart_pages = []
         for name in ['Pareto', 'Correlation']:
-            _add_chart(EXPERT_CATEGORY, name, InteractiveChartWidget())
+            self.chart_widgets[name] = InteractiveChartWidget()
+            self._expert_chart_pages.append((name, self.chart_widgets[name]))
 
         # ─── 🌐 3D Surface: X/Y 서브탭 ───
         surface_tabs = QTabWidget()
@@ -886,15 +906,8 @@ class UIBuilderMixin:
         self.chart_widgets['3D X'] = surface_x
         self.chart_widgets['3D Y'] = surface_y
         self.chart_widgets['3D X+Y'] = surface_mag
-        _add_chart(EXPERT_CATEGORY, '3D Surface', surface_tabs, register=False)
-        # 비전 보정 로그 대조 (SamplePositioning·TipPositioning ↔ HZ1_O)
-        _add_chart(EXPERT_CATEGORY, 'Positioning Log', self._build_positioning_widget(), register=False)
-        # 트러블슈팅 진단 (스캐너 오프셋·회전·what-if·drift, pass.xy.diagnosis/1)
-        from ui.controllers.diagnosis_controller import DIAGNOSIS_TAB
-        _add_chart(EXPERT_CATEGORY, DIAGNOSIS_TAB, self._build_diagnosis_widget(), register=False)
-        # 탭을 바꾸면 보이게 된 탭의 Log 읽기·차트를 시작한다 (창이 보일 때만 — _advanced_tab_visible).
-        # 탭 변경은 명시적 동작이라 읽기 오류가 난 회차도 다시 읽는다
-        self._inner_tabs[EXPERT_CATEGORY].currentChanged.connect(self._retry_advanced_reads)
+        self._expert_chart_pages.append(('3D Surface', surface_tabs))
+        # 비전 보정 로그 대조(Positioning Log)·트러블슈팅 진단(Diagnosis)은 _build_expert_window가 만들어 담는다
 
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:
@@ -1031,7 +1044,7 @@ class UIBuilderMixin:
         self._inner_tabs['Remark'] = inner_remark
         self.chart_category_tabs.addTab(inner_remark, 'Remark')
 
-        # 전문 분석 창 (Advanced + 도구 + 도움말) — 숨긴 채 만든다. 여는 방법은 expert_controller
+        # 전문 분석 창 (왼쪽 메뉴: 분석·원인 추적·도구·도움말·기록) — 숨긴 채 만든다. 여는 방법은 expert_controller
         self._build_expert_window()
 
         splitter.addWidget(right)
@@ -1084,14 +1097,16 @@ class UIBuilderMixin:
     def _select_chart(self, name: str):
         """프로그래밍 방식으로 차트 선택 (카테고리 + 내부 탭 자동 전환).
 
-        Advanced 탭은 전문 분석 창 안에서 고른다 (창을 열지는 않는다 — 열기는 _open_expert_window)."""
+        전문 분석 창의 쪽(Pareto … Diagnosis (트러블슈팅), 도구 …)은 그 창의 왼쪽 메뉴에서 고른다
+        (창을 열지는 않는다 — 열기는 _open_expert_window)."""
+        expert = getattr(self, '_expert_window', None)
+        if expert is not None and expert.has_page(name):
+            expert.select_page(name)
+            return
         for cat_name, inner_tab in self._inner_tabs.items():
             for i in range(inner_tab.count()):
                 if inner_tab.tabText(i) == name:
-                    if cat_name == EXPERT_CATEGORY:
-                        self._expert_window.tabs.setCurrentWidget(inner_tab)
-                    else:
-                        self.chart_category_tabs.setCurrentWidget(inner_tab)
+                    self.chart_category_tabs.setCurrentWidget(inner_tab)
                     inner_tab.setCurrentIndex(i)
                     return
 

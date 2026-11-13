@@ -27,8 +27,10 @@ SPEC_DEV = {'Vision Pattern': {'spec_range': 2.0, 'spec_stddev': 1.0},
             'Global Align': {'spec_range': 2.0, 'spec_stddev': 1.0}}
 TOOLS = ['AI 분석용 Markdown', '이미지 2장 이동량 분석', '3D 트러블슈팅 보고서', '사례 라이브러리',
          '스캐너 회전 시험 분석']
-ADVANCED = ['Pareto', 'Correlation', '3D Surface', 'Positioning Log', 'Diagnosis (트러블슈팅)']
 DIAGNOSIS = 'Diagnosis (트러블슈팅)'
+DIAG_PAGES = ['진단 요약', '스캐너 오프셋 · What-if', '드리프트 · 흔들림', '부위 판정 · 조치']
+PAGES = ['Pareto', 'Correlation', '3D Surface', 'Positioning Log'] + DIAG_PAGES + ['도구', '도움말', '전문 분석 기록']
+ANALYSIS_PAGES = PAGES[:8] + ['도구']      # 세로 스크롤 없이 한 화면 (도움말·기록은 스크롤해도 된다)
 # 작업자 화면(메인 창)·System Log에 나오면 안 되는 말
 EXPERT_WORDS = ('Advanced', 'Pareto', 'Correlation', '3D Surface', 'Positioning Log', 'Diagnosis',
                 '트러블슈팅 진단', 'AI 분석용', 'Markdown', '이미지 2장', '3D 트러블슈팅', '3D 보고서',
@@ -187,15 +189,17 @@ def test_main_window_has_no_advanced_category(window):
     tabs = window.chart_category_tabs
     assert [tabs.tabText(i) for i in range(tabs.count())] == ['Basic Analysis', 'Interactive',
                                                              'Comparison', 'Remark']
-    advanced = window._inner_tabs['Advanced']
-    assert tabs.indexOf(advanced) == -1 and not window.isAncestorOf(advanced)     # 다른 창에 있다
+    assert 'Advanced' not in window._inner_tabs
     expert = window._expert_window
-    assert advanced.window() is expert
+    for name in ('Pareto', 'Correlation', '3D X', 'Positioning Stages', 'Diagnosis Drift'):
+        widget = window.chart_widgets[name]
+        assert widget.window() is expert and not window.isAncestorOf(widget)     # 다른 창에 있다
     # 부모 없는 보통 창: 자기 작업 표시줄 단추, 메인 창 위에 붙지 않음, 열려 있어도 메인 창을 닫으면 앱이 끝남
     assert expert.parent() is None and not expert.testAttribute(Qt.WA_QuitOnClose)
     assert expert.windowTitle() == 'XY 전문 분석 (QC 엔지니어)'
-    assert [expert.tabs.tabText(i) for i in range(expert.tabs.count())] == ['Advanced', '도구', '도움말']
-    assert [advanced.tabText(i) for i in range(advanced.count())] == ADVANCED
+    assert expert.page_names() == PAGES                              # 왼쪽 메뉴의 쪽 (위쪽 탭 줄 없음)
+    from PySide6.QtWidgets import QTabWidget
+    assert expert.findChildren(QTabWidget) == [expert.page('3D Surface')]   # 탭은 3D X·Y·X+Y 보기 전환뿐
     assert not expert.isVisible()                                    # 처음에는 숨어 있다
     # 숨은 입구: 버전 글자에 툴팁·커서 변화가 없고, 메뉴도 없다
     label = window.version_status_label
@@ -209,7 +213,7 @@ def test_export_list_has_exactly_the_four_operator_buttons(window):
     assert _buttons(remark.widget(0)) == ['Excel Export', 'Quality Report', 'CSV Export', 'PDF Report']
     assert remark.tabText(1) == 'Help'
     assert not set(TOOLS) & set(_buttons(window))                   # 메인 창 어디에도 도구 버튼이 없다
-    assert _buttons(window._expert_window.tabs.widget(1)) == TOOLS
+    assert _buttons(window._expert_window.page('도구')) == TOOLS
 
 
 def test_operator_guide_does_not_mention_expert_features(window):
@@ -345,7 +349,7 @@ def test_advanced_charts_wait_for_the_open_window(app, window, tmp_path):
     assert window._advanced_charts_pending is not None
     window._select_step(1)                           # 닫혀 있는 동안 Step을 바꿔도 그리지 않는다
     assert window.chart_widgets['Pareto'].get_widget() is None
-    window._expert_window.tabs.setCurrentIndex(2)    # 도움말 탭으로 열어도 창이 열리면 그린다
+    window._expert_window.select_page('도움말')     # 도움말 쪽으로 열어도 창이 열리면 그린다
     window._open_expert_window()
     assert window._advanced_charts_pending is None
     assert window.chart_widgets['3D X'].get_widget().title.startswith('Global Align')
@@ -357,8 +361,8 @@ def test_advanced_charts_wait_for_the_open_window(app, window, tmp_path):
 def test_lazy_reads_wait_for_the_open_expert_window(app, window, tmp_path, monkeypatch):
     from PySide6.QtCore import Qt
     calls = _counting_reads(monkeypatch)
-    window._select_chart(DIAGNOSIS)                  # 창 안에서는 Diagnosis가 앞이지만 창이 닫혀 있다
-    assert window._inner_tabs['Advanced'].tabText(window._inner_tabs['Advanced'].currentIndex()) == DIAGNOSIS
+    window._select_chart(DIAGNOSIS)                  # 창 안에서는 진단 쪽이 골라져 있지만 창이 닫혀 있다
+    assert window._expert_window.current_page() == '진단 요약'
     _loaded(window, tmp_path)
     window._flush_advanced_tabs()
     app.processEvents()
@@ -411,13 +415,13 @@ def test_opening_on_tools_or_help_starts_no_reads(app, window, tmp_path, monkeyp
     window._select_chart(DIAGNOSIS)
     _loaded(window, tmp_path)
     expert = window._expert_window
-    for index in (1, 2):                             # 도구 · 도움말
+    for name in ('도구', '도움말', '전문 분석 기록', 'Pareto'):
         expert.close()
-        expert.tabs.setCurrentIndex(index)
+        expert.select_page(name)
         window._open_expert_window()
         app.processEvents()
         assert calls == {'diag': 0, 'poslog': 0}
-    expert.tabs.setCurrentIndex(0)                   # Advanced(Diagnosis)로 가면 읽는다
+    expert.select_page('부위 판정 · 조치')            # 진단 쪽 어느 것이든 고르면 읽는다
     current = window._diag_result
     _wait_for(app, lambda: 'xy_logs' in current and 'positioning_log' in current)
     assert calls == {'diag': 1, 'poslog': 1}
@@ -447,8 +451,7 @@ def test_failed_read_is_not_retried_on_focus_changes(app, window, tmp_path, monk
     assert window._xy_diagnosis is not None                         # 오류 결과로 진단을 그대로 보인다
     assert _log_text(window.expert_logger).count('다시 읽습니다') == 1
 
-    expert.tabs.setCurrentIndex(1)                   # 탭을 바꿨다가 돌아오면 다시 읽는다
-    expert.tabs.setCurrentIndex(0)
+    expert.select_page('스캐너 오프셋 · What-if')     # 메뉴에서 다른 쪽을 고르면 다시 읽는다
     _wait_for(app, lambda: calls == {'diag': 2, 'poslog': 2}
               and key in (window._diag_failed or {}) and key in (window._poslog_failed or {}))
     expert.close()                                   # 창을 다시 열어도 다시 읽는다
@@ -481,7 +484,7 @@ def test_each_tool_button_calls_the_same_function_as_before(window, monkeypatch)
                         lambda p: calls.append(('rotation', p)))
     from PySide6.QtWidgets import QPushButton
     expert = window._expert_window
-    buttons = {b.text(): b for b in expert.tabs.widget(1).findChildren(QPushButton)}
+    buttons = {b.text(): b for b in expert.page('도구').findChildren(QPushButton)}
     for name in TOOLS:
         buttons[name].click()
     assert calls == [('llm', expert), ('shift', expert), ('report', expert), ('cases', expert),
@@ -513,7 +516,7 @@ def test_hiding_the_window_hides_its_tool_dialogs_and_reopen_shows_them(app, win
     from PySide6.QtWidgets import QPushButton
     window._open_expert_window()
     expert = window._expert_window
-    buttons = {b.text(): b for b in expert.tabs.widget(1).findChildren(QPushButton)}
+    buttons = {b.text(): b for b in expert.page('도구').findChildren(QPushButton)}
     buttons['이미지 2장 이동량 분석'].click()
     buttons['스캐너 회전 시험 분석'].click()
     dialogs = [expert._image_shift_dialog, expert._scanner_rotation_dialog]
@@ -716,3 +719,101 @@ def test_geometry_goes_to_user_settings_not_the_bundle(tmp_path, monkeypatch):
     settings.save_settings({'expert_window_geometry': 'AdnQywADAAAAAAAy', 'spec_deviation': {}})
     assert fake.values['expert_window_geometry'] == ('AdnQywADAAAAAAAy', fake.REG_SZ)
     assert settings._read_registry_settings() == {'expert_window_geometry': 'AdnQywADAAAAAAAy'}
+
+
+# ── 한 화면: 분석 쪽은 1600×900에서 세로 스크롤 없이 (도움말·기록은 스크롤해도 된다) ──────────────
+
+_FIT_SCRIPT = r'''
+import json, os, sys, time, tempfile
+src, tests, old = sys.argv[1:4]
+sys.path[:0] = [src, tests]
+from pathlib import Path
+from PySide6.QtWidgets import QAbstractScrollArea, QApplication
+app = QApplication([])
+app.setStyle('Fusion')
+from ui.theme import DARK_STYLE
+app.setStyleSheet(DARK_STYLE)
+import main
+from test_xy_diagnosis import SPEC_DEV, SPEC_LIM
+main.load_settings = lambda: dict(spec_deviation=SPEC_DEV, spec_limits=SPEC_LIM)
+main.save_settings = lambda s: None
+from core.recipe_scanner import compare_recipes, load_all_recipes, recipes_from_mapping
+from core.positioning_log import analyze_result, store_analysis
+from test_positioning_log import load, make_lot
+pages = json.loads(sys.argv[4])
+
+
+def pump(n=12):
+    for _ in range(n):
+        app.processEvents()
+        time.sleep(0.01)
+
+
+def wait(cond):
+    deadline = time.monotonic() + 60
+    while not cond() and time.monotonic() < deadline:
+        pump(1)
+
+
+win = main.DataAnalyzerApp()
+recipes, _ = recipes_from_mapping([('Vision Pattern', old)], ['Vision Pattern'])
+win.recipes = recipes
+win._build_nav()
+results = load_all_recipes('', recipes=recipes)
+win._loader_thread = type('Done', (), {'folder': old})()
+win._on_scan_complete(results, compare_recipes(results), 1.0)
+win._open_expert_window()
+expert = win._expert_window
+win._select_chart('Diagnosis (트러블슈팅)')
+cur = win._diag_result
+wait(lambda: 'xy_logs' in cur and 'positioning_log' in cur and win._xy_diagnosis is not None)
+poslog = load(make_lot(Path(tempfile.mkdtemp()) / 'Vision Pattern'))      # 단계 16행 + Tip 표
+store_analysis(poslog, analyze_result(poslog))
+win._update_positioning_log(poslog)
+out = {'diagnosis': win._xy_diagnosis is not None, 'stages': win.poslog_table.rowCount(), 'pages': {}}
+for w, h in ((1600, 900), (1920, 1080)):
+    expert.resize(w, h)
+    pump()
+    for name in pages:
+        expert.select_page(name)
+        pump()
+        page = expert.page(name)
+        areas = page.findChildren(QAbstractScrollArea)
+        bar = expert._section_bars.get(expert.section_of(name))
+        if bar is not None:
+            areas += bar.findChildren(QAbstractScrollArea)
+        out['pages'][f'{w}x{h} {name}'] = {
+            'size': [expert.width(), expert.height()],
+            'vscroll': [type(a).__name__ for a in areas if a.verticalScrollBar().isVisible()],
+            'clipped': page.minimumSizeHint().height() > page.height()}
+print('RESULT ' + json.dumps(out, ensure_ascii=True))
+'''
+
+
+def test_analysis_pages_fit_without_vertical_scroll(tmp_path):
+    """1600×900·1920×1080 창에서 분석 쪽(진단 네 쪽, Positioning Log, 3D, 도구 …)에 세로 스크롤 막대가 없다.
+
+    큰 가상 화면(offscreen configfile)이 필요해 따로 띄운다. 진단은 실데이터 픽스처(3 Lot, Log), Positioning Log는
+    실데이터 Lot(단계 16행)."""
+    import subprocess
+    import sys
+    project = Path(__file__).resolve().parents[1]
+    (tmp_path / 'screen.json').write_text(json.dumps({'synchronousWindowSystemEvents': False, 'screens': [
+        {'name': 'big', 'x': 0, 'y': 0, 'width': 3840, 'height': 2160, 'logicalDpi': 96, 'dpr': 1}]}),
+        encoding='utf-8')
+    script = tmp_path / 'fit.py'
+    script.write_text(_FIT_SCRIPT, encoding='utf-8')
+    env = dict(os.environ, QT_QPA_PLATFORM='offscreen:configfile=screen.json')
+    proc = subprocess.run(
+        [sys.executable, str(script), str(project / 'src'), str(project / 'tests'),
+         str(project / 'tests' / 'fixtures' / 'xy_diagnosis' / 'old'), json.dumps(ANALYSIS_PAGES)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=240)
+    lines = [line for line in proc.stdout.splitlines() if line.startswith('RESULT ')]
+    assert proc.returncode == 0 and lines, proc.stderr[-3000:]
+    out = json.loads(lines[-1][len('RESULT '):])
+    assert out['diagnosis'] and out['stages'] == 16
+    assert len(out['pages']) == 2 * len(ANALYSIS_PAGES)
+    for key, page in out['pages'].items():
+        w, h = (int(v) for v in key.split()[0].split('x'))
+        assert page['size'] == [w, h], key
+        assert page['vscroll'] == [] and not page['clipped'], (key, page)

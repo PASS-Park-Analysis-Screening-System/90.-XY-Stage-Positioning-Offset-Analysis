@@ -9,8 +9,11 @@ diagnosis_controller.py — 'Diagnosis (트러블슈팅)' 탭: 원인 후보 자
 - 부품 판정과 근거, 다음 조치
 - '진단 JSON 저장'
 
-이 탭은 전문 분석 창의 Advanced에 있다. '탭이 보인다'는 그 창이 열려 있고(최소화 아님) 이 탭이 앞에 있다는
-뜻이다 (expert_controller._advanced_tab_visible — 창이 닫혀 있으면 Log 읽기·진단 계산·차트를 시작하지 않는다).
+화면은 전문 분석 창 왼쪽 메뉴 '원인 추적 → Diagnosis (트러블슈팅)'의 쪽 4개다 (세로 스크롤 없이 한 화면씩):
+진단 요약(칩 + 2열 카드) / 스캐너 오프셋 · What-if / 드리프트 · 흔들림 / 부위 판정 · 조치. 머리줄(설명·진단 JSON 저장·
+3D 보고서·회전 시험·사례 라이브러리)은 네 쪽 모두의 위에 있다. '탭이 보인다'는 그 창이 열려 있고(최소화 아님) 네 쪽 중
+하나가 앞에 있다는 뜻이다 (expert_controller._advanced_tab_visible — 창이 닫혀 있으면 Log 읽기·진단 계산·차트를
+시작하지 않는다).
 Log는 이 탭이 보일 때만 작업 스레드(파이썬 스레드 하나 + Lot 스레드)로 읽는다. 데이터 로드는 Log를
 읽지 않는다. 읽은 Log는 그 회차 결과의 'xy_logs'에 담아 다시 읽지 않는다(읽기 오류가 섞였으면 담지
 않고 다음에 탭을 열 때 다시 읽는다). 진단 계산은 화면 스레드에서 한다(Log를 읽은 뒤라 파일을 읽지 않고
@@ -42,9 +45,9 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
-from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+                               QPushButton, QSizePolicy, QTableWidgetItem, QToolTip, QVBoxLayout,
+                               QWidget)
 
 from core.csv_loader import ScanSession
 from core.positioning_log import run_key
@@ -52,8 +55,9 @@ from core.settings import rotation_spec
 from core.xy_diagnosis import (NO_LOG_TEXT, OTHER_TOOL_TEXT, PART_RULES, ROTATION_RULE,
                                build_diagnosis, read_run_logs, rotation_test_text, store_logs,
                                tool_identity)
-from ui.theme import BG, BG3, FG, FG2, GREEN, ORANGE, RED
+from ui.theme import ACCENT, BG, BG3, FG, FG2, GREEN, ORANGE, RED
 from ui.widgets.chart_widget import ChartWidget
+from ui.widgets.fit_table import FitTable
 from ui.widgets.flow_layout import FlowLayout
 
 DIAGNOSIS_TAB = 'Diagnosis (트러블슈팅)'
@@ -69,6 +73,18 @@ OFFSET_HEADERS = ['라인', '레시피 X', '레시피 Y', '기준 보정 X', '�
 WHATIF_HEADERS = ['', '레시피 Y (µm)', '스캐너 Y (µm)', 'θx (µrad)', 'Range 평균', 'Range 최대',
                   'StdDev 평균', 'StdDev 최대', 'PASS Lot', '전체 Range', '전체 StdDev']
 PART_HEADERS = ['부품', '판정', '근거']
+SLOPE_HEADERS = ['Lot', 'X 기울기 (µm/Die)', 'X r', 'Y 기울기 (µm/Die)', 'Y r', 'Die']
+TRANSIENT_HEADERS = ['', 'X 잔차 (µm)', 'X t', 'Y 잔차 (µm)', 'Y t']
+# 전문 분석 창 왼쪽 메뉴의 진단 쪽 (모두 DIAGNOSIS_TAB 묶음 — 어느 쪽이든 '진단 탭이 보인다')
+DIAG_SUMMARY = '진단 요약'
+DIAG_OFFSETS = '스캐너 오프셋 · What-if'
+DIAG_DRIFT = '드리프트 · 흔들림'
+DIAG_PARTS = '부위 판정 · 조치'
+DIAG_PAGES = (DIAG_SUMMARY, DIAG_OFFSETS, DIAG_DRIFT, DIAG_PARTS)
+SUMMARY_CARDS = (('verdict', 'X / Y 판정'), ('rotation', '회전 (잠정 규격)'),
+                 ('offset', '레시피 스캐너 오프셋'), ('rotation_test', '스캐너 회전 시험'),
+                 ('drift', 'Drift (예열)'), ('transient', 'Transient (Lot 시작 직후)'))
+VERDICT_RANK = {'na': 0, 'ok': 1, 'warn': 2, 'fail': 3}
 
 
 class _DiagnosisBridge(QObject):
@@ -101,16 +117,50 @@ def _item(text, tooltip=''):
     return item
 
 
-def _table(headers, stretch_last=False):
-    table = QTableWidget(0, len(headers))
-    table.setHorizontalHeaderLabels(headers)
-    table.setEditTriggers(QTableWidget.NoEditTriggers)
-    table.verticalHeader().setVisible(False)
-    header = table.horizontalHeader()
-    header.setSectionResizeMode(QHeaderView.ResizeToContents)
-    if stretch_last:
-        header.setStretchLastSection(True)
-    return table
+def _worst(*statuses):
+    return max(statuses or ('na',), key=lambda s: VERDICT_RANK.get(s, 0))
+
+
+def _title(text):
+    label = QLabel(text)
+    label.setStyleSheet(f"color: {FG2}; font-size: 9pt; font-weight: bold;")
+    return label
+
+
+class _Card(QFrame):
+    """제목 + 판정 꼬리표 + 근거 글 (진단 요약·드리프트 쪽). 높이는 글만큼."""
+
+    def __init__(self, title):
+        super().__init__()
+        self.setObjectName('diagCard')
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 8)
+        layout.setSpacing(3)
+        head = QHBoxLayout()
+        self.title = QLabel(title)
+        self.title.setStyleSheet(f"color: {FG}; font-size: 10pt; font-weight: bold;")
+        head.addWidget(self.title)
+        head.addStretch(1)
+        self.tag = QLabel('—')
+        head.addWidget(self.tag)
+        layout.addLayout(head)
+        self.body = QLabel('')
+        self.body.setWordWrap(True)
+        self.body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.body.setStyleSheet(f"color: {FG2}; font-size: 9pt;")
+        layout.addWidget(self.body)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.set('na', '')
+
+    def set(self, verdict, text):
+        color = VERDICT_COLOR.get(verdict, BG3)
+        self.setStyleSheet(f"QFrame#diagCard {{ background: {BG3}; border-left: 4px solid {color};"
+                           " border-radius: 6px; }")
+        self.tag.setText(VERDICT_TEXT.get(verdict, verdict or '—'))
+        fg = BG if verdict in ('ok', 'warn', 'fail') else FG2
+        self.tag.setStyleSheet(f"background: {color}; color: {fg}; border-radius: 4px; padding: 1px 8px;"
+                               " font-size: 9pt; font-weight: bold;")
+        self.body.setText(text)
 
 
 class DiagnosisMixin:
@@ -128,11 +178,13 @@ class DiagnosisMixin:
     _diag_bridge = None
     _diag_tokens = itertools.count(1)
 
-    def _build_diagnosis_widget(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 4, 4, 4)
-        top = QHBoxLayout()
+    def _build_diagnosis_pages(self):
+        """진단 화면: (머리줄, [(쪽 이름, 위젯)]). 머리줄은 네 쪽 모두의 위에 보인다 (expert_window section bar).
+
+        쪽마다 1600×900 창에서 세로 스크롤 없이 들어가게 표는 행 수만큼(FitTable), 차트는 남는 높이를 쓴다."""
+        bar = QWidget()
+        top = QHBoxLayout(bar)
+        top.setContentsMargins(6, 4, 6, 2)
         self.diag_label = QLabel(WAITING_TEXT)
         self.diag_label.setWordWrap(True)
         self.diag_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
@@ -143,8 +195,8 @@ class DiagnosisMixin:
         self.diag_save_btn.clicked.connect(self._save_diagnosis_json)
         self.diag_save_btn.setEnabled(False)
         top.addWidget(self.diag_save_btn, 0, Qt.AlignTop)
-        # 3D 보고서·회전 시험·사례 라이브러리: 같은 기능이 전문 분석 창 '도구' 탭에도 있다 (같은 창을 연다).
-        # 진단을 본 자리에서 바로 열 수 있게 여기에도 둔다 (지연 import — 탭을 안 열면 안 읽는다).
+        # 3D 보고서·회전 시험·사례 라이브러리: 같은 기능이 전문 분석 창 '도구'에도 있다 (같은 창을 연다).
+        # 진단을 본 자리에서 바로 열 수 있게 여기에도 둔다 (지연 import — 쪽을 안 열면 안 읽는다).
         self.diag_report_btn = QPushButton('3D 보고서 열기')
         self.diag_report_btn.setToolTip('지금 진단으로 3D 트러블슈팅 HTML을 만들어 기본 브라우저로 연다')
         self.diag_report_btn.clicked.connect(self._open_diagnosis_report)
@@ -158,8 +210,16 @@ class DiagnosisMixin:
         self.diag_cases_btn.setToolTip('끝난 조사 사례(HTML)를 기본 브라우저로 연다')
         self.diag_cases_btn.clicked.connect(self._open_case_library)
         top.addWidget(self.diag_cases_btn, 0, Qt.AlignTop)
-        layout.addLayout(top)
 
+        def page():
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+            layout.setContentsMargins(6, 4, 6, 4)
+            layout.setSpacing(6)
+            return widget, layout
+
+        # 1) 진단 요약: 칩 + 2열 카드 (판정·회전·오프셋·회전 시험·Drift·Transient의 근거)
+        summary, s_layout = page()
         chips = QWidget()
         self._diag_chip_layout = FlowLayout(chips, spacing=6)
         self._diag_chips = {}
@@ -168,49 +228,96 @@ class DiagnosisMixin:
             chip.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._diag_chip_layout.addWidget(chip)
             self._diag_chips[key] = chip
-        layout.addWidget(chips)
+        s_layout.addWidget(chips)
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self._diag_cards = {}
+        for i, (key, title) in enumerate(SUMMARY_CARDS):
+            card = _Card(title)
+            self._diag_cards[key] = card
+            grid.addWidget(card, i // 2, i % 2, Qt.AlignTop)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        s_layout.addLayout(grid)
+        s_layout.addStretch(1)
 
-        splitter = QSplitter(Qt.Vertical)
-        tables = QWidget()
-        tables_layout = QVBoxLayout(tables)
-        tables_layout.setContentsMargins(0, 0, 0, 0)
-        tables_layout.addWidget(QLabel('스캐너 오프셋 (µm, Log.csv ImageJob — 적용 = 레시피 + 기준 보정 + 미세 보정)'))
-        self.diag_offset_table = _table(OFFSET_HEADERS)
-        self.diag_offset_table.setMaximumHeight(90)
-        tables_layout.addWidget(self.diag_offset_table)
-        self.diag_whatif_label = QLabel('What-if: X 라인 레시피 Y Offset 변경 (선형 가정)')
-        self.diag_whatif_label.setWordWrap(True)
-        tables_layout.addWidget(self.diag_whatif_label)
-        self.diag_whatif_table = _table(WHATIF_HEADERS)
-        self.diag_whatif_table.setToolTip(
-            '예측 = 이 회차 Lot·Die 값에서 κ_eff × (현재 − 새 오프셋) × Die Y를 뺀 값 (선형 가정). '
-            'Range·StdDev 평균·최대는 Lot마다, 전체는 앱 판정과 같은 전체 값. 초록 = 권장, 굵게 = 현재.')
-        tables_layout.addWidget(self.diag_whatif_table)
-        splitter.addWidget(tables)
+        # 2) 스캐너 오프셋 (2행) · What-if (모든 행). 긴 설명은 한 줄 + 'ⓘ 자세히' 툴팁
+        offsets, o_layout = page()
+        o_layout.addWidget(_title('스캐너 오프셋 (µm, Log.csv ImageJob — 적용 = 레시피 + 기준 보정 + 미세 보정)'))
+        self.diag_offset_table = FitTable(OFFSET_HEADERS)
+        self.diag_offset_table.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        o_layout.addWidget(self.diag_offset_table)
+        o_layout.addSpacing(6)
+        whatif_head = QHBoxLayout()
+        self.diag_whatif_label = _title('What-if: X 라인 레시피 Y Offset 변경 (선형 가정)')
+        whatif_head.addWidget(self.diag_whatif_label)
+        self.diag_whatif_more = QLabel('ⓘ 자세히')
+        self.diag_whatif_more.setStyleSheet(f"color: {ACCENT}; font-size: 9pt;")
+        self.diag_whatif_more.setCursor(Qt.WhatsThisCursor)
+        self.diag_whatif_more.mousePressEvent = lambda _e: QToolTip.showText(
+            self.diag_whatif_more.mapToGlobal(self.diag_whatif_more.rect().bottomLeft()),
+            self.diag_whatif_more.toolTip(), self.diag_whatif_more)
+        whatif_head.addWidget(self.diag_whatif_more)
+        whatif_head.addStretch(1)
+        o_layout.addLayout(whatif_head)
+        self.diag_whatif_table = FitTable(WHATIF_HEADERS)
+        self.diag_whatif_table.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        whatif_tip = ('예측 = 이 회차 Lot·Die 값에서 κ_eff × (현재 − 새 오프셋) × Die Y를 뺀 값 (선형 가정). '
+                      'Range·StdDev 평균·최대는 Lot마다, 전체는 앱 판정과 같은 전체 값. 초록 = 권장, 굵게 = 현재.')
+        self.diag_whatif_table.setToolTip(whatif_tip)
+        o_layout.addWidget(self.diag_whatif_table)
+        legend = QLabel('초록 = 권장, 굵게 = 현재 · 예측은 κ_eff × (현재 − 새 오프셋) × Die Y를 뺀 값 (선형 가정)')
+        legend.setStyleSheet(f"color: {FG2}; font-size: 8pt;")
+        o_layout.addWidget(legend)
+        o_layout.addStretch(1)
 
-        middle = QSplitter(Qt.Horizontal)
+        # 3) 드리프트 차트(왼쪽) · Drift 근거·Lot 안 기울기·Transient(오른쪽)
+        drift = QWidget()
+        d_layout = QHBoxLayout(drift)
+        d_layout.setContentsMargins(6, 4, 6, 4)
         self.chart_widgets['Diagnosis Drift'] = ChartWidget()
         self.chart_widgets['Diagnosis Drift'].setMinimumSize(320, 220)
-        middle.addWidget(self.chart_widgets['Diagnosis Drift'])
-        self.diag_parts_table = _table(PART_HEADERS, stretch_last=True)
-        self.diag_parts_table.setWordWrap(True)
-        self.diag_parts_table.setToolTip('\n'.join(PART_RULES))
-        # 근거 열이 길어 표의 크기 힌트가 차트를 눌러 버리지 않게 한다 (긴 근거는 줄바꿈·툴팁)
-        self.diag_parts_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        middle.addWidget(self.diag_parts_table)
-        middle.setStretchFactor(0, 2)
-        middle.setStretchFactor(1, 3)
-        middle.setSizes([440, 660])
-        splitter.addWidget(middle)
+        d_layout.addWidget(self.chart_widgets['Diagnosis Drift'], 3)
+        side = QVBoxLayout()
+        side.setSpacing(6)
+        self._diag_drift_card = _Card('Drift (예열) — Lot 평균 대 시작 시각')
+        side.addWidget(self._diag_drift_card)
+        self.diag_slope_label = _title('Lot 안 측정 순서 기울기 (유의한 평면 모양을 뺀 값, 첫 Lot로 판정)')
+        side.addWidget(self.diag_slope_label)
+        self.diag_slope_table = FitTable(SLOPE_HEADERS)
+        side.addWidget(self.diag_slope_table)
+        self._diag_transient_card = _Card('Transient — Die4 이후 평면 대비 Die1·2·3 잔차 (Lot 평균)')
+        side.addWidget(self._diag_transient_card)
+        self.diag_transient_table = FitTable(TRANSIENT_HEADERS)
+        side.addWidget(self.diag_transient_table)
+        side.addStretch(1)
+        d_layout.addLayout(side, 2)
 
+        # 4) 부위 판정(왼쪽, 근거 줄바꿈) · 다음 조치(오른쪽)
+        parts = QWidget()
+        p_layout = QHBoxLayout(parts)
+        p_layout.setContentsMargins(6, 4, 6, 4)
+        left = QVBoxLayout()
+        left.addWidget(_title('부위 판정 (경험 규칙 — 근거는 표의 문장, 규칙은 표 툴팁)'))
+        self.diag_parts_table = FitTable(PART_HEADERS, stretch=2, wrap=True)
+        self.diag_parts_table.setToolTip('\n'.join(PART_RULES))
+        left.addWidget(self.diag_parts_table)
+        left.addStretch(1)
+        p_layout.addLayout(left, 3)
+        actions = QFrame()
+        actions.setObjectName('diagActions')
+        actions.setStyleSheet(f"QFrame#diagActions {{ background: {BG3}; border-radius: 6px; }}")
+        a_layout = QVBoxLayout(actions)
+        a_layout.setContentsMargins(12, 8, 12, 8)
         self.diag_actions_label = QLabel('')
         self.diag_actions_label.setWordWrap(True)
         self.diag_actions_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.diag_actions_label.setStyleSheet(f"color: {FG}; font-size: 10pt;")
-        splitter.addWidget(self.diag_actions_label)
-        splitter.setSizes([300, 320, 140])
-        layout.addWidget(splitter, 1)
-        return widget
+        a_layout.addWidget(self.diag_actions_label)
+        a_layout.addStretch(1)
+        p_layout.addWidget(actions, 2)
+
+        return bar, [(DIAG_SUMMARY, summary), (DIAG_OFFSETS, offsets), (DIAG_DRIFT, drift), (DIAG_PARTS, parts)]
 
     # ── 데이터 ─────────────────────────────────────────
 
@@ -363,10 +470,15 @@ class DiagnosisMixin:
         self.diag_label.setToolTip('')
         for chip in self._diag_chips.values():
             self._set_chip(chip, '—', 'na', '')
-        for table in (self.diag_offset_table, self.diag_whatif_table, self.diag_parts_table):
+        for table in (self.diag_offset_table, self.diag_whatif_table, self.diag_parts_table,
+                      self.diag_slope_table, self.diag_transient_table):
             table.setRowCount(0)
+            table.fit()
+        for card in list(self._diag_cards.values()) + [self._diag_drift_card, self._diag_transient_card]:
+            card.set('na', '')
         self.diag_actions_label.setText('')
         self.chart_widgets['Diagnosis Drift'].clear()
+        self._set_diag_page_status({})
 
     def _sync_diag_buttons(self):
         """진단 JSON 저장·3D 보고서: 진단이 있고 메인 창이 데이터를 읽는 중이 아닐 때만 (_set_expert_busy)."""
@@ -437,13 +549,97 @@ class DiagnosisMixin:
             self._set_chip(self._diag_chips['rotation_test'], '스캐너 회전 시험 — 결과 없음 (잠정 규격)', 'na',
                            '스캐너 회전 시험 분석 결과가 없습니다 (폐루프 2지점 스윕)')
 
+        self._fill_cards(d)
         self._fill_offsets(d.get('scanner_offsets') or {})
         self._fill_whatif(d.get('whatif') or {})
+        self._fill_drift(d.get('drift') or {}, d.get('transient') or {})
         self._fill_parts(d.get('parts') or [])
         actions = d.get('actions') or []
         self.diag_actions_label.setText('다음 조치\n' + '\n'.join(f'{i}. {a}' for i, a in enumerate(actions, 1)))
+        verdicts = [{True: 'ok', False: 'fail'}.get(((d.get('verdict') or {}).get(a) or {}).get('pass'), 'na')
+                    for a in ('X', 'Y')]
+        statuses = {DIAG_OFFSETS: _worst(rotation.get('status', 'na'), check.get('status', 'na')),
+                    DIAG_DRIFT: _worst((d.get('drift') or {}).get('status', 'na'),
+                                       (d.get('transient') or {}).get('status', 'na')),
+                    DIAG_PARTS: _worst(*[p.get('verdict', 'na') for p in d.get('parts') or []])}
+        statuses[DIAG_SUMMARY] = _worst(*verdicts, *statuses.values())
+        self._set_diag_page_status(statuses)
         self._diag_chart_pending = True
         self._flush_diagnosis_chart()
+
+    def _set_diag_page_status(self, statuses):
+        """왼쪽 메뉴의 진단 쪽 점: 주의·이상일 때만 (없으면 지운다)."""
+        set_status = getattr(self, '_set_expert_page_status', None)
+        if set_status is None:
+            return
+        for name in DIAG_PAGES:
+            set_status(name, statuses.get(name) if statuses.get(name) in ('warn', 'fail') else None)
+
+    def _fill_cards(self, d):
+        """진단 요약 카드: 칩의 근거(툴팁)를 펼쳐 보인다."""
+        spec = d.get('spec') or {}
+        rotation = d.get('rotation') or {}
+        check = rotation.get('offset_check') or {}
+        lines, verdicts = [], []
+        for axis in ('X', 'Y'):
+            v = (d.get('verdict') or {}).get(axis) or {}
+            verdicts.append({True: 'ok', False: 'fail'}.get(v.get('pass'), 'na'))
+            lines.append(f"{axis} {({True: 'PASS', False: 'FAIL'}).get(v.get('pass'), '—')} — Range "
+                         f"{_fmt(v.get('range'))} / StdDev {_fmt(v.get('stddev'))} µm")
+        lines.append(f"Spec Range {spec.get('range')} / StdDev {spec.get('stddev')} µm")
+        self._diag_cards['verdict'].set(_worst(*verdicts),'\n'.join(lines))
+        self._diag_cards['rotation'].set(
+            rotation.get('status', 'na'),
+            '\n'.join([f"θx {_fmt(rotation.get('theta'), '+.2f')} µrad · κ_eff "
+                       f"{_fmt(rotation.get('kappa_eff'), '.3f')} µrad/µm"] + list(rotation.get('reasons') or [])))
+        self._diag_cards['offset'].set(
+            check.get('status', 'na'),
+            '\n'.join([f"X 라인 스캐너 Y {_fmt(rotation.get('scanner_y'), '+.1f')} µm"]
+                      + list(check.get('reasons') or [])))
+        for key in ('drift', 'transient'):
+            part = d.get(key) or {}
+            self._diag_cards[key].set(part.get('status', 'na'), '\n'.join(part.get('reasons') or []))
+        chip = self._diag_chips['rotation_test']
+        rt = d.get('rotation_test')
+        status = rt.get('status') if isinstance(rt, dict) and rt.get('status') in VERDICT_COLOR else 'na'
+        self._diag_cards['rotation_test'].set(status, chip.toolTip())
+
+    def _fill_drift(self, drift, transient):
+        """드리프트 · 흔들림 쪽 오른쪽: Drift 근거, Lot 안 기울기 표, Transient 근거·표."""
+        self._diag_drift_card.set(drift.get('status', 'na'), '\n'.join(drift.get('reasons') or []))
+        rows = {}
+        for item in drift.get('within_lot') or []:
+            rows.setdefault(item['lot'], {})[item['axis']] = item
+        table = self.diag_slope_table
+        table.setRowCount(len(rows))
+        first = drift.get('first_lot')
+        bold = QFont()
+        bold.setBold(True)
+        for i, (lot, axes) in enumerate(rows.items()):
+            x, y = axes.get('X') or {}, axes.get('Y') or {}
+            cells = [lot, _fmt(x.get('slope_um_per_die'), '+.4f'), _fmt(x.get('r'), '+.2f'),
+                     _fmt(y.get('slope_um_per_die'), '+.4f'), _fmt(y.get('r'), '+.2f'),
+                     str(max(x.get('n') or 0, y.get('n') or 0))]
+            for col, text in enumerate(cells):
+                item = _item(text, '판정에 쓰는 첫 Lot' if lot == first else '')
+                if lot == first:
+                    item.setFont(bold)
+                table.setItem(i, col, item)
+        table.fit()
+        self._diag_transient_card.set(transient.get('status', 'na'), '\n'.join(transient.get('reasons') or []))
+        table = self.diag_transient_table
+        axes = [transient.get(axis) or {} for axis in ('X', 'Y')]
+        has = any(isinstance(a.get('t'), dict) for a in axes)
+        table.setRowCount(3 if has else 0)
+        if has:
+            for i, k in enumerate((1, 2, 3)):
+                cells = [f'Die{k}' + (' (판정)' if k == 2 else '')]
+                for a in axes:
+                    cells += [_fmt(a.get(f'die{k}'), '+.3f'), _fmt((a.get('t') or {}).get(f'die{k}'), '+.1f')]
+                for col, text in enumerate(cells):
+                    table.setItem(i, col, _item(text))
+            table.setToolTip(f"Lot 수: X {axes[0].get('lots', 0)} / Y {axes[1].get('lots', 0)}")
+        table.fit()
 
     def _fill_offsets(self, offsets):
         table = self.diag_offset_table
@@ -462,6 +658,7 @@ class DiagnosisMixin:
             cells.append((str(entry.get('n') or 0), f"기준 보정 값이 있는 측정 {entry.get('n_ref', 0)}개"))
             for col, (text, tip) in enumerate(cells):
                 table.setItem(i, col, _item(text, tip))
+        table.fit()
 
     def _fill_whatif(self, whatif):
         table = self.diag_whatif_table
@@ -470,9 +667,11 @@ class DiagnosisMixin:
         if whatif.get('kappa_eff') is not None:
             text += f", κ_eff {whatif['kappa_eff']:.3f} µrad/µm"
         text += ')'
-        if whatif.get('note'):
-            text += f" — {whatif['note']}"
+        # 한 줄만 보이고 긴 설명은 'ⓘ 자세히' 툴팁 (세로 자리를 아낀다)
         self.diag_whatif_label.setText(text)
+        self.diag_whatif_label.setToolTip(whatif.get('note') or '')
+        self.diag_whatif_more.setToolTip(whatif.get('note') or '')
+        self.diag_whatif_more.setVisible(bool(whatif.get('note')))
         table.setRowCount(len(rows))
         bold = QFont()
         bold.setBold(True)
@@ -491,6 +690,7 @@ class DiagnosisMixin:
                     item.setBackground(QBrush(QColor(GREEN)))
                     item.setForeground(QBrush(QColor(BG)))
                 table.setItem(i, col, item)
+        table.fit()
 
     def _fill_parts(self, parts):
         table = self.diag_parts_table
@@ -506,7 +706,7 @@ class DiagnosisMixin:
             reason = QTableWidgetItem(part.get('reason', ''))
             reason.setToolTip(part.get('reason', ''))
             table.setItem(i, 2, reason)
-        table.resizeRowsToContents()
+        table.fit()
 
     def _diagnosis_tab_visible(self):
         return self._advanced_tab_visible(DIAGNOSIS_TAB)

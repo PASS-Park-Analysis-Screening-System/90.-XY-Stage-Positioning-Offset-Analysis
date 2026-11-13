@@ -17,13 +17,13 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QHeaderView, QLabel, QSplitter, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QTableWidgetItem, QVBoxLayout, QWidget
 
 from core.positioning_log import (COEF_NAMES, COEF_UNIT, NO_LOG_TEXT, analyze_result, run_key,
                                   store_analysis)
 from ui.theme import FG2, ORANGE, RED
 from ui.widgets.chart_widget import ChartWidget
+from ui.widgets.fit_table import FitTable
 
 POSITIONING_TAB = 'Positioning Log'
 STAGE_HEADERS = ['단계', '축', '∂/∂x', 't', '∂/∂y', 't', 'Range (µm)', 'r 전체',
@@ -78,45 +78,43 @@ class PositioningMixin:
     _poslog_tokens = itertools.count(1)
 
     def _build_positioning_widget(self):
+        """판정 글(위) + 단계 표·Tip 요약(왼쪽) | 단계 차트·Tip 표(오른쪽) — 1600×900 창에서 세로 스크롤 없이.
+
+        표는 행 수만큼의 높이(FitTable), 차트는 남는 높이를 쓴다."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
         self.poslog_label = QLabel(NO_LOG_TEXT)
         self.poslog_label.setWordWrap(True)
         self.poslog_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
         self.poslog_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.poslog_label)
 
-        splitter = QSplitter(Qt.Vertical)
-        self.poslog_table = QTableWidget(0, len(STAGE_HEADERS))
-        self.poslog_table.setHorizontalHeaderLabels(STAGE_HEADERS)
-        self.poslog_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.poslog_table.verticalHeader().setVisible(False)
-        self.poslog_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        body = QHBoxLayout()
+        left = QVBoxLayout()
+        self.poslog_table = FitTable(STAGE_HEADERS)
+        self.poslog_table.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         self.poslog_table.setToolTip(
             "X축 ∂/∂x = Sx (ppm), ∂/∂y = θx (µrad) / Y축 ∂/∂x = θy (µrad), ∂/∂y = Sy (ppm). "
             "Lot이 여럿이면 Die별 Lot 평균으로 피팅한다. r 전체 = 값끼리의 상관, r (항) = 그 계수만 "
             "남긴 부분 잔차끼리의 상관 (판정에 쓴다). — = 정할 수 없음 (좌표 퍼짐 부족·공선).")
-        splitter.addWidget(self.poslog_table)
-        self.chart_widgets['Positioning Stages'] = ChartWidget()
-        splitter.addWidget(self.chart_widgets['Positioning Stages'])
-        self.poslog_tip_table = QTableWidget(0, len(TIP_HEADERS))
-        self.poslog_tip_table.setHorizontalHeaderLabels(TIP_HEADERS)
-        self.poslog_tip_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.poslog_tip_table.verticalHeader().setVisible(False)
-        self.poslog_tip_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        splitter.addWidget(self.poslog_tip_table)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 4)
-        splitter.setStretchFactor(2, 1)
-        # 표의 크기 힌트(16행)가 차트를 눌러 버리지 않게 처음 나눔을 정한다 (사용자가 바꿀 수 있다)
-        splitter.setSizes([320, 420, 130])
-        self.chart_widgets['Positioning Stages'].setMinimumHeight(260)
-        layout.addWidget(splitter, 1)
+        left.addWidget(self.poslog_table)
         self.poslog_tip_label = QLabel('')
         self.poslog_tip_label.setWordWrap(True)
         self.poslog_tip_label.setStyleSheet(f"color: {FG2}; font-size: 9pt;")
-        layout.addWidget(self.poslog_tip_label)
+        left.addWidget(self.poslog_tip_label)
+        left.addStretch(1)
+        body.addLayout(left, 0)
+
+        right = QVBoxLayout()
+        self.chart_widgets['Positioning Stages'] = ChartWidget()
+        self.chart_widgets['Positioning Stages'].setMinimumSize(360, 240)
+        right.addWidget(self.chart_widgets['Positioning Stages'], 1)
+        self.poslog_tip_table = FitTable(TIP_HEADERS)
+        right.addWidget(self.poslog_tip_table)
+        body.addLayout(right, 1)
+        layout.addLayout(body, 1)
         return widget
 
     # ── 데이터 ─────────────────────────────────────────
@@ -202,6 +200,8 @@ class PositioningMixin:
         self._poslog_chart_pending = False
         self.poslog_table.setRowCount(0)
         self.poslog_tip_table.setRowCount(0)
+        self.poslog_table.fit()
+        self.poslog_tip_table.fit()
         self.poslog_tip_label.setText('')
         self.poslog_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
         self.poslog_label.setText(READING_TEXT if self._positioning_tab_visible() else WAITING_TEXT)
@@ -225,6 +225,7 @@ class PositioningMixin:
             self.poslog_label.setStyleSheet(f"color: {FG2}; font-size: 10pt;")
             self._poslog_chart_pending = False
             self.chart_widgets['Positioning Stages'].clear()
+            table.fit()
             self._fill_tip_table(analysis or {})
             return
         verdict = analysis.get('verdict') or {}
@@ -263,6 +264,7 @@ class PositioningMixin:
                         (row['axis'], names[(col - 2) // 2]) in significant:
                     item.setForeground(QColor(RED))
                 table.setItem(i, col, item)
+        table.fit()
         self._fill_tip_table(analysis)
         self._poslog_chart_pending = True
         self._flush_positioning_chart()
@@ -277,6 +279,7 @@ class PositioningMixin:
                      _num(t.get('fine_score'), '.2f'), _num(t.get('stage_y'), '+.1f')]
             for col, text in enumerate(cells):
                 table.setItem(i, col, _item(text))
+        table.fit()
         summary = analysis.get('tip_summary') or {}
         self.poslog_tip_label.setText('\n'.join(summary.get('lines') or []))
 

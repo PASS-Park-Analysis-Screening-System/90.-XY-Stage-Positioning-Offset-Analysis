@@ -578,7 +578,7 @@ def test_export_buttons_open_launchers(app, ui_calls, monkeypatch):
     win = main.DataAnalyzerApp()
     monkeypatch.setattr(win, '_save_settings', lambda: None)
     try:
-        tools = win._expert_window.tabs.widget(1)
+        tools = win._expert_window.page('도구')
         buttons = {b.text(): b for b in tools.findChildren(QPushButton)}
         assert '사례 라이브러리' in buttons
         buttons['3D 트러블슈팅 보고서'].click()

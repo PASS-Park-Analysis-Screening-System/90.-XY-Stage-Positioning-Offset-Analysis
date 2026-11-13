@@ -550,9 +550,12 @@ def _wait_for(predicate):
 
 
 def test_tab_is_next_to_positioning_log(window):
-    advanced = window._inner_tabs['Advanced']
-    names = [advanced.tabText(i) for i in range(advanced.count())]
-    assert names.index('Diagnosis (트러블슈팅)') == names.index('Positioning Log') + 1
+    """전문 분석 창 왼쪽 메뉴: Positioning Log 바로 다음이 진단 쪽들 (Diagnosis (트러블슈팅) 묶음)."""
+    expert = window._expert_window
+    names = expert.page_names()
+    first = names.index('Positioning Log') + 1
+    assert all(expert.section_of(n) == 'Diagnosis (트러블슈팅)' for n in names[first:first + 4])
+    assert expert.section_of(names[first + 4]) is None
 
 
 def test_tab_reads_lazily_only_when_visible(window, monkeypatch):
