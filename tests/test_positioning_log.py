@@ -15,6 +15,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from conftest import show_expert_tab
 from core.positioning_log import (NO_LOG_TEXT, analyze_result, find_logs, map_rows_to_dies,
                                   parse_sample_positioning, parse_tip_positioning,
                                   store_analysis, tip_summary)
@@ -373,11 +374,7 @@ def window(monkeypatch):
 
 
 def _show_tab(window):
-    advanced = window._inner_tabs['Advanced']
-    window.chart_category_tabs.setCurrentWidget(advanced)
-    for i in range(advanced.count()):
-        if advanced.tabText(i) == 'Positioning Log':
-            advanced.setCurrentIndex(i)
+    show_expert_tab(window, 'Positioning Log')     # 전문 분석 창의 Advanced 탭
 
 
 def test_positioning_tab_shows_table_verdict_and_chart(window, real_result):

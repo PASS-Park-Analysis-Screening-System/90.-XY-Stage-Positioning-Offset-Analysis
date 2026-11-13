@@ -9,6 +9,8 @@ diagnosis_controller.py — 'Diagnosis (트러블슈팅)' 탭: 원인 후보 자
 - 부품 판정과 근거, 다음 조치
 - '진단 JSON 저장'
 
+이 탭은 전문 분석 창의 Advanced에 있다. '탭이 보인다'는 그 창이 열려 있고(최소화 아님) 이 탭이 앞에 있다는
+뜻이다 (expert_controller._advanced_tab_visible — 창이 닫혀 있으면 Log 읽기·진단 계산·차트를 시작하지 않는다).
 Log는 이 탭이 보일 때만 작업 스레드(파이썬 스레드 하나 + Lot 스레드)로 읽는다. 데이터 로드는 Log를
 읽지 않는다. 읽은 Log는 그 회차 결과의 'xy_logs'에 담아 다시 읽지 않는다(읽기 오류가 섞였으면 담지
 않고 다음에 탭을 열 때 다시 읽는다). 진단 계산은 화면 스레드에서 한다(Log를 읽은 뒤라 파일을 읽지 않고
@@ -140,7 +142,7 @@ class DiagnosisMixin:
         self.diag_save_btn.clicked.connect(self._save_diagnosis_json)
         self.diag_save_btn.setEnabled(False)
         top.addWidget(self.diag_save_btn, 0, Qt.AlignTop)
-        # 3D 보고서·회전 시험·사례 라이브러리: 같은 기능이 Remark → Export 목록에도 있다.
+        # 3D 보고서·회전 시험·사례 라이브러리: 같은 기능이 전문 분석 창 '도구' 탭에도 있다 (같은 창을 연다).
         # 진단을 본 자리에서 바로 열 수 있게 여기에도 둔다 (지연 import — 탭을 안 열면 안 읽는다).
         self.diag_report_btn = QPushButton('3D 보고서 열기')
         self.diag_report_btn.setToolTip('지금 진단으로 3D 트러블슈팅 HTML을 만들어 기본 브라우저로 연다')
@@ -490,9 +492,7 @@ class DiagnosisMixin:
         table.resizeRowsToContents()
 
     def _diagnosis_tab_visible(self):
-        tabs = getattr(self, '_inner_tabs', {}).get('Advanced')
-        return (tabs is not None and self.chart_category_tabs.currentWidget() is tabs
-                and tabs.tabText(tabs.currentIndex()) == DIAGNOSIS_TAB)
+        return self._advanced_tab_visible(DIAGNOSIS_TAB)
 
     def _flush_diagnosis(self, *_args):
         """탭이 보일 때: 읽지 않은 회차의 Log와 Positioning Log 분석을 읽기 시작하고, 진단을 계산하고,
@@ -516,30 +516,34 @@ class DiagnosisMixin:
         except Exception as e:
             self.logger.error(f"Diagnosis drift 차트 오류: {type(e).__name__}: {e}")
 
+    # 이 버튼들과 전문 분석 창 '도구' 탭이 같은 메서드를 부른다. 창·메시지는 전문 분석 창 위에 연다
+    # (_expert_dialog_host — 진단·회전 시험 결과는 그 창이 메인 창의 것을 넘긴다)
+
     def _open_diagnosis_report(self):
         """지금 진단으로 3D 트러블슈팅 HTML을 만들어 기본 브라우저로 연다."""
         from ui.dialogs.troubleshoot_launcher import open_troubleshoot_report
-        open_troubleshoot_report(self)
+        open_troubleshoot_report(self._expert_dialog_host())
 
     def _open_rotation_test_dialog(self):
         """스캐너 회전 시험 분석 창 (결과는 set_rotation_test로 진단에 들어온다)."""
         from ui.dialogs.scanner_rotation_dialog import open_scanner_rotation_dialog
-        open_scanner_rotation_dialog(self)
+        open_scanner_rotation_dialog(self._expert_dialog_host())
 
     def _open_case_library(self):
         """끝난 조사 사례 모음을 기본 브라우저로 연다."""
         from ui.dialogs.troubleshoot_launcher import open_case_library
-        open_case_library(self)
+        open_case_library(self._expert_dialog_host())
 
     def _save_diagnosis_json(self):
+        host = self._expert_dialog_host()       # 이 탭이 있는 전문 분석 창 위에 연다
         diag = self._diag_obj
         if diag is None:
-            QMessageBox.warning(self, "경고", "저장할 진단이 없습니다.")
+            QMessageBox.warning(host, "경고", "저장할 진단이 없습니다.")
             return
         source = diag.source or {}
         label = re.sub(r'[\\/:*?"<>|\s]+', '_', f"{source.get('workflow', '')}_{source.get('run', '')}").strip('_')
         default = f"XY_Diagnosis_{label or 'run'}_{datetime.now():%Y%m%d_%H%M}.json"
-        path, _ = QFileDialog.getSaveFileName(self, "진단 JSON 저장", default, "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(host, "진단 JSON 저장", default, "JSON (*.json)")
         if not path:
             return
         temp = path + '.part'
@@ -550,7 +554,7 @@ class DiagnosisMixin:
             self.logger.ok(f"진단 JSON 저장: {path}")
         except Exception as e:
             self.logger.error(f"진단 JSON 저장 실패: {type(e).__name__}: {e}")
-            QMessageBox.critical(self, "오류", f"진단 JSON 저장 실패\n{e}")
+            QMessageBox.critical(host, "오류", f"진단 JSON 저장 실패\n{e}")
         finally:
             if os.path.exists(temp):
                 os.remove(temp)

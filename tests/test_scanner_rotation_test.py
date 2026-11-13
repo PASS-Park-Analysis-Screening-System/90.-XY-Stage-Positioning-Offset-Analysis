@@ -864,14 +864,19 @@ def test_main_window_button_opens_single_dialog(qapp, monkeypatch):
     win = main.DataAnalyzerApp()
     monkeypatch.setattr(win, '_save_settings', lambda: None)
     try:
+        # 전문 분석 창의 '도구' 탭에만 있다 (작업자 화면 Remark → Export에는 없다)
+        expert = win._expert_window
         buttons = [b for b in win.findChildren(QPushButton) if b.text() == '스캐너 회전 시험 분석']
-        assert len(buttons) == 1
+        assert len(buttons) == 1 and buttons[0].window() is expert
         buttons[0].click()
-        dlg = win._scanner_rotation_dialog
-        assert dlg.isVisible() and dlg.parent() is win and not dlg.isModal()
+        dlg = expert._scanner_rotation_dialog
+        assert dlg.isVisible() and dlg.parent() is expert and not dlg.isModal()
+        assert dlg._settings('spec_deviation') is win.settings['spec_deviation']   # 메인 창 설정을 쓴다
         dlg.close()
         buttons[0].click()
-        assert win._scanner_rotation_dialog is dlg and dlg.isVisible()
+        assert expert._scanner_rotation_dialog is dlg and dlg.isVisible()
+        win.diag_rotation_btn.click()                   # Diagnosis 탭의 버튼도 같은 창
+        assert expert._scanner_rotation_dialog is dlg
         dlg.close()
     finally:
         win.deleteLater()

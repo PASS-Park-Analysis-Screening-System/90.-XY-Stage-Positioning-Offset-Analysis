@@ -6,7 +6,9 @@ positioning_controller.py — 'Positioning Log' 탭: 비전 보정 로그 대조
 - 단계별 X 오차 대 Die Y 차트 (탭이 보일 때 그린다)
 - Tip Positioning 표
 로그는 이 탭이나 Diagnosis (트러블슈팅) 탭이 보일 때만 작업 스레드(파이썬 스레드 하나)로 읽는다
-(트러블슈팅 진단의 vision·xy_stage 판정과 스캐너 원인 확정에 쓴다). 데이터 로드는 로그를 읽지 않는다
+(트러블슈팅 진단의 vision·xy_stage 판정과 스캐너 원인 확정에 쓴다). 두 탭은 전문 분석 창의 Advanced에 있고,
+'보인다'는 그 창이 열려 있고(최소화 아님) 그 탭이 앞에 있다는 뜻이다 (expert_controller._advanced_tab_visible).
+데이터 로드는 로그를 읽지 않는다
 (네트워크 폴더에서 Lot마다 왕복이 늘지 않게). 읽은 분석은 그 회차 결과에 담아 다시 읽지 않는다
 (읽기 오류가 섞였으면 담지 않고 다음에 탭을 열 때 다시 읽는다).
 """
@@ -272,9 +274,7 @@ class PositioningMixin:
         return self._positioning_tab_visible() or bool(diagnosis_visible and diagnosis_visible())
 
     def _positioning_tab_visible(self):
-        tabs = getattr(self, '_inner_tabs', {}).get('Advanced')
-        return (tabs is not None and self.chart_category_tabs.currentWidget() is tabs
-                and tabs.tabText(tabs.currentIndex()) == POSITIONING_TAB)
+        return self._advanced_tab_visible(POSITIONING_TAB)
 
     def _flush_positioning_chart(self, *_args):
         """탭이 보일 때: 읽지 않은 회차의 로그를 읽기 시작하고, 미뤄 둔 차트를 그린다."""

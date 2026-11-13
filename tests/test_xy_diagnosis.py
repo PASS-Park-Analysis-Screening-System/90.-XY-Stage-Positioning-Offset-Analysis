@@ -17,6 +17,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from conftest import show_expert_tab
 from core import xy_diagnosis
 from core.recipe_scanner import load_all_recipes, recipes_from_mapping
 from core.settings import DEFAULT_ROTATION_SPEC, rotation_spec
@@ -523,11 +524,7 @@ def window(monkeypatch):
 
 
 def _show_tab(window, name='Diagnosis (트러블슈팅)'):
-    advanced = window._inner_tabs['Advanced']
-    window.chart_category_tabs.setCurrentWidget(advanced)
-    for i in range(advanced.count()):
-        if advanced.tabText(i) == name:
-            advanced.setCurrentIndex(i)
+    show_expert_tab(window, name)          # 전문 분석 창의 Advanced 탭
 
 
 def _counting_reads(monkeypatch):

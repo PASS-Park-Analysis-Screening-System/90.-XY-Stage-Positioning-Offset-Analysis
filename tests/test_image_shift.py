@@ -924,14 +924,16 @@ def test_main_window_button_opens_single_dialog(qapp, monkeypatch):
     win = main.DataAnalyzerApp()
     monkeypatch.setattr(win, '_save_settings', lambda: None)
     try:
+        # 전문 분석 창의 '도구' 탭에만 있다 (작업자 화면 Remark → Export에는 없다)
+        expert = win._expert_window
         buttons = [b for b in win.findChildren(QPushButton) if b.text() == '이미지 2장 이동량 분석']
-        assert len(buttons) == 1
+        assert len(buttons) == 1 and buttons[0].window() is expert
         buttons[0].click()
-        dlg = win._image_shift_dialog
-        assert dlg.isVisible() and dlg.parent() is win
+        dlg = expert._image_shift_dialog
+        assert dlg.isVisible() and dlg.parent() is expert           # 전문 분석 창 위에 쌓인다
         dlg.close()
         buttons[0].click()
-        assert win._image_shift_dialog is dlg and dlg.isVisible()      # 같은 창을 다시 연다
+        assert expert._image_shift_dialog is dlg and dlg.isVisible()   # 같은 창을 다시 연다
         dlg.close()
     finally:
         win.deleteLater()

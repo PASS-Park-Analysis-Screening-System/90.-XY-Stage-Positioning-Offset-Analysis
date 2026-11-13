@@ -83,11 +83,12 @@ from ui.dialogs.scanner_rotation_dialog import threads_alive as rotation_threads
 from ui.controllers.run_compare_controller import RunCompareMixin
 from ui.controllers.positioning_controller import PositioningMixin
 from ui.controllers.diagnosis_controller import DiagnosisMixin
+from ui.controllers.expert_controller import ExpertMixin
 
 # ═══════════════════════════════════════════════
 #  Main Application
 # ═══════════════════════════════════════════════
-class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin, DiagnosisMixin):
+class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMixin, TableMixin, ChartMixin, XYLegendMixin, DieFilterMixin, LotFilterMixin, TiffMixin, ExportMixin, RunCompareMixin, PositioningMixin, DiagnosisMixin, ExpertMixin):
 
     def __init__(self):
         super().__init__()
@@ -125,8 +126,11 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
     # Build UI
     # ──────────────────────────────────────────────
     def eventFilter(self, obj, event):
-        """스플리터 핸들 더블클릭 → 좌측 패널 토글."""
+        """스플리터 핸들 더블클릭 → 좌측 패널 토글. 상태 표시줄 버전 글자 클릭 → 전문 분석 창 입구."""
         from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'version_status_label', None):
+            self._on_version_label_event(event)
+            return False
         if (hasattr(self, '_main_splitter')
                 and obj is self._main_splitter.handle(1)
                 and event.type() == QEvent.MouseButtonDblClick):
@@ -138,6 +142,8 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
     # Lifecycle
     # ──────────────────────────────────────────────
     def closeEvent(self, event):
+        # 전문 분석 창도 닫는다 (위치를 설정에 둔 뒤 저장)
+        self._close_expert_window()
         self._save_settings()
         # 진행 중인 폴더 확인·로드·TIFF 읽기를 모두 중지시키고 잠깐만 기다린다.
         # 네트워크 읽기 하나가 끝나야 멈추므로 오래 기다리지 않는다. 강제 종료(terminate)는
@@ -182,15 +188,17 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
             QTimer.singleShot(100, partial(self._scan_folder, startup=True))
         self._restore_geometry()
 
-    def _restore_geometry(self):
-        """저장된 window_geometry("WxH+X+Y")를 현재 화면 범위로 클램프해 복원.
+    def _restore_geometry(self, widget=None, key='window_geometry'):
+        """저장된 geometry("WxH+X+Y")를 현재 화면 범위로 클램프해 복원.
 
         다른 모니터(해상도/DPI 배율이 다른)에서 저장된 geometry를 그대로 복원하면
         창이 화면 밖으로 나가거나 화면보다 커질 수 있다. 저장된 위치가 속한 화면의
         availableGeometry()에 맞춰 크기/위치를 클램프한다. 저장값이 없으면
         화면에 맞춰 중앙 배치(_fit_to_screen).
+        widget·key: 기본은 이 창·window_geometry. 전문 분석 창은 expert_window_geometry로 같은 방식.
         """
-        parsed = parse_geometry_string(self.settings.get('window_geometry', ''))
+        widget = self if widget is None else widget
+        parsed = parse_geometry_string(self.settings.get(key, ''))
         if parsed is not None:
             x, y, w, h = parsed
             screen = (QGuiApplication.screenAt(QPoint(x, y))
@@ -199,35 +207,36 @@ class DataAnalyzerApp(UIBuilderMixin, QMainWindow, ScanMixin, StepMixin, CardMix
                 avail = screen.availableGeometry()
                 # 화면(작업영역)이 최소 크기보다 작으면 클램프해도 넘치므로
                 # 최대화로 폴백(_fit_to_screen). (skill common-mistake #5)
-                if (avail.width() >= self.minimumWidth()
-                        and avail.height() >= self.minimumHeight()):
+                if (avail.width() >= widget.minimumWidth()
+                        and avail.height() >= widget.minimumHeight()):
                     # 화면보다 크지 않게 + 최소 크기 보장
-                    w = max(min(w, avail.width()), self.minimumWidth())
-                    h = max(min(h, avail.height()), self.minimumHeight())
+                    w = max(min(w, avail.width()), widget.minimumWidth())
+                    h = max(min(h, avail.height()), widget.minimumHeight())
                     # 타이틀바가 화면 밖으로 나가지 않도록 위치 클램프
                     x = max(avail.x(), min(x, avail.x() + avail.width() - w))
                     y = max(avail.y(), min(y, avail.y() + avail.height() - h))
-                    self.setGeometry(x, y, w, h)
+                    widget.setGeometry(x, y, w, h)
                     return
-        self._fit_to_screen()
+        self._fit_to_screen(widget=widget)
 
-    def _fit_to_screen(self, ratio=0.85, cap=(1600, 1050)):
-        """창을 현재 화면 작업영역의 ratio 비율로(최대 cap) 중앙 배치.
+    def _fit_to_screen(self, ratio=0.85, cap=(1600, 1050), widget=None):
+        """창(widget, 기본 이 창)을 현재 화면 작업영역의 ratio 비율로(최대 cap) 중앙 배치.
 
         화면(작업영역)이 최소 크기보다 작으면 최대화로 폴백한다.
         """
+        widget = self if widget is None else widget
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
         avail = screen.availableGeometry()
-        if avail.width() < self.minimumWidth() or avail.height() < self.minimumHeight():
-            self.showMaximized()
+        if avail.width() < widget.minimumWidth() or avail.height() < widget.minimumHeight():
+            widget.showMaximized()
             return
-        w = max(min(int(avail.width() * ratio), cap[0]), self.minimumWidth())
-        h = max(min(int(avail.height() * ratio), cap[1]), self.minimumHeight())
-        self.resize(w, h)
-        self.move(avail.x() + (avail.width() - w) // 2,
-                  avail.y() + (avail.height() - h) // 2)
+        w = max(min(int(avail.width() * ratio), cap[0]), widget.minimumWidth())
+        h = max(min(int(avail.height() * ratio), cap[1]), widget.minimumHeight())
+        widget.resize(w, h)
+        widget.move(avail.x() + (avail.width() - w) // 2,
+                    avail.y() + (avail.height() - h) // 2)
 
     # ──────────────────────────────────────────────
     # Navigation

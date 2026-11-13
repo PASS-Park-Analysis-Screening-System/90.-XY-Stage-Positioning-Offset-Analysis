@@ -526,7 +526,8 @@ def test_launcher_writes_report_and_opens_browser(app, ui_calls, tmp_path, monke
 
 
 def test_export_buttons_open_launchers(app, ui_calls, monkeypatch):
-    """Remark → Export에 두 버튼이 있고, 진단 없이 누르면 메시지만 뜬다 (멈추지 않음)."""
+    """전문 분석 창 '도구' 탭에 두 버튼이 있고, 진단 없이 누르면 메시지만 뜬다 (멈추지 않음).
+    메시지는 전문 분석 창 위에 뜬다."""
     import main
     import ui.controllers.scan_controller as controller
     from PySide6.QtWidgets import QPushButton
@@ -536,10 +537,12 @@ def test_export_buttons_open_launchers(app, ui_calls, monkeypatch):
     win = main.DataAnalyzerApp()
     monkeypatch.setattr(win, '_save_settings', lambda: None)
     try:
-        buttons = {b.text(): b for b in win.findChildren(QPushButton)}
+        tools = win._expert_window.tabs.widget(1)
+        buttons = {b.text(): b for b in tools.findChildren(QPushButton)}
         assert '사례 라이브러리' in buttons
         buttons['3D 트러블슈팅 보고서'].click()
         assert ui_calls['info'] and ui_calls['info'][-1][2] == '먼저 Diagnosis 탭에서 진단을 실행하세요.'
+        assert ui_calls['info'][-1][0] is win._expert_window
         assert ui_calls['open'] == []
         buttons['사례 라이브러리'].click()
         assert Path(ui_calls['open'][-1].toLocalFile()) == RESOURCES / 'cases' / 'index.html'

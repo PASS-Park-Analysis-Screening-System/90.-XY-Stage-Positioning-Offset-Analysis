@@ -1,27 +1,30 @@
 """
-guide_dialog.py — Analysis Guide 도움말 대화상자
+guide_dialog.py — Analysis Guide 도움말 대화상자 (작업자용)
+
+전문 분석 창(QC 엔지니어)의 기능은 여기 적지 않는다. 그 설명은 expert_guide.py에 있고 전문 분석 창의
+'도움말' 탭이 같은 GuideBrowser로 보인다.
 """
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QSplitter, QListWidget,
-    QTextBrowser, QDialogButtonBox,
+    QTextBrowser, QDialogButtonBox, QWidget,
 )
 from PySide6.QtCore import Qt
 from ui.theme import BG, BG2, BG3, FG, FG2, ACCENT, GREEN, RED
 
+GUIDE_STYLE = f"background: {BG}; color: {FG}; font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;"
 
-class GuideDialog(QDialog):
-    def __init__(self, parent=None):
+
+class GuideBrowser(QWidget):
+    """제목 목록(왼쪽) + 본문(오른쪽). contents = {제목: HTML 본문}."""
+
+    def __init__(self, contents, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Analysis Guide")
-        self.resize(1000, 700)
-        self.setStyleSheet(f"background: {BG}; color: {FG}; font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;")
-
+        self.contents = contents
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-
+        layout.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
-        
+
         # Left Panel (List)
         self.nav_list = QListWidget()
         self.nav_list.setStyleSheet(f"""
@@ -31,7 +34,58 @@ class GuideDialog(QDialog):
             QListWidget::item:hover:!selected {{ background: {BG3}; }}
         """)
         self.nav_list.setCursor(Qt.PointingHandCursor)
-        
+        for title in self.contents.keys():
+            self.nav_list.addItem(title)
+        self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+
+        # Right Panel (Content)
+        self.content_browser = QTextBrowser()
+        self.content_browser.setStyleSheet(f"""
+            QTextBrowser {{ background: {BG2}; border: 1px solid {BG3}; border-radius: 6px; padding: 24px; font-size: 11pt; }}
+        """)
+        self.content_browser.setOpenExternalLinks(False)
+
+        splitter.addWidget(self.nav_list)
+        splitter.addWidget(self.content_browser)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        layout.addWidget(splitter)
+        self.nav_list.setCurrentRow(0)
+
+    def _on_nav_changed(self, idx):
+        if idx < 0: return
+        itemTitle = self.nav_list.item(idx).text()
+        html_body = self.contents.get(itemTitle, "")
+
+        css = (
+            f"h2 {{ color: {ACCENT}; border-bottom: 2px solid {BG3}; padding-bottom: 12px; margin-bottom: 20px; font-size: 18pt; }}"
+            f"h3 {{ color: {ACCENT}; margin-top: 32px; font-size: 14pt; }}"
+            f"p {{ line-height: 1.6; margin-bottom: 16px; color: {FG}; }}"
+            f"b {{ color: {GREEN}; font-weight: bold; font-size: 11pt; }}"
+            f"ul {{ margin-top: 8px; margin-bottom: 16px; margin-left: -10px; }}"
+            f"li {{ margin-bottom: 10px; line-height: 1.6; color: {FG}; }}"
+            f"hr {{ border: none; border-top: 1px solid {BG3}; margin: 28px 0; }}"
+            f"table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}"
+            f"th, td {{ border: 1px solid {BG3}; padding: 12px; text-align: left; line-height: 1.4; }}"
+            f"th {{ background-color: {BG}; color: {FG}; font-weight: bold; border-bottom: 2px solid {BG3}; }}"
+            f"td {{ color: {FG}; }}"
+            f"code {{ background-color: rgba(0,0,0,0.3); padding: 4px 6px; border-radius: 4px; color: {RED}; font-family: Consolas, monospace; }}"
+        )
+
+        full_html = "<html><head><style>" + css + "</style></head><body>" + html_body + "</body></html>"
+        self.content_browser.setHtml(full_html)
+
+
+class GuideDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Analysis Guide")
+        self.resize(1000, 700)
+        self.setStyleSheet(GUIDE_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+
         # Guide Contents
         self.contents = {
             "1. 데이터 테이블 & 지표 해석": (
@@ -95,79 +149,6 @@ class GuideDialog(QDialog):
                 "<li>박스가 매우 <b>좌우 빽빽하게 채워진</b> 경우 → 장비가 Spec 한계선 경계에서 운용 중. <b>Spec 여유도(Spec Margin) 검토 필요</b></li>"
                 "<li><b>Log Scale 전환 시</b> → 극단적 Outlier의 영향을 줄이고 전체 분포 패턴 파악에 유리</li>"
                 "</ul>"
-            ),
-            "3-1. X/Y Correlation 분석": (
-                "<h2> 3-1. X/Y Correlation (상관 분석) 심화 해석</h2>"
-                "<p>Correlation 차트는 <b>Die별 X 편차 (평균) vs Y 편차 (평균)</b> 를 2D 산점도로 표현하고, "
-                "<b>선형 회귀(Linear Regression)</b> 를 적용하여 두 축 사이의 통계적 관계를 정량화합니다.</p>"
-
-                "<h3>3-1.1 핵심 통계 지표 해석</h3>"
-                "<table>"
-                "<tr><th>지표</th><th>수식 / 범위</th><th>엔지니어 해석</th></tr>"
-                "<tr><td><b>r (피어슨 상관계수)</b></td><td>-1 ~ +1</td>"
-                "<td><b>방향과 강도</b><br>"
-                "• |r| &lt; 0.3 → X/Y 축 독립 (양호)<br>"
-                "• 0.3 ≤ |r| &lt; 0.7 → 약~중간 상관 (점검 권장)<br>"
-                "• |r| ≥ 0.7 → 강한 상관 → 축간 <b>기계적 커플링</b> 의심</td></tr>"
-                "<tr><td><b>R² (결정계수)</b></td><td>0 ~ 1 (= r²)</td>"
-                "<td>X 편차로 Y 편차를 설명할 수 있는 비율.<br>"
-                "R² ≈ 0 → 두 축 완전 독립 (이상적)<br>"
-                "R² &gt; 0.5 → Y 변동의 50%이상이 X와 연동 → 구조적 결함</td></tr>"
-                "<tr><td><b>RMSE</b></td><td>√(Σ(실측-예측)² / n)</td>"
-                "<td>회귀선으로부터의 평균 잔차(μm). RMSE가 크면 <b>비선형 성분</b> 또는 <b>랜덤 노이즈</b>가 큰 것.</td></tr>"
-                "<tr><td><b>회귀선 기울기 (slope)</b></td><td>y = slope·x + intercept</td>"
-                "<td>기울기 ≈ 0 → X 이동 시 Y 영향 없음 (독립)<br>"
-                "기울기 ≠ 0 → X 이동량에 비례해 Y도 밀림 → 직각도(Squareness) 불량 또는 기계적 간섭 의심</td></tr>"
-                "</table>"
-
-                "<h3>3-1.2 패턴별 진단 가이드</h3>"
-                "<table>"
-                "<tr><th>산점도 패턴</th><th>통계 지표</th><th>원인 및 조치</th></tr>"
-                "<tr><td><b>원점 주변 원형 분포</b></td>"
-                "<td>|r| &lt; 0.1, R² ≈ 0</td>"
-                "<td>이상적 상태. 두 축이 완전 독립적으로 동작.</td></tr>"
-                "<tr><td><b>양(+)의 대각선 분포</b></td>"
-                "<td>r &gt; 0.5, 기울기 &gt; 0</td>"
-                "<td>X(+) 방향 밀림 시 Y도 (+) 방향으로 밀림 → <b>동일 방향 커플링</b>. 스테이지 가이드 레일 평행도 점검.</td></tr>"
-                "<tr><td><b>음(-)의 대각선 분포</b></td>"
-                "<td>r &lt; -0.5, 기울기 &lt; 0</td>"
-                "<td>X(+) 방향 밀림 시 Y는 (-) 방향으로 밀림 → <b>역방향 커플링</b>. 스테이지 직각도(Squareness) 또는 회전 오차 검토.</td></tr>"
-                "<tr><td><b>수평/수직 밴드</b></td>"
-                "<td>|r| &lt; 0.2</td>"
-                "<td>한 축만 산포가 큰 상태. 해당 축의 <b>인코더 노이즈</b> 또는 <b>모터 진동</b> 개별 점검.</td></tr>"
-                "<tr><td><b>군집 분리 (2~3개 그룹)</b></td>"
-                "<td>r 값 불안정</td>"
-                "<td>Repeat 간 조건 변동(온도, 웨이퍼 로딩) 또는 특정 Die 영역의 구조적 차이. <b>Outlier Die 식별</b> 후 개별 점검.</td></tr>"
-                "<tr><td><b>극단적 Outlier 1~2개</b></td>"
-                "<td>r 값 왜곡 가능</td>"
-                "<td>해당 Die 특이점 분석. <b>Outlier 제거 후 r 값 재계산</b>하여 구조적 상관 여부 재평가.</td></tr>"
-                "</table>"
-
-                "<h3>3-1.3 Die 색상별 군집 해석</h3>"
-                "<p>각 점은 <b>Die별로 고유 색상</b>이 부여됩니다. 특정 색상(Die)이 원점에서 크게 벗어나 있다면:</p>"
-                "<ul>"
-                "<li>해당 Die 위치에 <b>국소적 기구 이상</b>(Chuck 핀 높이 편차, 이물질 등)이 존재할 가능성</li>"
-                "<li>Vector Map에서 같은 Die 위치의 벡터 방향/크기를 교차 확인하세요</li>"
-                "<li>Die Average Heatmap에서 해당 Die의 평균 편차 수준과 대조하면 원인 격리에 유용합니다</li>"
-                "</ul>"
-
-                "<h3>3-1.4 실무 판단 기준 (요약)</h3>"
-                "<table>"
-                "<tr><th>|r| 범위</th><th>R² 범위</th><th>판정</th><th>조치</th></tr>"
-                "<tr><td>&lt; 0.1</td><td>&lt; 0.01</td><td>정상</td><td>별도 조치 불필요</td></tr>"
-                "<tr><td>0.1 ~ 0.3</td><td>0.01 ~ 0.09</td><td>관찰</td><td>트렌드 모니터링, 주기적 확인</td></tr>"
-                "<tr><td>0.3 ~ 0.7</td><td>0.09 ~ 0.49</td><td>주의</td><td>축간 커플링 원인 조사 착수</td></tr>"
-                "<tr><td>&gt; 0.7</td><td>&gt; 0.49</td><td>이상</td><td>즉시 기구 점검 (직각도, 가이드, 베어링)</td></tr>"
-                "</table>"
-
-                "<h3>3-1.5 XY Scatter와의 차이점</h3>"
-                "<table>"
-                "<tr><th>항목</th><th>XY Scatter (Basic Analysis)</th><th>Correlation (Advanced)</th></tr>"
-                "<tr><td><b>데이터 단위</b></td><td>모든 개별 측정점 (Repeat x Die)</td><td><b>Die별 평균</b> 오차 (Repeat 평균화)</td></tr>"
-                "<tr><td><b>초점</b></td><td>전체 산포 분포 + Spec Box 판정</td><td><b>X-Y 축간 상관관계</b> (커플링 진단)</td></tr>"
-                "<tr><td><b>통계 지표</b></td><td>없음 (시각적 판단)</td><td>R², r, RMSE, 회귀식 정량 제공</td></tr>"
-                "<tr><td><b>활용</b></td><td>Spec PASS/FAIL 판단, Outlier 탐지</td><td>기계 구조적 결함 진단, 축 독립성 검증</td></tr>"
-                "</table>"
             ),
             "4. Vector & Wafer Map 이해": (
                 "<h2> 4. Vector Map & Wafer Contour 심화 분석</h2>"
@@ -253,95 +234,17 @@ class GuideDialog(QDialog):
                 "<li>Chart 영역 <b>Comparison → Run Comparison</b> 탭에서 회차별 Range·StdDev·Avg·Cpk·판정 표와 추이·박스플롯을 봅니다. 행을 클릭하면 그 회차로 바뀝니다. ⚠는 경고가 있는 회차입니다.</li>"
                 "<li>Excel 리포트에는 회차가 둘 이상인 Workflow마다 <b>Run Comparison</b> 시트가 붙습니다.</li>"
                 "</ul>"
-                "<h3>5.5 AI 분석용 Markdown (LLM 원인 분석)</h3>"
-                "<p>Remark → Export의 <b>AI 분석용 Markdown</b>은 'Spec이 왜 나갔는지'를 LLM(ChatGPT, Claude 등)에 물어보기 위한 파일입니다. 화면은 사람이 보는 용도이고, 원인 추론은 이 파일을 LLM에 붙여 넣어 맡깁니다.</p>"
-                "<ul>"
-                "<li>한 파일(.md, UTF-8)에 분석 조건·결과 요약(Spec 초과 먼저, 여유 µm·%)·원인 단서(축별 평면 계수 Sx·Sy·θx·θy와 회전·직교도, 계통 성분을 뺀 what-if, Die별 공간 분포와 평면 잔차, Lot 순서별 drift, 이상치·측정 실패)·회차 비교·선택 회차의 Die×Repeat 편차 표가 들어 있습니다. 원인 단서는 화면에서 고른 회차 기준입니다. 모든 회차의 셀 값은 같은 이름에 <code>_raw.csv</code>가 붙은 CSV로 옆에 저장되며, 필요하면 LLM에 함께 첨부합니다.</li>"
-                "<li><b>회차 변경 이력 (사용자 기입)</b> 표에 회차마다 바꾼 모듈·설정을 직접 적은 뒤 LLM에 넣으면 회차 간 차이의 원인까지 묻습니다.</li>"
-                "<li>파일 끝의 <b>LLM 분석 요청</b>이 질문입니다. 파일 전체를 그대로 붙여 넣거나 첨부하면 됩니다. 파일이 크면 첨부를 쓰세요.</li>"
-                "<li><b>(파생)</b> 표시는 도구가 유도한 참고값·경험 규칙이며 통계 검정이 아닙니다. 회차 비교에는 회차별 평면 계수와 회차 × Die 평균 편차 표가 있어, 바꾼 내용이 기하 오차를 움직였는지 볼 수 있습니다.</li>"
-                "<li>LLM 답은 이 파일의 숫자만 근거로 한 추정입니다. 장비 사실 확인과 결론은 담당자가 합니다.</li>"
-                "</ul>"
-                "<h3>5.5-1 비전 보정 로그 대조 (Advanced → Positioning Log)</h3>"
-                "<p>Lot 폴더 <code>Debug/SamplePositioning</code>·<code>Debug/TipPositioning</code> 로그를 최종 착지(HZ1_O 편차)와 대조합니다. "
-                "Die마다 도착 오차(Coarse Match), 비전 보정(Coarse·Fine Move), 정밀 잔차(Fine Match), Optical Shift, Tip 위치를 Die 좌표에 평면 피팅해 "
-                "Sx·θx·θy·Sy(t)와 Range, HZ1_O와의 상관(값 그대로 r, 계수별 부분 잔차 r)을 표로 보입니다. 최종 착지의 유의한 성분(|t| ≥ 3)이 비전 로그 어디에도 "
-                "같은 계수(부분 잔차 상관·부호까지 맞음)로 없으면 <b>비전 정렬 이후(카메라→Tip 착지) 구간</b>, 있으면 그 단계 구간과 같은·반대 부호를 표시합니다"
-                "(파생, 규칙은 표시줄 툴팁). 좌표가 한쪽으로 몰리거나 한 직선이면 그 계수는 —입니다. "
-                "로그 행은 측정 순서로 Die에 짝짓고 Die 좌표로 확인합니다(샘플 정렬 회전·원점 차는 맞춘 뒤 비교, 회전이 1°를 넘거나 다른 샘플·Slot의 로그면 그 Lot은 빼고 이유를 보입니다). "
-                "로그는 이 탭을 열 때 읽습니다(데이터 로드는 로그를 읽지 않음). 네트워크·잠김으로 읽지 못하면 '로그 없음'과 따로 알리고 다음에 다시 읽습니다. "
-                "Tip Positioning이 한 위치(Center)뿐이면 Tip X와 스테이지 Y 관계는 알 수 없어, Y +120 / 0 / −120 mm 세 곳에서 해 보기를 제안합니다. "
-                "같은 내용이 AI 분석용 Markdown의 '비전 보정 로그 대조' 절에 들어갑니다.</p>"
-                "<h3>5.5-2 트러블슈팅 진단 (Advanced → Diagnosis (트러블슈팅))</h3>"
-                "<p>선택한 Step·회차의 측정값과 Lot 폴더 <code>Log/&lt;Sample&gt;_Log.csv</code>로 X/Y Spec Out 원인 후보를 자동으로 찾습니다. "
-                "찾는 원인의 예: X 라인을 스캐너 Y −28 µm에서 재면 Y 구동이 웨이퍼를 µm당 약 0.19 µrad 돌려 θx ≈ 5 µrad, X FAIL "
-                "(레시피 X 라인 Y Offset −25 → −5 µm로 θx 0.95, X PASS).</p>"
-                "<ul>"
-                "<li><b>스캐너 오프셋</b>: Log의 ImageJob 'Set scan params'(Scan Direction, X/Y Offset)가 측정 라인마다 스캐너에 건 값입니다. "
-                "<b>적용 = 레시피 + 기준 보정(Reference, 기준 스캔) + 미세 보정(Fine, 정밀 정렬)</b>. Log에 기준 스캔 결과가 없으면(장비에 저장된 값을 씀) "
-                "레시피와 기준 보정을 나눌 수 없어 '—'로 두고 '레시피 + 기준 보정'만 보입니다(툴팁).</li>"
-                "<li><b>모양</b>: Die 평균 편차를 Die 좌표에 평면 피팅(안정화 Die 제외). X는 θx = ∂dx/∂y, Y는 θy = ∂dy/∂x (µrad, t = 값/SE).</li>"
-                "<li><b>회전</b>: κ_eff = |θ| / |구동 축 스캐너 오프셋| (X 라인은 스캐너 Y, Y 라인은 스캐너 X; 오프셋 2 µm 이상일 때만). "
-                "Range 기여 = |θ| × Die 좌표 폭.</li>"
-                "<li><b>What-if</b>: X 라인 레시피 Y Offset을 지금 값과 같은 쪽(부호)의 25, 15, 10, 5, 3, 0 µm(와 현재 값)로 바꿨을 때 이 회차 "
-                "Lot·Die 값에서 κ_eff × (현재 − 새 값) × Die Y를 빼 Lot별 Range·StdDev·PASS Lot 수를 예측합니다(선형·원점 통과 가정 — 실데이터는 "
-                "원점을 지나지 않아 근사이며, 줄이는 쪽으로는 보수적. θ가 유의하지 않으면 예측 안 함). |현재 값| &lt; 0.5 µm는 0으로 봅니다. "
-                "굵게 = 현재, 초록 = 권장: 현재 행이 모든 Lot PASS면 현재 유지, 아니면 패턴 꼭짓점 여유 5 µm 이상이고 모든 Lot PASS인 후보 중 "
-                "|값|이 가장 작은 것 (없으면 권장 없음, 3D 보고서와 같은 규칙). 레시피 값을 모르면(기준 스캔 없음) 행은 스캐너 Y 적용값 목표입니다.</li>"
-                "<li><b>Drift</b>: Lot 평균 대 Lot 시작 시각(CSV Start Time), Lot 안 측정 순서 기울기(µm/Die, 유의한 평면 모양만 뺀 값). "
-                "Lot 3개 이상에서 축별 Lot 평균 폭 &gt; 0.2 µm 또는 첫 Lot |기울기| &gt; 0.01 µm/Die(|r| ≥ 0.5)면 주의 — 예열(열) 드리프트 의심, "
-                "측정 전 워밍업/더미 Lot 권장.</li>"
-                "<li><b>Transient</b>: Lot마다 Die4 이후로 맞춘 평면 대비 Die1·2·3 잔차의 Lot 평균. Lot 3개 이상에서 판정 대상 Die2가 0.15 µm를 넘고 "
-                "|평균|/SE ≥ 3이면 주의.</li>"
-                "</ul>"
-                "<p><b>잠정 규격</b> (settings.json <code>rotation_spec</code>, 장비 데이터 평균 + 3σ로 확정 전): |θ| 주의 0.7 / 한도 1.0 µrad "
-                "(±120 mm Die에서 Range 기여 θ × 0.24 µm, 1.0 µm Spec의 25 %), κ 주의 0.07 / 한도 0.10 µrad/µm, 측정 라인 스캐너 오프셋 한도 10 µm. "
-                "회전: θ가 유의(|t| ≥ 3, Die 8개 이상)하고 한도 이상이면 이상, 주의 이상이면 주의. κ_eff는 구동 ≥ 5 µm이고 |θ| ≥ 0.35 µrad일 때만 "
-                "주의 이상이면 적어도 주의(그 밖은 참고). "
-                "X 라인 |스캐너 Y| &gt; 10 µm면 레시피 확인 주의. Y 라인 |스캐너 X| &gt; 10 µm는 <b>참고</b>(기준 장비에서 X 구동은 돌지 않았음).</p>"
-                "<p><b>부품 판정 규칙</b> (경험 규칙, 근거는 표의 문장):</p>"
-                "<ul>"
-                "<li><b>XY 스캐너 Y 구동</b>: <b>이상</b>은 최종 θx가 유의하고 한도 이상이며, X 라인 |스캐너 Y| ≥ 5 µm이고, Positioning Log 분석이 "
-                "그 성분을 비전 정렬 이후로 볼 때만입니다. 로그 대조 전이면 많아야 주의('비전 로그 대조 전 — Positioning Log 확인 시 확정'), "
-                "스캐너 Y를 모르면 주의, 5 µm 미만으로 구동했으면 —('스캐너 구동이 작아 원인으로 단정 불가'). 비전 단계가 같은 성분을 가졌으면 OK"
-                "(구동이 10 µm를 넘으면 주의). 주의 구간 θ는 같은 조건에서 주의. |스캐너 Y| &lt; 2 µm면 '줄이세요'를 내지 않습니다.</li>"
-                "<li><b>척</b>: 스캐너 Y가 주의·이상이면 주의 — 데이터로는 스캐너와 척을 나눌 수 없습니다.</li>"
-                "<li><b>비전 / XY 스테이지</b>: Positioning Log가 그 성분을 비전 로그 단계에 돌리면(도착·거친 보정 → XY 스테이지, "
-                "정밀 정렬·보정·Optical Shift·Tip 위치 → 비전) 주의·이상. 로그 대조가 없으면 —. 이 탭을 열면 Positioning Log 분석도 읽어 반영합니다.</li>"
-                "<li><b>Z 스캐너·Tip / F 스테이지</b>: drift나 transient가 주의면 주의 (헤드 쪽 열·안착).</li>"
-                "<li><b>XY 스캐너 X 구동</b>: Y 라인(θy, 스캐너 X)에 같은 규칙. Y 라인에 같은 모양이 없으면 OK.</li>"
-                "<li><b>스캐너 회전 시험</b>(폐루프 2지점 스윕, 출하 검사·스캐너 교체·선형화 후 관리 포인트) 결과가 있으면 요약 칩에 κ·판정·시험 단계·날짜를 보이고, "
-                "폐루프·Y 축 시험이 주의·이상이면 XY 스캐너 Y 구동을 적어도 그 판정으로 올립니다(직접 증거). 시험 결과는 장비의 것이라 회차를 바꿔도 "
-                "남지만, 같은 장비(Log의 Tool ID, 없으면 연 폴더)의 진단에만 붙고 다른 장비면 '다른 장비의 시험 결과 — 적용 안 함'을 보입니다.</li>"
-                "<li>그 밖(Z 스테이지, 샘플, 본체, 제진대, EFEM)은 이 데이터로 판단할 신호가 없어 OK, 데이터가 없으면 —.</li>"
-                "</ul>"
-                "<p>Log는 이 탭을 열 때 그 회차만 읽습니다(Lot마다 Log 폴더 목록·Log 파일·CSV 앞부분). 네트워크·잠김으로 읽지 못하면 'Log 없음'과 따로 "
-                "알리고 담지 않아 다음에 다시 읽습니다. <b>진단 JSON 저장</b>은 <code>pass.xy.diagnosis/1</code> 형식으로 저장합니다(3D 보고서·회전 시험 분석이 씀). "
-                "같은 내용이 AI 분석용 Markdown의 '트러블슈팅 진단 (Diagnosis)' 절에 들어가고, Comparison → Run Comparison 표와 Excel에는 회차별 θx·θy(CSV 값만)가 있습니다.</p>"
-                "<h3>5.6 Cpk와 Spec Range 연계 해석</h3>"
+                "<h3>5.5 Cpk와 Spec Range 연계 해석</h3>"
                 "<p>Cpk는 <code>spec_limits</code>의 LSL/USL 기준이며, PASS/FAIL 판정은 <code>spec_deviation</code>의 <code>spec_range</code>/<code>spec_stddev</code> 기준입니다. 두 기준이 <b>독립적</b>으로 동작하므로, <b>Cpk가 높아도 Range가 Spec을 초과하면 FAIL</b>이 날 수 있습니다. 반드시 두 지표를 함께 확인하세요. 단, 판정이 <b>—</b>이면(Spec 미정의 또는 Die 2개 미만) Cpk도 —로 표시합니다. 1 Repeat 참고 판정이면 Cpk에도 (참고)를 붙입니다.</p>"
             )
         }
 
-        for title in self.contents.keys():
-            self.nav_list.addItem(title)
-            
-        self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+        # 작업자 화면의 기능만 적는다 (전문 분석 창의 기능은 expert_guide.py)
+        self.browser = GuideBrowser(self.contents)
+        self.nav_list = self.browser.nav_list
+        self.content_browser = self.browser.content_browser
+        layout.addWidget(self.browser)
 
-        # Right Panel (Content)
-        self.content_browser = QTextBrowser()
-        self.content_browser.setStyleSheet(f"""
-            QTextBrowser {{ background: {BG2}; border: 1px solid {BG3}; border-radius: 6px; padding: 24px; font-size: 11pt; }}
-        """)
-        self.content_browser.setOpenExternalLinks(False)
-
-        splitter.addWidget(self.nav_list)
-        splitter.addWidget(self.content_browser)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 4)
-
-        layout.addWidget(splitter)
-        
         # 버튼 박스
         btn_box = QDialogButtonBox(QDialogButtonBox.Close)
         btn_box.setStyleSheet(f"""
@@ -350,28 +253,3 @@ class GuideDialog(QDialog):
         """)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
-
-        self.nav_list.setCurrentRow(0)
-
-    def _on_nav_changed(self, idx):
-        if idx < 0: return
-        itemTitle = self.nav_list.item(idx).text()
-        html_body = self.contents.get(itemTitle, "")
-        
-        css = (
-            f"h2 {{ color: {ACCENT}; border-bottom: 2px solid {BG3}; padding-bottom: 12px; margin-bottom: 20px; font-size: 18pt; }}"
-            f"h3 {{ color: {ACCENT}; margin-top: 32px; font-size: 14pt; }}"
-            f"p {{ line-height: 1.6; margin-bottom: 16px; color: {FG}; }}"
-            f"b {{ color: {GREEN}; font-weight: bold; font-size: 11pt; }}"
-            f"ul {{ margin-top: 8px; margin-bottom: 16px; margin-left: -10px; }}"
-            f"li {{ margin-bottom: 10px; line-height: 1.6; color: {FG}; }}"
-            f"hr {{ border: none; border-top: 1px solid {BG3}; margin: 28px 0; }}"
-            f"table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}"
-            f"th, td {{ border: 1px solid {BG3}; padding: 12px; text-align: left; line-height: 1.4; }}"
-            f"th {{ background-color: {BG}; color: {FG}; font-weight: bold; border-bottom: 2px solid {BG3}; }}"
-            f"td {{ color: {FG}; }}"
-            f"code {{ background-color: rgba(0,0,0,0.3); padding: 4px 6px; border-radius: 4px; color: {RED}; font-family: Consolas, monospace; }}"
-        )
-        
-        full_html = "<html><head><style>" + css + "</style></head><body>" + html_body + "</body></html>"
-        self.content_browser.setHtml(full_html)

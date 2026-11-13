@@ -135,12 +135,15 @@ class ExportMixin:
 
 
 
-    def _export_llm_markdown(self):
-        """LLM 원인 분석용 Markdown (전체 Workflow, 회차 비교·부록은 모든 회차)."""
+    def _export_llm_markdown(self, parent=None):
+        """LLM 원인 분석용 Markdown (전체 Workflow, 회차 비교·부록은 모든 회차).
+
+        parent: 파일 대화상자·메시지의 부모 (전문 분석 창 '도구' 탭은 그 창). 기본은 이 창."""
+        parent = self if parent is None else parent
         # 내보내는 동안 회차를 바꿔도 섞이지 않게 메인 스레드에서 목록을 복사한다
         results = list(getattr(self, 'recipe_results', None) or [])
         if not results:
-            QMessageBox.warning(self, "경고", "스캔된 데이터가 없습니다.")
+            QMessageBox.warning(parent, "경고", "스캔된 데이터가 없습니다.")
             return
         root = getattr(self, '_scanned_folder', '') or self.path_edit.text()
         now = datetime.datetime.now()
@@ -149,7 +152,7 @@ class ExportMixin:
         # 파일 이름에 쓸 수 없는 문자와 공백은 _로 바꾼다
         label = re.sub(r'[\\/:*?"<>|\s]+', '_', label).strip('_') or 'root'
         path, _ = QFileDialog.getSaveFileName(
-            self, "AI 분석용 Markdown", f"XY_LLM_{label}_{now:%Y%m%d_%H%M}.md",
+            parent, "AI 분석용 Markdown", f"XY_LLM_{label}_{now:%Y%m%d_%H%M}.md",
             "Markdown (*.md)")
         if not path:
             return
@@ -232,7 +235,7 @@ class ExportMixin:
                 written = (f"\n셀 값 CSV는 저장됐습니다: {csv_path}" if state['csv_written'] else '')
                 self.logger.error(f"AI 분석용 Markdown 오류: {error}"
                                   + (f" (셀 값 CSV는 저장됨: {csv_path})" if state['csv_written'] else ''))
-                QMessageBox.critical(self, "오류", f"AI 분석용 Markdown 생성 실패\n{error}{written}")
+                QMessageBox.critical(parent, "오류", f"AI 분석용 Markdown 생성 실패\n{error}{written}")
 
         poll.timeout.connect(check)
         poll.start(200)

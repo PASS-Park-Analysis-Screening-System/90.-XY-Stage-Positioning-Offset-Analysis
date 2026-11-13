@@ -36,6 +36,7 @@ _REGISTRY_PATH = r'Software\XYStageOffset'
 _USER_SETTING_KEYS = {
     'last_folder',
     'window_geometry',
+    'expert_window_geometry',   # 전문 분석 창 (window_geometry와 같은 "WxH+X+Y")
     'recent_folders',
     'wafer_size',
     'workflow_folder_map',

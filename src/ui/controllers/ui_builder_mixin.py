@@ -13,9 +13,7 @@ from ui.widgets.copyable_table import CopyableTable
 from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.chart_widget import ChartWidget, InteractiveChartWidget
 from ui.widgets.busy_overlay import BusyOverlay
-from ui.dialogs.image_shift_dialog import open_image_shift_dialog
-from ui.dialogs.troubleshoot_launcher import open_case_library, open_troubleshoot_report
-from ui.dialogs.scanner_rotation_dialog import open_scanner_rotation_dialog
+from ui.controllers.expert_controller import EXPERT_CATEGORY
 import charts as viz
 import charts as viz_pg
 from core import get_die_position
@@ -60,6 +58,49 @@ class UIBuilderMixin:
         self.run_compare_table.hide()
         self.run_compare_charts.hide()
         return widget
+
+    def _build_action_page(self, title, description, buttons):
+        """큰 버튼 + 한 줄 설명 목록 (Remark → Export, 전문 분석 창 → 도구).
+
+        buttons: [(이름, 설명, 슬롯, 색)]. 슬롯은 인자 없이 부른다."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(16)
+
+        header = QLabel(title)
+        header.setStyleSheet(f"color:{ACCENT}; font-size:16pt; font-weight:bold;")
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
+
+        desc_text = QLabel(description)
+        desc_text.setStyleSheet(f"color:{FG2}; font-size:10pt;")
+        desc_text.setAlignment(Qt.AlignCenter)
+        layout.addWidget(desc_text)
+        layout.addSpacing(10)
+
+        for text, desc, slot, color in buttons:
+            btn = QPushButton(f"{text}")
+            btn.setMinimumHeight(60)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {BG3}; color: {FG};
+                    border: 1px solid {color}40; border-left: 4px solid {color};
+                    border-radius: 6px; font-size: 12pt; font-weight: bold;
+                    text-align: left; padding: 12px 20px;
+                }}
+                QPushButton:hover {{ background: #45475a; border-color: {color}; }}
+            """)
+            btn.setToolTip(desc)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+
+            desc_label = QLabel(f"    {desc.split(chr(10))[0]}")
+            desc_label.setStyleSheet(f"color:{FG2}; font-size:8pt; margin-bottom:4px;")
+            layout.addWidget(desc_label)
+
+        layout.addStretch()
+        return page
 
     def _build_ui(self):
         central = QWidget()
@@ -474,7 +515,9 @@ class UIBuilderMixin:
                 inner = QTabWidget()
                 inner.setDocumentMode(True)
                 self._inner_tabs[category] = inner
-                self.chart_category_tabs.addTab(inner, category)
+                # Advanced는 작업자 화면에 두지 않는다 — 전문 분석 창에 담는다 (_build_expert_window)
+                if category != EXPERT_CATEGORY:
+                    self.chart_category_tabs.addTab(inner, category)
             self._inner_tabs[category].addTab(widget, name)
             if register:
                 self.chart_widgets[name] = widget
@@ -827,9 +870,9 @@ class UIBuilderMixin:
         _add_chart('Interactive', 'TIFF', tiff_cw)
         self._tiff_viewer = tiff_viewer
 
-        # 고급 분석 (pyqtgraph — Phase 2)
+        # 고급 분석 (pyqtgraph — Phase 2) — 전문 분석 창의 Advanced 탭
         for name in ['Pareto', 'Correlation']:
-            _add_chart('Advanced', name, InteractiveChartWidget())
+            _add_chart(EXPERT_CATEGORY, name, InteractiveChartWidget())
 
         # ─── 🌐 3D Surface: X/Y 서브탭 ───
         surface_tabs = QTabWidget()
@@ -843,16 +886,14 @@ class UIBuilderMixin:
         self.chart_widgets['3D X'] = surface_x
         self.chart_widgets['3D Y'] = surface_y
         self.chart_widgets['3D X+Y'] = surface_mag
-        _add_chart('Advanced', '3D Surface', surface_tabs, register=False)
+        _add_chart(EXPERT_CATEGORY, '3D Surface', surface_tabs, register=False)
         # 비전 보정 로그 대조 (SamplePositioning·TipPositioning ↔ HZ1_O)
-        _add_chart('Advanced', 'Positioning Log', self._build_positioning_widget(), register=False)
-        self._inner_tabs['Advanced'].currentChanged.connect(self._flush_positioning_chart)
-        self.chart_category_tabs.currentChanged.connect(self._flush_positioning_chart)
+        _add_chart(EXPERT_CATEGORY, 'Positioning Log', self._build_positioning_widget(), register=False)
         # 트러블슈팅 진단 (스캐너 오프셋·회전·what-if·drift, pass.xy.diagnosis/1)
         from ui.controllers.diagnosis_controller import DIAGNOSIS_TAB
-        _add_chart('Advanced', DIAGNOSIS_TAB, self._build_diagnosis_widget(), register=False)
-        self._inner_tabs['Advanced'].currentChanged.connect(self._flush_diagnosis)
-        self.chart_category_tabs.currentChanged.connect(self._flush_diagnosis)
+        _add_chart(EXPERT_CATEGORY, DIAGNOSIS_TAB, self._build_diagnosis_widget(), register=False)
+        # 탭을 바꾸면 보이게 된 탭의 Log 읽기·차트를 시작한다 (창이 보일 때만 — _advanced_tab_visible)
+        self._inner_tabs[EXPERT_CATEGORY].currentChanged.connect(self._flush_advanced_tabs)
 
         # 비교 (matplotlib — Recipe Comparison: 3개 서브탭)
         for name in ['Boxplot', 'Trend', 'Heatmap']:
@@ -864,55 +905,13 @@ class UIBuilderMixin:
 
         # ── Remark 탭 (Export + Help 하위탭) ──────────────────────
         # ── Export 하위탭 ─────────────────────────────────────────
-        export_widget = QWidget()
-        export_layout = QVBoxLayout(export_widget)
-        export_layout.setContentsMargins(40, 40, 40, 40)
-        export_layout.setSpacing(16)
-
-        export_header = QLabel("Data Export")
-        export_header.setStyleSheet(f"color:{ACCENT}; font-size:16pt; font-weight:bold;")
-        export_header.setAlignment(Qt.AlignCenter)
-        export_layout.addWidget(export_header)
-
-        export_desc = QLabel("분석 결과를 다양한 형식으로 내보낼 수 있습니다.")
-        export_desc.setStyleSheet(f"color:{FG2}; font-size:10pt;")
-        export_desc.setAlignment(Qt.AlignCenter)
-        export_layout.addWidget(export_desc)
-        export_layout.addSpacing(10)
-
-        export_buttons_data = [
+        # 작업자용 내보내기만 둔다. 원인 분석 도구는 전문 분석 창의 '도구' 탭에 있다
+        export_widget = self._build_action_page('Data Export', '분석 결과를 다양한 형식으로 내보낼 수 있습니다.', [
             ('Excel Export', 'Die별 편차, Summary, Raw Data 등\n전체 데이터를 Excel 파일로 저장', self._export_excel, ACCENT),
             ('Quality Report', '측정 실패·이상치·Spec 초과 행과 System Log를\n전체 Recipe 기준으로 Excel 저장 (추적정보 포함)', self._export_quality_report, ORANGE),
             ('CSV Export', 'Raw Data를 CSV 형식으로 저장\n타 프로그램에서 불러오기 용이', self._export_csv, GREEN),
             ('PDF Report', '차트 + 통계 포함 PDF 보고서 생성\n출력 및 공유용', self._export_pdf, RED),
-            ('AI 분석용 Markdown', 'Spec 초과 원인 분석을 LLM에 맡기기 위한 Markdown 한 파일\n'
-             '요약·원인 단서·회차 비교·Die×Repeat 편차 표 포함', self._export_llm_markdown, PURPLE),
-            ('이미지 2장 이동량 분석', 'Capture 이미지 2장(이상)의 이동량을 sub-pixel로 재서 카메라 축 각도·배율 계산 (별도 창)', lambda: open_image_shift_dialog(self), ACCENT),
-            ('3D 트러블슈팅 보고서', '진단 결과로 장비 3D·Die 화살표·What-if가 든 HTML 한 파일을 만들어 기본 브라우저로 열기', lambda: open_troubleshoot_report(self), GREEN),
-            ('사례 라이브러리', '끝난 조사 사례(HTML 페이지 모음)를 기본 브라우저로 열기', lambda: open_case_library(self), PURPLE),
-            ('스캐너 회전 시험 분석', '폐루프 2지점 스윕 로그(또는 PQC Non-linearity 시트)로 스캐너 회전 κ(µrad/µm)를 계산해 잠정 규격으로 판정 (별도 창)', lambda: open_scanner_rotation_dialog(self), ORANGE),
-        ]
-        for text, desc, slot, color in export_buttons_data:
-            btn = QPushButton(f"{text}")
-            btn.setMinimumHeight(60)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {BG3}; color: {FG};
-                    border: 1px solid {color}40; border-left: 4px solid {color};
-                    border-radius: 6px; font-size: 12pt; font-weight: bold;
-                    text-align: left; padding: 12px 20px;
-                }}
-                QPushButton:hover {{ background: #45475a; border-color: {color}; }}
-            """)
-            btn.setToolTip(desc)
-            btn.clicked.connect(slot)
-            export_layout.addWidget(btn)
-
-            desc_label = QLabel(f"    {desc.split(chr(10))[0]}")
-            desc_label.setStyleSheet(f"color:{FG2}; font-size:8pt; margin-bottom:4px;")
-            export_layout.addWidget(desc_label)
-
-        export_layout.addStretch()
+        ])
 
         # ── Help 하위탭 ───────────────────────────────────────────
         help_widget = QWidget()
@@ -1031,6 +1030,8 @@ class UIBuilderMixin:
         self._inner_tabs['Remark'] = inner_remark
         self.chart_category_tabs.addTab(inner_remark, 'Remark')
 
+        # 전문 분석 창 (Advanced + 도구 + 도움말) — 숨긴 채 만든다. 여는 방법은 expert_controller
+        self._build_expert_window()
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 5)
@@ -1071,6 +1072,8 @@ class UIBuilderMixin:
         self.statusBar().addPermanentWidget(self.status_progress)
         self.version_status_label = QLabel(APP_VERSION_LABEL)
         self.version_status_label.setStyleSheet(f"color:{FG2}; padding:0 8px;")
+        # 클릭은 main.eventFilter → _on_version_label_event (툴팁·커서는 바꾸지 않는다)
+        self.version_status_label.installEventFilter(self)
         self.statusBar().addPermanentWidget(self.version_status_label)
         self.statusBar().showMessage("폴더를 선택하세요.")
 
@@ -1078,11 +1081,16 @@ class UIBuilderMixin:
     # Chart Navigation
     # ──────────────────────────────────────────────
     def _select_chart(self, name: str):
-        """프로그래밍 방식으로 차트 선택 (카테고리 + 내부 탭 자동 전환)."""
+        """프로그래밍 방식으로 차트 선택 (카테고리 + 내부 탭 자동 전환).
+
+        Advanced 탭은 전문 분석 창 안에서 고른다 (창을 열지는 않는다 — 열기는 _open_expert_window)."""
         for cat_name, inner_tab in self._inner_tabs.items():
             for i in range(inner_tab.count()):
                 if inner_tab.tabText(i) == name:
-                    self.chart_category_tabs.setCurrentWidget(inner_tab)
+                    if cat_name == EXPERT_CATEGORY:
+                        self._expert_window.tabs.setCurrentWidget(inner_tab)
+                    else:
+                        self.chart_category_tabs.setCurrentWidget(inner_tab)
                     inner_tab.setCurrentIndex(i)
                     return
 

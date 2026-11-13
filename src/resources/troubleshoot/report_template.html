@@ -387,7 +387,7 @@ function renderHeader(){
 }
 function renderWarnings(){
   let h='';
-  if(!D)h+='<div class="box warn"><b>진단 데이터가 없습니다.</b> 이 파일은 보고서 틀입니다 — 앱에서 진단을 실행한 뒤 Remark → Export → "3D 트러블슈팅 보고서"로 만드세요. 아래 칸은 모두 "데이터 없음"으로 표시됩니다.</div>';
+  if(!D)h+='<div class="box warn"><b>진단 데이터가 없습니다.</b> 이 파일은 보고서 틀입니다 — 앱의 전문 분석 창에서 Diagnosis 탭으로 진단을 실행한 뒤 도구 → "3D 트러블슈팅 보고서"로 만드세요. 아래 칸은 모두 "데이터 없음"으로 표시됩니다.</div>';
   else if(D.schema!=='pass.xy.diagnosis/1')h+=`<div class="box warn">스키마 ${tx(D.schema)} — 이 보고서는 pass.xy.diagnosis/1 기준입니다. 일부 칸이 비어 보일 수 있습니다.</div>`;
   const w=arr(g(D,'warnings')).filter(x=>x!=null&&x!=='');
   if(w.length)h+=`<div class="box warn"><b>진단 경고</b><ul>${w.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
