@@ -1,5 +1,5 @@
 """
-verify_build.py — 빌드된 onefile EXE에 필수 리소스가 **기대 경로로** 들어갔는지 검사.
+verify_build.py — 빌드된 EXE(onefile, 또는 onedir의 _internal)에 필수 리소스가 **기대 경로로** 들어갔는지 검사.
 
 왜 필요한가:
     --add-data의 대상 경로가 틀려도 PyInstaller는 성공으로 끝난다. 실행 중에야
@@ -32,14 +32,28 @@ def _norm(p):
     return p.replace('\\', '/').lstrip('./').lower()
 
 
+def _onedir_root(exe_path):
+    """onedir 빌드면 EXE 옆 _internal 폴더(리소스가 파일로 풀려 있음), 아니면 None."""
+    root = os.path.join(os.path.dirname(os.path.abspath(exe_path)), '_internal')
+    return root if os.path.isdir(root) else None
+
+
 def read_bundle(exe_path):
-    """onefile EXE 아카이브의 항목 이름 목록."""
+    """번들 항목 이름 목록 — onefile은 EXE 아카이브, onedir은 _internal 아래 파일."""
+    root = _onedir_root(exe_path)
+    if root:
+        return [os.path.relpath(os.path.join(d, f), root)
+                for d, _, files in os.walk(root) for f in files]
     from PyInstaller.archive.readers import CArchiveReader
     return list(CArchiveReader(exe_path).toc)
 
 
 def read_bundled_settings(exe_path):
-    """EXE 안의 core/settings.json 내용."""
+    """번들 안의 core/settings.json 내용."""
+    root = _onedir_root(exe_path)
+    if root:
+        with open(os.path.join(root, 'core', 'settings.json'), encoding='utf-8') as f:
+            return json.load(f)
     from PyInstaller.archive.readers import CArchiveReader
     reader = CArchiveReader(exe_path)
     wanted = _norm(os.path.join('core', 'settings.json'))
