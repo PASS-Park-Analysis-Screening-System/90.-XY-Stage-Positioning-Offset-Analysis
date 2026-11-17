@@ -956,7 +956,7 @@ class UIBuilderMixin:
         dev_label = QLabel(
             "Developer :  Levi.Beak\n"
             "Team          :  Production &amp; Quality Control Team, Manufacturing Dept.\n"
-            "Email          :  levi.beak@parksystems.com"
+            "문의: PASS 요청 창구(MS Forms)"
         )
         dev_label.setStyleSheet(f"color:{FG}; font-size:9pt; line-height:160%;")
         dev_label.setAlignment(Qt.AlignCenter)
