@@ -387,7 +387,7 @@ class XYOffsetPlugin(QWidget):
 ## 10. 실행 방법
 
 ```bash
-cd "c:\Users\Spare\Desktop\03. Program\97. XY Stage Positioning Offset Analysis\src"
+cd "${DEV_ROOT}\97. XY Stage Positioning Offset Analysis\src"
 python main.py
 ```
 
