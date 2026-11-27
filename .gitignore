@@ -1,6 +1,8 @@
 __pycache__
 code/
-data/
+# 실측 데이터 (로컬 전용, 커밋 금지 — data/README.md만 추적)
+/data/*
+!/data/README.md
 test/
 venv/
 .env
